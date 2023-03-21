@@ -26,6 +26,10 @@ pub fn handle_key_events(key_event: KeyEvent, app: &mut App) -> anyhow::Result<(
                 w.input(&key_event)
             }
 
+            if let Some(w) = &mut app.confirm {
+                w.input(&key_event)
+            }
+
             if app.signin.is_none() && app.rooms.is_none() && key_event.code == KeyCode::Char('r') {
                 app.rooms = Some(Rooms::new(app.matrix.joined_rooms(), app.send.clone()));
             }

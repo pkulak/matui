@@ -8,6 +8,7 @@ pub mod signin;
 pub mod button;
 pub mod chat;
 pub mod textinput;
+pub mod confirm;
 
 pub trait KeyEventing {
     // returns true if the event was consumed

@@ -2,6 +2,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::matrix::{Matrix, MatrixEvent, SyncType};
 use crate::widgets::chat::Chat;
+use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::Rooms;
@@ -21,6 +22,7 @@ pub struct App {
     pub progress: Option<Progress>,
     pub error: Option<Error>,
     pub signin: Option<Signin>,
+    pub confirm: Option<Confirm>,
     pub rooms: Option<Rooms>,
     pub chat: Option<Chat>,
 
@@ -42,6 +44,7 @@ impl Default for App {
             progress: None,
             error: None,
             signin: None,
+            confirm: None,
             rooms: None,
             chat: None,
             matrix,
@@ -77,7 +80,13 @@ impl App {
                     self.progress = None;
                 }
                 MatrixEvent::LoginRequired => {
-                    self.signin = Some(Signin::new(self.matrix.clone()));
+                    // self.signin = Some(Signin::new(self.matrix.clone()));
+                    self.confirm = Some(Confirm::new(
+                        "Verify".to_string(),
+                        "Would you like to very this session?".to_string(),
+                        "Yes".to_string(),
+                        "No".to_string(),
+                    ));
                 }
                 MatrixEvent::LoginStarted => {
                     self.error = None;
@@ -138,6 +147,11 @@ impl App {
 
         if let Some(w) = &self.signin {
             frame.render_widget(w.widget(), frame.size());
+            return;
+        }
+
+        if let Some(c) = &self.confirm {
+            frame.render_widget(c.widget(), frame.size());
             return;
         }
 
