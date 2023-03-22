@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
+use crate::handler::{MatuiEvent, SyncType};
 use anyhow::{bail, Context};
 use log::info;
 use matrix_sdk::config::SyncSettings;
@@ -26,22 +27,7 @@ pub struct Matrix {
     rt: Arc<Runtime>,
     client: Arc<OnceCell<Client>>,
     sync_token: Arc<OnceCell<String>>,
-    send: Sender<MatrixEvent>,
-}
-
-pub enum MatrixEvent {
-    Error(String),
-    LoginComplete,
-    LoginRequired,
-    LoginStarted,
-    RoomSelected(Joined),
-    SyncComplete,
-    SyncStarted(SyncType),
-}
-
-pub enum SyncType {
-    Initial,
-    Latest,
+    send: Sender<MatuiEvent>,
 }
 
 pub enum RoomEvent {
@@ -49,7 +35,7 @@ pub enum RoomEvent {
 }
 
 impl Matrix {
-    pub fn new(send: Sender<MatrixEvent>) -> Matrix {
+    pub fn new(send: Sender<MatuiEvent>) -> Matrix {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -86,7 +72,7 @@ impl Matrix {
         self.sync_token.get().map(|t| t.to_owned())
     }
 
-    fn send(&self, event: MatrixEvent) {
+    fn send(&self, event: MatuiEvent) {
         self.send.send(event).expect("could not send Matrix event");
     }
 
@@ -96,19 +82,19 @@ impl Matrix {
         let (_, session_file) = Matrix::dirs();
 
         if !session_file.exists() {
-            self.send(MatrixEvent::LoginRequired);
+            self.send(MatuiEvent::LoginRequired);
             return;
         }
 
         let matrix = self.clone();
 
         self.rt.spawn(async move {
-            matrix.send(MatrixEvent::SyncStarted(SyncType::Latest));
+            matrix.send(MatuiEvent::SyncStarted(SyncType::Latest));
 
             let (client, token) = match restore_session(session_file.as_path()).await {
                 Ok(tuple) => tuple,
                 Err(err) => {
-                    matrix.send(MatrixEvent::Error(err.to_string()));
+                    matrix.send(MatuiEvent::Error(err.to_string()));
                     return;
                 }
             };
@@ -123,7 +109,7 @@ impl Matrix {
             let token = match sync(client, token, &session_file).await {
                 Ok(sync) => sync,
                 Err(err) => {
-                    matrix.send(MatrixEvent::Error(err.to_string()));
+                    matrix.send(MatuiEvent::Error(err.to_string()));
                     return;
                 }
             };
@@ -135,7 +121,7 @@ impl Matrix {
                 .set(token)
                 .expect("could not set sync token");
 
-            matrix.send(MatrixEvent::SyncComplete);
+            matrix.send(MatuiEvent::SyncComplete);
         });
     }
 
@@ -146,12 +132,12 @@ impl Matrix {
         let matrix = self.clone();
 
         self.rt.spawn(async move {
-            matrix.send(MatrixEvent::LoginStarted);
+            matrix.send(MatuiEvent::LoginStarted);
 
             let client = match login(&data_dir, &session_file, &user, &pass).await {
                 Ok(client) => client,
                 Err(err) => {
-                    matrix.send(MatrixEvent::Error(err.to_string()));
+                    matrix.send(MatuiEvent::Error(err.to_string()));
                     return;
                 }
             };
@@ -161,13 +147,13 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
-            matrix.send(MatrixEvent::LoginComplete);
-            matrix.send(MatrixEvent::SyncStarted(SyncType::Initial));
+            matrix.send(MatuiEvent::LoginComplete);
+            matrix.send(MatuiEvent::SyncStarted(SyncType::Initial));
 
             let sync_token = match sync(client, None, &session_file).await {
                 Ok(sync) => sync,
                 Err(err) => {
-                    matrix.send(MatrixEvent::Error(err.to_string()));
+                    matrix.send(MatuiEvent::Error(err.to_string()));
                     return;
                 }
             };
@@ -177,7 +163,7 @@ impl Matrix {
                 .set(sync_token)
                 .expect("could not set sync token");
 
-            matrix.send(MatrixEvent::SyncComplete);
+            matrix.send(MatuiEvent::SyncComplete);
         });
     }
 
@@ -195,7 +181,7 @@ impl Matrix {
             {
                 Ok(msg) => msg,
                 Err(err) => {
-                    matrix.send(MatrixEvent::Error(err.to_string()));
+                    matrix.send(MatuiEvent::Error(err.to_string()));
                     return;
                 }
             };

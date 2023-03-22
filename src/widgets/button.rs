@@ -1,21 +1,16 @@
-use std::sync::mpsc::Sender;
-
 use crossterm::event::{KeyCode, KeyEvent};
 use tui::buffer::Buffer;
 use tui::layout::{Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
 use tui::widgets::{Block, Borders, Paragraph, Widget};
 
-use crate::widgets::{get_margin, Focusable, KeyEventing};
+use crate::widgets::Action::ButtonYes;
+use crate::widgets::EventResult::{Consumed, Ignored};
+use crate::widgets::{get_margin, Action, EventResult, Focusable, KeyEventing};
 
 pub struct Button {
     label: String,
     focused: bool,
-    sender: Option<Sender<ButtonEvent>>,
-}
-
-pub enum ButtonEvent {
-    Submit(String),
 }
 
 impl Focusable for &mut Button {
@@ -33,24 +28,18 @@ impl Focusable for &mut Button {
 }
 
 impl KeyEventing for &mut Button {
-    fn input(&mut self, input: &KeyEvent) -> bool {
-        match &self.sender {
-            Some(sender) if self.focused && input.code == KeyCode::Enter => {
-                sender.send(ButtonEvent::Submit(self.label.clone())).ok();
-                true
-            }
-            _ => false,
+    fn input(&mut self, input: &KeyEvent) -> EventResult {
+        if self.focused && input.code == KeyCode::Enter {
+            Consumed(ButtonYes)
+        } else {
+            Ignored
         }
     }
 }
 
 impl Button {
-    pub fn new(label: String, focused: bool, sender: Option<Sender<ButtonEvent>>) -> Button {
-        Button {
-            label,
-            focused,
-            sender,
-        }
+    pub fn new(label: String, focused: bool) -> Button {
+        Button { label, focused }
     }
 
     pub fn widget(&self) -> ButtonWidget {

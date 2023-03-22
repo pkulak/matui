@@ -1,3 +1,5 @@
+use crate::widgets::Action::ChangeFocus;
+use crate::widgets::EventResult::{Consumed, Ignored};
 use crossterm::event::KeyEvent;
 
 pub mod error;
@@ -7,22 +9,33 @@ pub mod signin;
 
 pub mod button;
 pub mod chat;
-pub mod textinput;
 pub mod confirm;
+pub mod textinput;
 
-pub trait KeyEventing {
-    // returns true if the event was consumed
-    fn input(&mut self, input: &KeyEvent) -> bool;
+pub enum EventResult {
+    Consumed(Action),
+    Ignored,
 }
 
-fn send(mut elements: Vec<Box<dyn KeyEventing + '_>>, event: &KeyEvent) -> bool {
+pub enum Action {
+    ButtonYes,
+    ButtonNo,
+    Typing,
+    ChangeFocus,
+}
+
+pub trait KeyEventing {
+    fn input(&mut self, input: &KeyEvent) -> EventResult;
+}
+
+fn send(mut elements: Vec<Box<dyn KeyEventing + '_>>, event: &KeyEvent) -> EventResult {
     for e in elements.iter_mut() {
-        if e.input(event) {
-            return true;
+        if let Consumed(e) = e.input(event) {
+            return Consumed(e);
         }
     }
 
-    false
+    Ignored
 }
 
 pub trait Focusable {
@@ -32,9 +45,9 @@ pub trait Focusable {
 }
 
 // given a list of elements, defocus the current one and focus the next one
-fn focus_next(mut elements: Vec<Box<dyn Focusable + '_>>) {
+fn focus_next(mut elements: Vec<Box<dyn Focusable + '_>>) -> EventResult {
     if elements.is_empty() {
-        return;
+        return Ignored;
     }
 
     let mut next: bool = false;
@@ -42,7 +55,7 @@ fn focus_next(mut elements: Vec<Box<dyn Focusable + '_>>) {
     for e in elements.iter_mut() {
         if next {
             e.focus();
-            return;
+            return Consumed(ChangeFocus);
         }
 
         if e.focused() {
@@ -52,10 +65,12 @@ fn focus_next(mut elements: Vec<Box<dyn Focusable + '_>>) {
     }
 
     // either nothing or the last element was focused
-    elements[0].focus()
+    elements[0].focus();
+
+    Consumed(ChangeFocus)
 }
 
-fn focus_prev<'a>(mut elements: Vec<Box<dyn Focusable + 'a>>) {
+fn focus_prev<'a>(mut elements: Vec<Box<dyn Focusable + 'a>>) -> EventResult {
     elements.reverse();
     focus_next(elements)
 }

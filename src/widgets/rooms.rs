@@ -1,4 +1,4 @@
-use crate::matrix::MatrixEvent;
+use crate::handler::MatuiEvent;
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::room::Joined;
 use std::cell::Cell;
@@ -10,17 +10,18 @@ use tui::text::{Span, Spans};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
 use crate::widgets::textinput::TextInput;
+use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, KeyEventing};
 
 pub struct Rooms {
     pub textinput: TextInput,
     pub joined: Vec<Joined>,
     pub list_state: Cell<ListState>,
-    pub sender: Sender<MatrixEvent>,
+    pub sender: Sender<MatuiEvent>,
 }
 
 impl Rooms {
-    pub fn new(joined: Vec<Joined>, sender: Sender<MatrixEvent>) -> Self {
+    pub fn new(joined: Vec<Joined>, sender: Sender<MatuiEvent>) -> Self {
         let mut joined: Vec<Joined> = joined.into_iter().filter(|r| !r.is_tombstoned()).collect();
 
         sort_rooms(&mut joined);
@@ -43,10 +44,10 @@ impl Rooms {
             KeyCode::Up => self.previous(),
             KeyCode::Enter => self
                 .sender
-                .send(MatrixEvent::RoomSelected(self.selected_room()))
+                .send(MatuiEvent::RoomSelected(self.selected_room()))
                 .expect("could not send room selected event"),
             _ => {
-                if (&mut self.textinput).input(input) {
+                if let Consumed(_) = (&mut self.textinput).input(input) {
                     self.unselect()
                 }
             }
@@ -155,7 +156,7 @@ impl Widget for RoomsWidget<'_> {
             .rooms
             .filtered_rooms()
             .into_iter()
-            .map(|j| make_list_item(j))
+            .map(make_list_item)
             .collect();
 
         let area = Layout::default()
@@ -194,7 +195,7 @@ fn make_list_item(joined: &Joined) -> ListItem {
     ListItem::new(Spans::from(spans))
 }
 
-fn sort_rooms(rooms: &mut Vec<Joined>) {
+fn sort_rooms(rooms: &mut [Joined]) {
     rooms.sort_by_key(|r| {
         (
             -(r.unread_notification_counts().notification_count as i64),

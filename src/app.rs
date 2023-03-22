@@ -1,6 +1,7 @@
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::Sender;
 
-use crate::matrix::{Matrix, MatrixEvent, SyncType};
+use crate::handler::MatuiEvent;
+use crate::matrix::Matrix;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;
@@ -28,14 +29,11 @@ pub struct App {
 
     /// And our single Matrix client and channel
     pub matrix: Matrix,
-    pub send: Sender<MatrixEvent>,
-    pub recv: Receiver<MatrixEvent>,
+    pub send: Sender<MatuiEvent>,
 }
 
-impl Default for App {
-    fn default() -> Self {
-        let (send, recv) = channel();
-
+impl App {
+    pub fn new(send: Sender<MatuiEvent>) -> Self {
         let matrix = Matrix::new(send.clone());
 
         Self {
@@ -49,14 +47,7 @@ impl Default for App {
             chat: None,
             matrix,
             send,
-            recv,
         }
-    }
-}
-
-impl App {
-    pub fn new() -> Self {
-        Self::default()
     }
 
     /// Handles the tick event of the terminal.
@@ -68,62 +59,9 @@ impl App {
             return;
         }
 
-        // check for events from Matrix
-        for event in self.recv.try_iter() {
-            match event {
-                MatrixEvent::Error(msg) => {
-                    self.error = Some(Error::new(msg));
-                    self.progress = None;
-                }
-                MatrixEvent::LoginComplete => {
-                    self.error = None;
-                    self.progress = None;
-                }
-                MatrixEvent::LoginRequired => {
-                    // self.signin = Some(Signin::new(self.matrix.clone()));
-                    self.confirm = Some(Confirm::new(
-                        "Verify".to_string(),
-                        "Would you like to very this session?".to_string(),
-                        "Yes".to_string(),
-                        "No".to_string(),
-                    ));
-                }
-                MatrixEvent::LoginStarted => {
-                    self.error = None;
-                    self.progress = Some(Progress::new("Logging in"));
-                }
-                MatrixEvent::SyncComplete => {
-                    self.error = None;
-                    self.progress = None;
-                    self.signin = None;
-                }
-                MatrixEvent::SyncStarted(st) => {
-                    self.error = None;
-                    match st {
-                        SyncType::Initial => {
-                            self.progress = Some(Progress::new("Performing initial sync."))
-                        }
-                        SyncType::Latest => self.progress = Some(Progress::new("Syncing")),
-                    };
-                }
-                MatrixEvent::RoomSelected(joined) => {
-                    self.rooms = None;
-
-                    let mut room = Chat::new(self.matrix.clone());
-                    room.set_room(joined.clone());
-
-                    self.chat = Some(room);
-                }
-            }
-        }
-
         // send out the ticks
         if let Some(r) = self.chat.as_mut() {
             r.tick()
-        }
-
-        if let Some(s) = self.signin.as_mut() {
-            s.tick()
         }
 
         if let Some(p) = self.progress.as_mut() {

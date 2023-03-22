@@ -5,7 +5,9 @@ use tui::style::{Color, Style};
 use tui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::widgets::button::Button;
-use crate::widgets::{focus_next, Focusable};
+use crate::widgets::Action::{ButtonNo, ButtonYes};
+use crate::widgets::EventResult::{Consumed, Ignored};
+use crate::widgets::{focus_next, EventResult, Focusable};
 
 use super::get_margin;
 
@@ -21,8 +23,8 @@ impl Confirm {
         Self {
             title,
             message,
-            yes: Button::new(yes, true, None),
-            no: Button::new(no, false, None),
+            yes: Button::new(yes, true),
+            no: Button::new(no, false),
         }
     }
 
@@ -30,7 +32,7 @@ impl Confirm {
         ConfirmWidget { confirm: self }
     }
 
-    pub fn input(&mut self, input: &KeyEvent) {
+    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
         match input.code {
             KeyCode::Tab
             | KeyCode::BackTab
@@ -42,8 +44,15 @@ impl Confirm {
             | KeyCode::Char('j')
             | KeyCode::Char('k')
             | KeyCode::Char('l') => focus_next(self.focus_order()),
-            _ => {}
-        };
+            KeyCode::Enter => {
+                if (&mut self.yes).focused() {
+                    Consumed(ButtonYes)
+                } else {
+                    Consumed(ButtonNo)
+                }
+            }
+            _ => Ignored,
+        }
     }
 
     fn focus_order(&mut self) -> Vec<Box<dyn Focusable + '_>> {

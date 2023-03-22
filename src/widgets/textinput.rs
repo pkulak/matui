@@ -1,4 +1,6 @@
-use crate::widgets::{Focusable, KeyEventing};
+use crate::widgets::Action::Typing;
+use crate::widgets::EventResult::{Consumed, Ignored};
+use crate::widgets::{EventResult, Focusable, KeyEventing};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::cell::Cell;
 use tui::buffer::Buffer;
@@ -32,33 +34,33 @@ impl Focusable for &mut TextInput {
 }
 
 impl KeyEventing for &mut TextInput {
-    fn input(&mut self, input: &KeyEvent) -> bool {
+    fn input(&mut self, input: &KeyEvent) -> EventResult {
         if !self.focused {
-            return false;
+            return Ignored;
         }
 
         if input.modifiers != KeyModifiers::SHIFT && input.modifiers != KeyModifiers::NONE {
-            return false;
+            return Ignored;
         }
 
         match input.code {
             KeyCode::Char(c) => {
                 self.append_char(c);
-                true
+                Consumed(Typing)
             }
             KeyCode::Backspace => {
                 self.backspace();
-                true
+                Consumed(Typing)
             }
             KeyCode::Left => {
                 self.move_left();
-                false
+                Consumed(Typing)
             }
             KeyCode::Right => {
                 self.move_right();
-                false
+                Consumed(Typing)
             }
-            _ => false,
+            _ => Ignored,
         }
     }
 }

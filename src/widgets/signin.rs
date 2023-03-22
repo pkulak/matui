@@ -1,64 +1,52 @@
-use std::sync::mpsc::{channel, Receiver};
-
 use crossterm::event::{KeyCode, KeyEvent};
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
 use tui::widgets::{Block, BorderType, Borders, Widget};
 
-use crate::matrix::Matrix;
-use crate::widgets::button::{Button, ButtonEvent};
+use crate::widgets::button::Button;
 use crate::widgets::textinput::TextInput;
-use crate::widgets::{focus_next, focus_prev, get_margin, send, Focusable, KeyEventing};
+use crate::widgets::EventResult::{Consumed, Ignored};
+use crate::widgets::{
+    focus_next, focus_prev, get_margin, send, EventResult, Focusable, KeyEventing,
+};
 
 pub struct Signin {
-    matrix: Matrix,
-    id: TextInput,
-    password: TextInput,
+    pub id: TextInput,
+    pub password: TextInput,
     submit: Button,
-    button_recv: Receiver<ButtonEvent>,
 }
 
-impl Signin {
-    pub fn new(matrix: Matrix) -> Self {
+impl Default for Signin {
+    fn default() -> Self {
         let id = TextInput::new("Matrix ID".to_string(), true, false);
         let password = TextInput::new("Password".to_string(), false, true);
 
-        let (button_send, button_recv) = channel();
-
-        let submit = Button::new("Submit".to_string(), false, Some(button_send));
+        let submit = Button::new("Submit".to_string(), false);
 
         Self {
-            matrix,
             id,
             password,
             submit,
-            button_recv,
         }
     }
+}
 
+impl Signin {
     pub fn widget(&self) -> SigninWidget {
         SigninWidget { signin: self }
     }
 
-    pub fn input(&mut self, input: &KeyEvent) {
-        if send(self.event_order(), input) {
-            return;
+    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
+        if let Consumed(e) = send(self.event_order(), input) {
+            return Consumed(e);
         }
 
         match input.code {
             KeyCode::Enter | KeyCode::Tab | KeyCode::Down => focus_next(self.focus_order()),
             KeyCode::BackTab | KeyCode::Up => focus_prev(self.focus_order()),
-            _ => {}
-        };
-    }
-
-    pub fn tick(&mut self) {
-        // once we get a button click, sign in and show the progress bar
-        if self.button_recv.try_recv().is_ok() {
-            self.matrix
-                .login(self.id.value().as_str(), self.password.value().as_str());
-        };
+            _ => Ignored,
+        }
     }
 
     fn focus_order(&mut self) -> Vec<Box<dyn Focusable + '_>> {

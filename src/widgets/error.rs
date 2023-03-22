@@ -16,7 +16,7 @@ impl Error {
     pub fn new(message: String) -> Self {
         Self {
             message,
-            button: Button::new("OK".to_string(), true, None),
+            button: Button::new("OK".to_string(), true),
         }
     }
 
