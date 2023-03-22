@@ -6,7 +6,7 @@ use tui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::widgets::Action::ButtonYes;
 use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{get_margin, Action, EventResult, Focusable, KeyEventing};
+use crate::widgets::{get_margin, EventResult, Focusable, KeyEventing};
 
 pub struct Button {
     label: String,
