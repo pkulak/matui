@@ -7,6 +7,7 @@ use crate::widgets::rooms::Rooms;
 use crate::widgets::Action;
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
+use matrix_sdk::encryption::verification::{Emoji, SasVerification};
 use matrix_sdk::room::Joined;
 
 pub enum MatuiEvent {
@@ -17,6 +18,7 @@ pub enum MatuiEvent {
     RoomSelected(Joined),
     SyncComplete,
     SyncStarted(SyncType),
+    VerificationStarted(SasVerification, [Emoji; 7]),
 }
 
 pub enum SyncType {
@@ -67,6 +69,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
 
             app.chat = Some(room);
         }
+        _ => {}
     }
 }
 

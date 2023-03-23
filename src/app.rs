@@ -1,4 +1,5 @@
 use std::sync::mpsc::Sender;
+use std::sync::Mutex;
 
 use crate::handler::MatuiEvent;
 use crate::matrix::Matrix;
@@ -10,6 +11,8 @@ use crate::widgets::rooms::Rooms;
 use crate::widgets::signin::Signin;
 use tui::backend::Backend;
 use tui::terminal::Frame;
+
+static mut SENDER: Mutex<Option<Sender<MatuiEvent>>> = Mutex::new(None);
 
 /// Application.
 pub struct App {
@@ -36,6 +39,10 @@ impl App {
     pub fn new(send: Sender<MatuiEvent>) -> Self {
         let matrix = Matrix::new(send.clone());
 
+        // Save the sender for future threads.
+        // Safety: let's make sure to only have one App
+        unsafe { SENDER = Mutex::new(Some(send.clone())) }
+
         Self {
             running: true,
             timestamp: 0,
@@ -47,6 +54,25 @@ impl App {
             chat: None,
             matrix,
             send,
+        }
+    }
+
+    /// Last resort; it's probably better to pass around a Sender like normal,
+    /// rather than deal with lock contention. If anyone knows a safe way to
+    /// avoid async hell, please let me know!
+    ///
+    /// # Safety
+    ///
+    /// This is set once before the rest of the app starts, so should always
+    /// be available and never set again.
+    pub fn get_sender() -> Sender<MatuiEvent> {
+        unsafe {
+            SENDER
+                .lock()
+                .expect("could not unlock sender")
+                .as_ref()
+                .unwrap()
+                .clone()
         }
     }
 

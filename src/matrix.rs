@@ -3,15 +3,24 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
+use crate::app::App;
+use crate::handler::MatuiEvent::VerificationStarted;
 use crate::handler::{MatuiEvent, SyncType};
 use anyhow::{bail, Context};
+use futures::stream::StreamExt;
 use log::info;
 use matrix_sdk::config::SyncSettings;
+use matrix_sdk::encryption::verification::{SasState, SasVerification, Verification};
 use matrix_sdk::room::{Joined, Messages, MessagesOptions};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
 use matrix_sdk::ruma::api::Direction;
+use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
+use matrix_sdk::ruma::events::key::verification::start::{
+    OriginalSyncKeyVerificationStartEvent, ToDeviceKeyVerificationStartEvent,
+};
+use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::UserId;
 use matrix_sdk::{Client, ServerName, Session};
@@ -59,17 +68,11 @@ impl Matrix {
         (data_dir, session_file)
     }
 
-    #[allow(dead_code)]
     fn client(&self) -> Client {
         self.client
             .get()
             .expect("client expected but not set")
             .to_owned()
-    }
-
-    #[allow(dead_code)]
-    fn sync_token(&self) -> Option<String> {
-        self.sync_token.get().map(|t| t.to_owned())
     }
 
     fn send(&self, event: MatuiEvent) {
@@ -209,7 +212,6 @@ struct FullSession {
     sync_token: Option<String>,
 }
 
-#[allow(dead_code)]
 async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<String>)> {
     let serialized_session = fs::read_to_string(session_file)?;
 
@@ -353,4 +355,90 @@ fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::Result
     fs::write(session_file, serialized_session)?;
 
     Ok(())
+}
+
+async fn add_verification_handlers(client: Client) -> matrix_sdk::Result<()> {
+    client.add_event_handler(
+        |ev: ToDeviceKeyVerificationRequestEvent, client: Client| async move {
+            let request = client
+                .encryption()
+                .get_verification_request(&ev.sender, &ev.content.transaction_id)
+                .await
+                .expect("Request object wasn't created");
+
+            request
+                .accept()
+                .await
+                .expect("Can't accept verification request");
+        },
+    );
+
+    client.add_event_handler(
+        |ev: ToDeviceKeyVerificationStartEvent, client: Client| async move {
+            if let Some(Verification::SasV1(sas)) = client
+                .encryption()
+                .get_verification(&ev.sender, ev.content.transaction_id.as_str())
+                .await
+            {
+                tokio::spawn(sas_verification_handler(sas, App::get_sender()));
+            };
+        },
+    );
+
+    client.add_event_handler(
+        |ev: OriginalSyncRoomMessageEvent, client: Client| async move {
+            if let MessageType::VerificationRequest(_) = &ev.content.msgtype {
+                let request = client
+                    .encryption()
+                    .get_verification_request(&ev.sender, &ev.event_id)
+                    .await
+                    .expect("Request object wasn't created");
+
+                request
+                    .accept()
+                    .await
+                    .expect("Can't accept verification request");
+            }
+        },
+    );
+
+    client.add_event_handler(
+        |ev: OriginalSyncKeyVerificationStartEvent, client: Client| async move {
+            if let Some(Verification::SasV1(sas)) = client
+                .encryption()
+                .get_verification(&ev.sender, ev.content.relates_to.event_id.as_str())
+                .await
+            {
+                tokio::spawn(sas_verification_handler(sas, App::get_sender()));
+            }
+        },
+    );
+
+    client.sync(SyncSettings::new()).await?;
+
+    Ok(())
+}
+
+async fn sas_verification_handler(sas: SasVerification, sender: Sender<MatuiEvent>) {
+    sas.accept().await.unwrap();
+
+    let mut stream = sas.changes();
+
+    while let Some(state) = stream.next().await {
+        match state {
+            SasState::KeysExchanged {
+                emojis,
+                decimals: _,
+            } => {
+                let emoji_slice = emojis.expect("only emoji verification is supported").emojis;
+
+                sender
+                    .send(VerificationStarted(sas.clone(), emoji_slice))
+                    .expect("could not send sas event")
+            }
+            SasState::Done { .. } => {}
+            SasState::Cancelled(cancel_info) => {}
+            SasState::Started { .. } | SasState::Accepted { .. } | SasState::Confirmed => (),
+        }
+    }
 }
