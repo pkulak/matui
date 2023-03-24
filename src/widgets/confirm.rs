@@ -68,7 +68,7 @@ impl Widget for ConfirmWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
-            .vertical_margin(get_margin(area.height, 8))
+            .vertical_margin(get_margin(area.height, 10))
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];
 
@@ -88,7 +88,7 @@ impl Widget for ConfirmWidget<'_> {
             .constraints(
                 [
                     Constraint::Length(1),
-                    Constraint::Length(2),
+                    Constraint::Length(4),
                     Constraint::Length(3),
                 ]
                 .as_ref(),

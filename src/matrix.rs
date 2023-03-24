@@ -4,14 +4,14 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use crate::app::App;
-use crate::handler::MatuiEvent::VerificationStarted;
+use crate::handler::MatuiEvent::{Error, VerificationCompleted, VerificationStarted};
 use crate::handler::{MatuiEvent, SyncType};
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
-use log::info;
+use log::{error, info};
 use matrix_sdk::config::SyncSettings;
-use matrix_sdk::encryption::verification::{SasState, SasVerification, Verification};
-use matrix_sdk::room::{Joined, Messages, MessagesOptions};
+use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
+use matrix_sdk::room::{Joined, Messages, MessagesOptions, Room};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
@@ -23,7 +23,7 @@ use matrix_sdk::ruma::events::key::verification::start::{
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::UserId;
-use matrix_sdk::{Client, ServerName, Session};
+use matrix_sdk::{Client, LoopCtrl, ServerName, Session};
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
@@ -35,7 +35,6 @@ use tokio::runtime::Runtime;
 pub struct Matrix {
     rt: Arc<Runtime>,
     client: Arc<OnceCell<Client>>,
-    sync_token: Arc<OnceCell<String>>,
     send: Sender<MatuiEvent>,
 }
 
@@ -54,7 +53,6 @@ impl Matrix {
         Matrix {
             rt: Arc::new(rt),
             client: Arc::new(OnceCell::default()),
-            sync_token: Arc::new(OnceCell::default()),
             send,
         }
     }
@@ -109,20 +107,10 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
-            let token = match sync(client, token, &session_file).await {
-                Ok(sync) => sync,
-                Err(err) => {
-                    matrix.send(MatuiEvent::Error(err.to_string()));
-                    return;
-                }
+            if let Err(err) = sync_once(client, token, &session_file).await {
+                matrix.send(MatuiEvent::Error(err.to_string()));
+                return;
             };
-
-            info!("sync complete");
-
-            matrix
-                .sync_token
-                .set(token)
-                .expect("could not set sync token");
 
             matrix.send(MatuiEvent::SyncComplete);
         });
@@ -153,20 +141,68 @@ impl Matrix {
             matrix.send(MatuiEvent::LoginComplete);
             matrix.send(MatuiEvent::SyncStarted(SyncType::Initial));
 
-            let sync_token = match sync(client, None, &session_file).await {
-                Ok(sync) => sync,
-                Err(err) => {
-                    matrix.send(MatuiEvent::Error(err.to_string()));
-                    return;
-                }
+            if let Err(err) = sync_once(client, None, &session_file).await {
+                matrix.send(MatuiEvent::Error(err.to_string()));
+                return;
             };
 
-            matrix
-                .sync_token
-                .set(sync_token)
-                .expect("could not set sync token");
-
             matrix.send(MatuiEvent::SyncComplete);
+        });
+    }
+
+    pub fn sync(&self) {
+        add_verification_handlers(self.client());
+        add_default_handlers(self.client());
+
+        let client = self.client();
+
+        // apparently we only need the token for sync_once
+        let sync_settings = build_sync_settings(None);
+
+        self.rt.spawn(async move {
+            client
+                .sync_with_result_callback(sync_settings, |sync_result| async move {
+                    let response = match sync_result {
+                        Ok(resp) => resp,
+                        Err(err) => {
+                            error!("no sync result: {}", err.to_string());
+                            return Ok(LoopCtrl::Continue);
+                        }
+                    };
+
+                    let (_, session_file) = Matrix::dirs();
+                    let session_file = session_file.to_path_buf();
+
+                    // We persist the token each time to keep the disk up-to-date
+                    if let Err(err) = persist_sync_token(&session_file, response.next_batch) {
+                        error!("could not persist sync token {}", err.to_string())
+                    }
+
+                    Ok(LoopCtrl::Continue)
+                })
+                .await
+                .expect("could not sync");
+        });
+    }
+
+    pub fn confirm_verification(&self, sas: SasVerification) {
+        let matrix = self.clone();
+
+        self.rt.spawn(async move {
+            if let Err(err) = sas.confirm().await {
+                error!("could not verify: {}", err.to_string());
+                matrix.send(Error(format!("Could not verify: {}", err.to_string())));
+            }
+        });
+    }
+
+    pub fn mismatched_verification(&self, sas: SasVerification) {
+        self.rt.spawn(async move {
+            if let Err(err) = sas.mismatch().await {
+                error!("could not cancel SAS verification: {}", err.to_string())
+            } else {
+                info!("verification has been cancelled")
+            }
         });
     }
 
@@ -184,7 +220,7 @@ impl Matrix {
             {
                 Ok(msg) => msg,
                 Err(err) => {
-                    matrix.send(MatuiEvent::Error(err.to_string()));
+                    matrix.send(Error(err.to_string()));
                     return;
                 }
             };
@@ -323,7 +359,7 @@ fn build_sync_settings(sync_token: Option<String>) -> SyncSettings {
     sync_settings
 }
 
-async fn sync(
+async fn sync_once(
     client: Client,
     sync_token: Option<String>,
     session_file: &Path,
@@ -357,7 +393,18 @@ fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::Result
     Ok(())
 }
 
-async fn add_verification_handlers(client: Client) -> matrix_sdk::Result<()> {
+fn add_default_handlers(client: Client) {
+    client.add_event_handler(
+        |event: OriginalSyncRoomMessageEvent, room: Room| async move {
+            let Room::Joined(_) = room else { return };
+            let MessageType::Text(text_content) = event.content.msgtype else { return };
+
+            info!("{}", text_content.body);
+        },
+    );
+}
+
+fn add_verification_handlers(client: Client) {
     client.add_event_handler(
         |ev: ToDeviceKeyVerificationRequestEvent, client: Client| async move {
             let request = client
@@ -413,10 +460,6 @@ async fn add_verification_handlers(client: Client) -> matrix_sdk::Result<()> {
             }
         },
     );
-
-    client.sync(SyncSettings::new()).await?;
-
-    Ok(())
 }
 
 async fn sas_verification_handler(sas: SasVerification, sender: Sender<MatuiEvent>) {
@@ -430,15 +473,57 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<MatuiEven
                 emojis,
                 decimals: _,
             } => {
+                info!("verification keys exchanged");
+
                 let emoji_slice = emojis.expect("only emoji verification is supported").emojis;
 
                 sender
                     .send(VerificationStarted(sas.clone(), emoji_slice))
-                    .expect("could not send sas event")
+                    .expect("could not send sas started event");
             }
-            SasState::Done { .. } => {}
-            SasState::Cancelled(cancel_info) => {}
-            SasState::Started { .. } | SasState::Accepted { .. } | SasState::Confirmed => (),
+            SasState::Done { .. } => {
+                info!("verification done");
+
+                sender
+                    .send(VerificationCompleted)
+                    .expect("could not send sas completed event");
+            }
+            SasState::Started { .. } => info!("verification started"),
+            SasState::Accepted { .. } => info!("verification accepted"),
+            SasState::Confirmed => info!("verification confirmed"),
+            SasState::Cancelled(_) => info!("verification cancelled"),
         }
     }
+}
+
+/// Gratefully borrowed from the SDK, but modified to be a single line.
+pub fn format_emojis(emojis: [Emoji; 7]) -> String {
+    let emojis: Vec<_> = emojis.iter().map(|e| e.symbol).collect();
+
+    let center_emoji = |emoji: &str| -> String {
+        const EMOJI_WIDTH: usize = 2;
+        // These are emojis that need VARIATION-SELECTOR-16 (U+FE0F) so that they are
+        // rendered with coloured glyphs. For these, we need to add an extra
+        // space after them so that they are rendered properly in terminals.
+        const VARIATION_SELECTOR_EMOJIS: [&str; 7] = ["☁️", "❤️", "☂️", "✏️", "✂️", "☎️", "✈️"];
+
+        // Hack to make terminals behave properly when one of the above is printed.
+        let emoji = if VARIATION_SELECTOR_EMOJIS.contains(&emoji) {
+            format!("{emoji} ")
+        } else {
+            emoji.to_owned()
+        };
+
+        // This is a trick to account for the fact that emojis are wider than other
+        // monospace characters.
+        let placeholder = ".".repeat(EMOJI_WIDTH);
+
+        format!("{placeholder:^6}").replace(&placeholder, &emoji)
+    };
+
+    emojis
+        .iter()
+        .map(|e| center_emoji(e))
+        .collect::<Vec<_>>()
+        .join("")
 }

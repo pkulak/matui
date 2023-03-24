@@ -1,6 +1,7 @@
 use crate::matrix::{Matrix, RoomEvent};
 use crate::widgets::get_margin;
 use log::info;
+use matrix_sdk::deserialized_responses::TimelineEvent;
 use matrix_sdk::room::{Joined, Messages};
 use std::cell::Cell;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -66,13 +67,7 @@ impl Widget for ChatWidget<'_> {
             .split(area)[0];
 
         let items: Vec<ListItem> = if let Some(msg) = &self.chat.messages {
-            msg.chunk
-                .iter()
-                .map(|m| {
-                    let body = m.event.clone().into_json().to_string();
-                    ListItem::new(body)
-                })
-                .collect()
+            msg.chunk.iter().map(|m| make_list_item(m)).collect()
         } else {
             vec![]
         };
@@ -82,4 +77,9 @@ impl Widget for ChatWidget<'_> {
         StatefulWidget::render(list, area, buf, &mut list_state);
         self.chat.list_state.set(list_state)
     }
+}
+
+fn make_list_item(m: &TimelineEvent) -> ListItem {
+    info!("{}", m.event.json().to_string());
+    ListItem::new(m.event.json().to_string())
 }

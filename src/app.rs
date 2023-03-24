@@ -1,3 +1,4 @@
+use matrix_sdk::encryption::verification::SasVerification;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
@@ -33,6 +34,9 @@ pub struct App {
     /// And our single Matrix client and channel
     pub matrix: Matrix,
     pub send: Sender<MatuiEvent>,
+
+    /// We'll hold on to any in-progress verifications here
+    pub sas: Option<SasVerification>,
 }
 
 impl App {
@@ -54,6 +58,7 @@ impl App {
             chat: None,
             matrix,
             send,
+            sas: None,
         }
     }
 
