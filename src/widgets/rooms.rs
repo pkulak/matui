@@ -1,8 +1,7 @@
-use crate::handler::MatuiEvent;
+use crate::matrix::Matrix;
+use crate::roomcache::DecoratedRoom;
 use crossterm::event::{KeyCode, KeyEvent};
-use matrix_sdk::room::Joined;
 use std::cell::Cell;
-use std::sync::mpsc::Sender;
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
@@ -10,27 +9,24 @@ use tui::text::{Span, Spans};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
 use crate::widgets::textinput::TextInput;
-use crate::widgets::EventResult::Consumed;
-use crate::widgets::{get_margin, KeyEventing};
+use crate::widgets::EventResult::{Consumed, Ignored};
+use crate::widgets::{get_margin, Action, EventResult, KeyEventing};
 
 pub struct Rooms {
     pub textinput: TextInput,
-    pub joined: Vec<Joined>,
+    pub joined: Vec<DecoratedRoom>,
     pub list_state: Cell<ListState>,
-    pub sender: Sender<MatuiEvent>,
 }
 
 impl Rooms {
-    pub fn new(joined: Vec<Joined>, sender: Sender<MatuiEvent>) -> Self {
-        let mut joined: Vec<Joined> = joined.into_iter().filter(|r| !r.is_tombstoned()).collect();
-
-        sort_rooms(&mut joined);
+    pub fn new(matrix: Matrix) -> Self {
+        let mut rooms = matrix.fetch_rooms();
+        sort_rooms(&mut rooms);
 
         Self {
             textinput: TextInput::new("Search".to_string(), true, false),
-            joined,
+            joined: rooms,
             list_state: Cell::new(ListState::default()),
-            sender,
         }
     }
 
@@ -38,20 +34,19 @@ impl Rooms {
         RoomsWidget { rooms: self }
     }
 
-    pub fn input(&mut self, input: &KeyEvent) {
+    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
         match input.code {
             KeyCode::Down => self.next(),
             KeyCode::Up => self.previous(),
-            KeyCode::Enter => self
-                .sender
-                .send(MatuiEvent::RoomSelected(self.selected_room()))
-                .expect("could not send room selected event"),
+            KeyCode::Enter => return Consumed(Action::SelectRoom(self.selected_room().room)),
             _ => {
                 if let Consumed(_) = (&mut self.textinput).input(input) {
                     self.unselect()
                 }
             }
-        }
+        };
+
+        Ignored
     }
 
     fn next(&mut self) {
@@ -96,21 +91,16 @@ impl Rooms {
         self.list_state.set(state);
     }
 
-    fn filtered_rooms(&self) -> Vec<&Joined> {
+    fn filtered_rooms(&self) -> Vec<&DecoratedRoom> {
         let pattern = self.textinput.value.to_lowercase();
 
         self.joined
             .iter()
-            .filter(|j| {
-                j.name()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .contains(pattern.as_str())
-            })
+            .filter(|j| j.name.to_string().to_lowercase().contains(pattern.as_str()))
             .collect()
     }
 
-    fn selected_room(&self) -> Joined {
+    fn selected_room(&self) -> DecoratedRoom {
         match self.list_state.take().selected() {
             Some(i) => self.filtered_rooms()[i].clone(),
             None => self.filtered_rooms()[0].clone(),
@@ -171,10 +161,10 @@ impl Widget for RoomsWidget<'_> {
     }
 }
 
-fn make_list_item(joined: &Joined) -> ListItem {
-    let name = joined.name().unwrap_or("Unknown".to_string());
-    let unread = joined.unread_notification_counts().notification_count;
-    let highlights = joined.unread_notification_counts().highlight_count;
+fn make_list_item(joined: &DecoratedRoom) -> ListItem {
+    let name = joined.name.to_string();
+    let unread = joined.room.unread_notification_counts().notification_count;
+    let highlights = joined.room.unread_notification_counts().highlight_count;
 
     let mut spans = vec![Span::from(name)];
 
@@ -195,11 +185,13 @@ fn make_list_item(joined: &Joined) -> ListItem {
     ListItem::new(Spans::from(spans))
 }
 
-fn sort_rooms(rooms: &mut [Joined]) {
+fn sort_rooms(rooms: &mut [DecoratedRoom]) {
     rooms.sort_by_key(|r| {
         (
-            -(r.unread_notification_counts().notification_count as i64),
-            r.name().unwrap_or_default(),
+            r.room.unread_notification_counts().notification_count,
+            r.last_ts,
         )
     });
+
+    rooms.reverse()
 }

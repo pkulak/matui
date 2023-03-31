@@ -6,18 +6,16 @@ use crate::widgets::error::Error;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::signin::Signin;
-use crate::widgets::Action::{ButtonNo, ButtonYes};
+use crate::widgets::Action::{ButtonNo, ButtonYes, SelectRoom};
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
-use matrix_sdk::room::Joined;
 
 pub enum MatuiEvent {
     Error(String),
     LoginComplete,
     LoginRequired,
     LoginStarted,
-    RoomSelected(Joined),
     SyncComplete,
     SyncStarted(SyncType),
     VerificationStarted(SasVerification, [Emoji; 7]),
@@ -77,14 +75,6 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.progress = None;
             app.sas = None;
         }
-        MatuiEvent::RoomSelected(joined) => {
-            app.rooms = None;
-
-            let mut room = Chat::new(app.matrix.clone());
-            room.set_room(joined);
-
-            app.chat = Some(room);
-        }
     }
 }
 
@@ -112,7 +102,14 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
             }
 
             if let Some(w) = &mut app.rooms {
-                w.input(&key_event)
+                if let Consumed(SelectRoom(joined)) = w.input(&key_event) {
+                    app.rooms = None;
+
+                    let mut room = Chat::new(app.matrix.clone());
+                    room.set_room(joined);
+
+                    app.chat = Some(room);
+                }
             }
 
             if let Some(w) = &mut app.confirm {
@@ -134,7 +131,7 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
             }
 
             if app.signin.is_none() && app.rooms.is_none() && key_event.code == KeyCode::Char('r') {
-                app.rooms = Some(Rooms::new(app.matrix.joined_rooms(), app.send.clone()));
+                app.rooms = Some(Rooms::new(app.matrix.clone()));
             }
         }
     }

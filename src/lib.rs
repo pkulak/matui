@@ -15,5 +15,6 @@ pub mod handler;
 /// List of rooms we're in.
 pub mod widgets;
 
-/// Matrix helper methods
+/// Matrix
 pub mod matrix;
+pub mod roomcache;

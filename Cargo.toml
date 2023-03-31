@@ -6,8 +6,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
-crossterm = "0.25.0"
-dirs = "4.0"
+crossterm = "0.26"
+dirs = "5.0"
 futures = "0.3.24"
 log = "0.4"
 once_cell = "1.17"
@@ -19,10 +19,14 @@ tui = "0.19.0"
 
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk.git"
-rev = "1684dbe0a15fd089d89523378eea31575f19423c"
-# version = "0.6"
+rev = "8b5de47acb9486c8dbbbe5764c7c97c24b6997b8"
 features = [
     "markdown",
     "image-rayon",
 ]
+
+[dependencies.ruma]
+git = "https://github.com/ruma/ruma.git"
+rev = "8eea3e05490fa9a318f9ed66c3a75272e6ef0ee5"
+
 

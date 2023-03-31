@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::handler::MatuiEvent::{Error, VerificationCompleted, VerificationStarted};
 use crate::handler::{MatuiEvent, SyncType};
+use crate::roomcache::{DecoratedRoom, RoomCache};
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info};
@@ -35,10 +36,11 @@ use tokio::runtime::Runtime;
 pub struct Matrix {
     rt: Arc<Runtime>,
     client: Arc<OnceCell<Client>>,
+    room_cache: Arc<RoomCache>,
     send: Sender<MatuiEvent>,
 }
 
-pub enum RoomEvent {
+pub enum MessageEvent {
     FetchCompleted(Messages),
 }
 
@@ -53,6 +55,7 @@ impl Matrix {
         Matrix {
             rt: Arc::new(rt),
             client: Arc::new(OnceCell::default()),
+            room_cache: Arc::new(RoomCache::default()),
             send,
         }
     }
@@ -95,7 +98,7 @@ impl Matrix {
             let (client, token) = match restore_session(session_file.as_path()).await {
                 Ok(tuple) => tuple,
                 Err(err) => {
-                    matrix.send(MatuiEvent::Error(err.to_string()));
+                    matrix.send(Error(err.to_string()));
                     return;
                 }
             };
@@ -107,10 +110,14 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
-            if let Err(err) = sync_once(client, token, &session_file).await {
-                matrix.send(MatuiEvent::Error(err.to_string()));
+            add_default_handlers(client.clone());
+
+            if let Err(err) = sync_once(client.clone(), token, &session_file).await {
+                matrix.send(Error(err.to_string()));
                 return;
             };
+
+            matrix.room_cache.populate(client).await;
 
             matrix.send(MatuiEvent::SyncComplete);
         });
@@ -128,7 +135,7 @@ impl Matrix {
             let client = match login(&data_dir, &session_file, &user, &pass).await {
                 Ok(client) => client,
                 Err(err) => {
-                    matrix.send(MatuiEvent::Error(err.to_string()));
+                    matrix.send(Error(err.to_string()));
                     return;
                 }
             };
@@ -141,10 +148,12 @@ impl Matrix {
             matrix.send(MatuiEvent::LoginComplete);
             matrix.send(MatuiEvent::SyncStarted(SyncType::Initial));
 
-            if let Err(err) = sync_once(client, None, &session_file).await {
-                matrix.send(MatuiEvent::Error(err.to_string()));
+            if let Err(err) = sync_once(client.clone(), None, &session_file).await {
+                matrix.send(Error(err.to_string()));
                 return;
             };
+
+            matrix.room_cache.populate(client).await;
 
             matrix.send(MatuiEvent::SyncComplete);
         });
@@ -152,7 +161,6 @@ impl Matrix {
 
     pub fn sync(&self) {
         add_verification_handlers(self.client());
-        add_default_handlers(self.client());
 
         let client = self.client();
 
@@ -171,7 +179,6 @@ impl Matrix {
                     };
 
                     let (_, session_file) = Matrix::dirs();
-                    let session_file = session_file.to_path_buf();
 
                     // We persist the token each time to keep the disk up-to-date
                     if let Err(err) = persist_sync_token(&session_file, response.next_batch) {
@@ -206,11 +213,11 @@ impl Matrix {
         });
     }
 
-    pub fn joined_rooms(&self) -> Vec<Joined> {
-        self.client().joined_rooms()
+    pub fn fetch_rooms(&self) -> Vec<DecoratedRoom> {
+        self.room_cache.get_rooms()
     }
 
-    pub fn fetch_messages(&self, room: Joined, sender: Sender<RoomEvent>) {
+    pub fn fetch_messages(&self, room: Joined, sender: Sender<MessageEvent>) {
         let matrix = self.clone();
 
         self.rt.spawn(async move {
@@ -226,8 +233,8 @@ impl Matrix {
             };
 
             sender
-                .send(RoomEvent::FetchCompleted(messages))
-                .expect("count not send room event");
+                .send(MessageEvent::FetchCompleted(messages))
+                .expect("count not send message event");
         });
     }
 }
@@ -396,6 +403,8 @@ fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::Result
 fn add_default_handlers(client: Client) {
     client.add_event_handler(
         |event: OriginalSyncRoomMessageEvent, room: Room| async move {
+            info!("{:?}", event);
+
             let Room::Joined(_) = room else { return };
             let MessageType::Text(text_content) = event.content.msgtype else { return };
 

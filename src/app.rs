@@ -91,8 +91,8 @@ impl App {
         }
 
         // send out the ticks
-        if let Some(r) = self.chat.as_mut() {
-            r.tick()
+        if let Some(c) = self.chat.as_mut() {
+            c.tick()
         }
 
         if let Some(p) = self.progress.as_mut() {

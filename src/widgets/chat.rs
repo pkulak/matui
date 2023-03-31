@@ -1,4 +1,4 @@
-use crate::matrix::{Matrix, RoomEvent};
+use crate::matrix::{Matrix, MessageEvent};
 use crate::widgets::get_margin;
 use log::info;
 use matrix_sdk::deserialized_responses::TimelineEvent;
@@ -15,8 +15,8 @@ pub struct Chat {
     room: Option<Joined>,
     messages: Option<Messages>,
     list_state: Cell<ListState>,
-    sender: Sender<RoomEvent>,
-    receiver: Receiver<RoomEvent>,
+    sender: Sender<MessageEvent>,
+    receiver: Receiver<MessageEvent>,
 }
 
 impl Chat {
@@ -41,7 +41,7 @@ impl Chat {
     }
 
     pub fn tick(&mut self) {
-        if let Ok(RoomEvent::FetchCompleted(msg)) = self.receiver.try_recv() {
+        if let Ok(MessageEvent::FetchCompleted(msg)) = self.receiver.try_recv() {
             let total = msg.chunk.len();
             self.messages = Some(msg);
             info!("loaded {} messages", total);
@@ -67,7 +67,7 @@ impl Widget for ChatWidget<'_> {
             .split(area)[0];
 
         let items: Vec<ListItem> = if let Some(msg) = &self.chat.messages {
-            msg.chunk.iter().map(|m| make_list_item(m)).collect()
+            msg.chunk.iter().map(make_list_item).collect()
         } else {
             vec![]
         };
@@ -80,6 +80,5 @@ impl Widget for ChatWidget<'_> {
 }
 
 fn make_list_item(m: &TimelineEvent) -> ListItem {
-    info!("{}", m.event.json().to_string());
     ListItem::new(m.event.json().to_string())
 }

@@ -1,6 +1,7 @@
 use crate::widgets::Action::ChangeFocus;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crossterm::event::KeyEvent;
+use matrix_sdk::room::Joined;
 
 pub mod error;
 pub mod progress;
@@ -20,8 +21,9 @@ pub enum EventResult {
 pub enum Action {
     ButtonYes,
     ButtonNo,
-    Typing,
     ChangeFocus,
+    SelectRoom(Joined),
+    Typing,
 }
 
 pub trait KeyEventing {
