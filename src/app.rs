@@ -91,10 +91,6 @@ impl App {
         }
 
         // send out the ticks
-        if let Some(c) = self.chat.as_mut() {
-            c.tick()
-        }
-
         if let Some(p) = self.progress.as_mut() {
             p.tick(self.timestamp)
         }

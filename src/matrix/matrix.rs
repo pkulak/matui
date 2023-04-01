@@ -9,10 +9,11 @@ use crate::handler::{MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
-use log::{error, info};
+use log::{error, info, warn};
 use matrix_sdk::config::SyncSettings;
+use matrix_sdk::deserialized_responses::TimelineEvent;
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
-use matrix_sdk::room::{Joined, Messages, MessagesOptions, Room};
+use matrix_sdk::room::{Joined, MessagesOptions, Room};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
@@ -38,10 +39,6 @@ pub struct Matrix {
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
     send: Sender<MatuiEvent>,
-}
-
-pub enum MessageEvent {
-    FetchCompleted(Messages),
 }
 
 impl Matrix {
@@ -217,8 +214,9 @@ impl Matrix {
         self.room_cache.get_rooms()
     }
 
-    pub fn fetch_messages(&self, room: Joined, sender: Sender<MessageEvent>) {
+    pub fn fetch_messages(&self, room: Joined) {
         let matrix = self.clone();
+        let sender = self.send.clone();
 
         self.rt.spawn(async move {
             let messages = match room
@@ -232,9 +230,39 @@ impl Matrix {
                 }
             };
 
-            sender
-                .send(MessageEvent::FetchCompleted(messages))
-                .expect("count not send message event");
+            let mut reversed = messages.chunk.clone();
+            reversed.reverse();
+
+            for msg in reversed {
+                sender
+                    .send(MatuiEvent::Timeline(msg))
+                    .expect("could not send timeline event")
+            }
+
+            async fn send_member_event(
+                msg: &TimelineEvent,
+                room: Joined,
+                sender: Sender<MatuiEvent>,
+            ) -> anyhow::Result<()> {
+                let deserialized = msg.event.deserialize()?;
+
+                let member = room
+                    .get_member(deserialized.sender())
+                    .await?
+                    .context("not a member")?;
+
+                sender.send(MatuiEvent::Member(member))?;
+
+                Ok(())
+            }
+
+            for msg in &messages.chunk {
+                let sender = sender.clone();
+
+                if let Err(e) = send_member_event(msg, room.clone(), sender).await {
+                    warn!("Could not send room member event: {}", e.to_string());
+                }
+            }
         });
     }
 }

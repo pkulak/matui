@@ -9,15 +9,19 @@ use crate::widgets::signin::Signin;
 use crate::widgets::Action::{ButtonNo, ButtonYes, SelectRoom};
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
+use matrix_sdk::deserialized_responses::TimelineEvent;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
+use matrix_sdk::room::RoomMember;
 
 pub enum MatuiEvent {
     Error(String),
     LoginComplete,
     LoginRequired,
     LoginStarted,
+    Member(RoomMember),
     SyncComplete,
     SyncStarted(SyncType),
+    Timeline(TimelineEvent),
     VerificationStarted(SasVerification, [Emoji; 7]),
     VerificationCompleted,
 }
@@ -44,6 +48,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.error = None;
             app.progress = None;
         }
+
+        // Let the chat update when we learn about new usernames
+        MatuiEvent::Member(rm) => {
+            if let Some(c) = &mut app.chat {
+                c.room_member_event(rm);
+            }
+        }
         MatuiEvent::SyncStarted(st) => {
             app.error = None;
             match st {
@@ -58,6 +69,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
 
             // now we can sync forever
             app.matrix.sync();
+        }
+
+        // Let the chat update to new timeline events
+        MatuiEvent::Timeline(event) => {
+            if let Some(c) = &mut app.chat {
+                c.timeline_event(event);
+            }
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
             app.sas = Some(sas);
