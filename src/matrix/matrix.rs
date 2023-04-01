@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::handler::MatuiEvent::{Error, VerificationCompleted, VerificationStarted};
 use crate::handler::{MatuiEvent, SyncType};
-use crate::roomcache::{DecoratedRoom, RoomCache};
+use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info};

@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::matrix::format_emojis;
+use crate::matrix::matrix::format_emojis;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;

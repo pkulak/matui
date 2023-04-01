@@ -1,11 +1,11 @@
-use crate::matrix::Matrix;
-use crate::roomcache::DecoratedRoom;
+use crate::matrix::matrix::Matrix;
+use crate::matrix::roomcache::DecoratedRoom;
 use crossterm::event::{KeyCode, KeyEvent};
 use std::cell::Cell;
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
-use tui::text::{Span, Spans};
+use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
 use crate::widgets::textinput::TextInput;
@@ -23,11 +23,15 @@ impl Rooms {
         let mut rooms = matrix.fetch_rooms();
         sort_rooms(&mut rooms);
 
-        Self {
+        let mut ret = Self {
             textinput: TextInput::new("Search".to_string(), true, false),
             joined: rooms,
             list_state: Cell::new(ListState::default()),
-        }
+        };
+
+        ret.reset();
+
+        ret
     }
 
     pub fn widget(&self) -> RoomsWidget {
@@ -41,7 +45,7 @@ impl Rooms {
             KeyCode::Enter => return Consumed(Action::SelectRoom(self.selected_room().room)),
             _ => {
                 if let Consumed(_) = (&mut self.textinput).input(input) {
-                    self.unselect()
+                    self.reset()
                 }
             }
         };
@@ -54,7 +58,7 @@ impl Rooms {
 
         let i = match state.selected() {
             Some(i) => {
-                if i >= self.joined.len() - 1 {
+                if i >= self.filtered_rooms().len() - 1 {
                     0
                 } else {
                     i + 1
@@ -73,7 +77,7 @@ impl Rooms {
         let i = match state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.joined.len() - 1
+                    self.filtered_rooms().len() - 1
                 } else {
                     i - 1
                 }
@@ -85,9 +89,9 @@ impl Rooms {
         self.list_state.set(state);
     }
 
-    fn unselect(&mut self) {
+    fn reset(&mut self) {
         let mut state = self.list_state.take();
-        state.select(None);
+        state.select(Some(0));
         self.list_state.set(state);
     }
 
@@ -155,7 +159,7 @@ impl Widget for RoomsWidget<'_> {
             .split(splits[1])[0];
 
         let mut list_state = self.rooms.list_state.take();
-        let list = List::new(items).highlight_style(Style::default().bg(Color::DarkGray));
+        let list = List::new(items).highlight_symbol("> ");
         StatefulWidget::render(list, area, buf, &mut list_state);
         self.rooms.list_state.set(list_state)
     }
@@ -182,7 +186,20 @@ fn make_list_item(joined: &DecoratedRoom) -> ListItem {
         ));
     }
 
-    ListItem::new(Spans::from(spans))
+    let mut lines = Text::from(Spans::from(spans));
+
+    let spans = vec![Span::styled(
+        format!(
+            "{}: {}",
+            joined.last_sender.clone().unwrap_or_default(),
+            joined.last_message.clone().unwrap_or_default()
+        ),
+        Style::default().fg(Color::DarkGray),
+    )];
+
+    lines.extend(Text::from(Spans::from(spans)));
+
+    ListItem::new(lines)
 }
 
 fn sort_rooms(rooms: &mut [DecoratedRoom]) {

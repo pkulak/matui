@@ -1,4 +1,4 @@
-use crate::matrix::{Matrix, MessageEvent};
+use crate::matrix::matrix::{Matrix, MessageEvent};
 use crate::widgets::get_margin;
 use log::info;
 use matrix_sdk::deserialized_responses::TimelineEvent;

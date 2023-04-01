@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{bail, Context};
 use futures::future::join_all;
 use log::info;
 use matrix_sdk::room::{Joined, MessagesOptions};
@@ -76,11 +76,13 @@ impl DecoratedRoom {
                         _ => "".to_string(),
                     };
 
+                    let member = room.get_member(&c.sender).await?.context("not a member")?;
+
                     return Ok(DecoratedRoom {
                         room,
                         name,
                         last_message: Some(body),
-                        last_sender: Some(c.sender.to_string()),
+                        last_sender: Some(member.name().to_string()),
                         last_ts: Some(c.origin_server_ts),
                     });
                 }

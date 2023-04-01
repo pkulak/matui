@@ -17,4 +17,3 @@ pub mod widgets;
 
 /// Matrix
 pub mod matrix;
-pub mod roomcache;

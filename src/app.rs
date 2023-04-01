@@ -3,7 +3,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
 use crate::handler::MatuiEvent;
-use crate::matrix::Matrix;
+use crate::matrix::matrix::Matrix;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;
