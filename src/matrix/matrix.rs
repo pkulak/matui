@@ -11,7 +11,6 @@ use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info, warn};
 use matrix_sdk::config::SyncSettings;
-use matrix_sdk::deserialized_responses::TimelineEvent;
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
 use matrix_sdk::room::{Joined, MessagesOptions, Room};
 use matrix_sdk::ruma::api::client::filter::{
@@ -29,6 +28,8 @@ use matrix_sdk::{Client, LoopCtrl, ServerName, Session};
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
+use ruma::events::{AnySyncTimelineEvent, AnyTimelineEvent};
+use ruma::UInt;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
@@ -219,10 +220,11 @@ impl Matrix {
         let sender = self.send.clone();
 
         self.rt.spawn(async move {
-            let messages = match room
-                .messages(MessagesOptions::new(Direction::Backward))
-                .await
-            {
+            // fetch the actual messages
+            let mut options = MessagesOptions::new(Direction::Backward);
+            options.limit = UInt::from(25 as u16);
+
+            let messages = match room.messages(options).await {
                 Ok(msg) => msg,
                 Err(err) => {
                     matrix.send(Error(err.to_string()));
@@ -230,24 +232,28 @@ impl Matrix {
                 }
             };
 
-            let mut reversed = messages.chunk.clone();
+            let mut reversed: Vec<AnyTimelineEvent> = messages
+                .chunk
+                .iter()
+                .map(|te| te.event.deserialize().expect("could not deserialize"))
+                .collect();
+
             reversed.reverse();
 
-            for msg in reversed {
+            for msg in reversed.clone() {
                 sender
                     .send(MatuiEvent::Timeline(msg))
                     .expect("could not send timeline event")
             }
 
+            // and look up the detail about every user
             async fn send_member_event(
-                msg: &TimelineEvent,
+                msg: &AnyTimelineEvent,
                 room: Joined,
                 sender: Sender<MatuiEvent>,
             ) -> anyhow::Result<()> {
-                let deserialized = msg.event.deserialize()?;
-
                 let member = room
-                    .get_member(deserialized.sender())
+                    .get_member(msg.sender())
                     .await?
                     .context("not a member")?;
 
@@ -256,10 +262,10 @@ impl Matrix {
                 Ok(())
             }
 
-            for msg in &messages.chunk {
+            for msg in reversed {
                 let sender = sender.clone();
 
-                if let Err(e) = send_member_event(msg, room.clone(), sender).await {
+                if let Err(e) = send_member_event(&msg, room.clone(), sender).await {
                     warn!("Could not send room member event: {}", e.to_string());
                 }
             }
@@ -429,16 +435,11 @@ fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::Result
 }
 
 fn add_default_handlers(client: Client) {
-    client.add_event_handler(
-        |event: OriginalSyncRoomMessageEvent, room: Room| async move {
-            info!("{:?}", event);
-
-            let Room::Joined(_) = room else { return };
-            let MessageType::Text(text_content) = event.content.msgtype else { return };
-
-            info!("{}", text_content.body);
-        },
-    );
+    client.add_event_handler(|event: AnySyncTimelineEvent, room: Room| async move {
+        App::get_sender().send(MatuiEvent::Timeline(
+            event.into_full_event(room.room_id().into()),
+        ))
+    });
 }
 
 fn add_verification_handlers(client: Client) {

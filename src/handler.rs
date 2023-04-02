@@ -9,9 +9,9 @@ use crate::widgets::signin::Signin;
 use crate::widgets::Action::{ButtonNo, ButtonYes, SelectRoom};
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
-use matrix_sdk::deserialized_responses::TimelineEvent;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
 use matrix_sdk::room::RoomMember;
+use ruma::events::AnyTimelineEvent;
 
 pub enum MatuiEvent {
     Error(String),
@@ -21,7 +21,7 @@ pub enum MatuiEvent {
     Member(RoomMember),
     SyncComplete,
     SyncStarted(SyncType),
-    Timeline(TimelineEvent),
+    Timeline(AnyTimelineEvent),
     VerificationStarted(SasVerification, [Emoji; 7]),
     VerificationCompleted,
 }

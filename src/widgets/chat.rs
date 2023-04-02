@@ -1,16 +1,18 @@
 use crate::matrix::matrix::Matrix;
 use crate::widgets::get_margin;
-use matrix_sdk::deserialized_responses::TimelineEvent;
+use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::room::message::TextMessageEventContent;
 use ruma::events::AnyMessageLikeEvent::RoomMessage;
+use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
 use ruma::events::MessageLikeEvent::Original;
 use ruma::OwnedEventId;
 use std::cell::Cell;
+use std::collections::HashMap;
 use tui::buffer::Buffer;
-use tui::layout::{Constraint, Direction, Layout, Rect};
+use tui::layout::{Constraint, Corner, Direction, Layout, Rect};
 use tui::style::{Color, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::{List, ListItem, ListState, StatefulWidget, Widget};
@@ -18,7 +20,9 @@ use tui::widgets::{List, ListItem, ListState, StatefulWidget, Widget};
 pub struct Chat {
     matrix: Matrix,
     room: Option<Joined>,
+    events: Vec<AnyTimelineEvent>,
     messages: Vec<Message>,
+    members: HashMap<String, String>,
     list_state: Cell<ListState>,
 }
 
@@ -29,8 +33,9 @@ pub struct Message {
 }
 
 impl Message {
-    fn try_from(event: TimelineEvent) -> Option<Self> {
-        if let Ok(MessageLike(RoomMessage(Original(c)))) = event.event.deserialize() {
+    // can we make a brand-new message, just from this event?
+    fn try_from(event: &AnyTimelineEvent) -> Option<Self> {
+        if let MessageLike(RoomMessage(Original(c))) = event.clone() {
             let body = match c.content.msgtype {
                 Text(TextMessageEventContent { body, .. }) => body,
                 _ => return None,
@@ -73,7 +78,9 @@ impl Chat {
         Self {
             matrix,
             room: None,
+            events: vec![],
             messages: vec![],
+            members: HashMap::new(),
             list_state: Cell::new(ListState::default()),
         }
     }
@@ -83,18 +90,30 @@ impl Chat {
         self.room = Some(room);
     }
 
-    pub fn timeline_event(&mut self, event: TimelineEvent) {
-        if let Some(message) = Message::try_from(event) {
-            self.messages.push(message);
+    fn reset(&mut self) {
+        if self.messages.is_empty() {
+            return;
         }
+
+        let mut state = self.list_state.take();
+        state.select(Some(0));
+        self.list_state.set(state);
+    }
+
+    pub fn timeline_event(&mut self, event: AnyTimelineEvent) {
+        if self.room.is_none() || event.room_id() != self.room.as_ref().unwrap().room_id() {
+            return;
+        }
+
+        self.events.push(event);
+        self.messages = make_message_list(&self.events, &self.members);
+        self.reset();
     }
 
     pub fn room_member_event(&mut self, member: RoomMember) {
-        for msg in self.messages.iter_mut() {
-            if &msg.sender == member.user_id() {
-                msg.sender = member.name().to_string();
-            }
-        }
+        self.members
+            .insert(member.user_id().into(), member.name().to_string());
+        self.messages = make_message_list(&self.events, &self.members);
     }
 
     pub fn widget(&self) -> ChatWidget {
@@ -123,8 +142,35 @@ impl Widget for ChatWidget<'_> {
             .collect();
 
         let mut list_state = self.chat.list_state.take();
-        let list = List::new(items).highlight_style(Style::default().bg(Color::DarkGray));
+
+        let list = List::new(items)
+            .highlight_symbol("> ")
+            .start_corner(Corner::BottomLeft);
+
         StatefulWidget::render(list, area, buf, &mut list_state);
         self.chat.list_state.set(list_state)
     }
+}
+
+fn make_message_list(
+    timeline: &Vec<AnyTimelineEvent>,
+    members: &HashMap<String, String>,
+) -> Vec<Message> {
+    let mut messages = vec![];
+
+    for event in timeline {
+        if let Some(mut message) = Message::try_from(event) {
+            if members.contains_key(&message.sender) {
+                message.sender = members.get(&message.sender).unwrap().to_string();
+            }
+
+            messages.push(message);
+        }
+    }
+
+    // our message list is reversed because we start at the bottom of the
+    // window and move up, like any good chat list
+    messages.reverse();
+
+    messages
 }
