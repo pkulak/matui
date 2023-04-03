@@ -4,6 +4,8 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use crate::app::App;
+use crate::event::Event;
+use crate::event::Event::{Matui, Tick};
 use crate::handler::MatuiEvent::{Error, VerificationCompleted, VerificationStarted};
 use crate::handler::{MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
@@ -39,11 +41,11 @@ pub struct Matrix {
     rt: Arc<Runtime>,
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
-    send: Sender<MatuiEvent>,
+    send: Sender<Event>,
 }
 
 impl Matrix {
-    pub fn new(send: Sender<MatuiEvent>) -> Matrix {
+    pub fn new(send: Sender<Event>) -> Matrix {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -75,7 +77,9 @@ impl Matrix {
     }
 
     fn send(&self, event: MatuiEvent) {
-        self.send.send(event).expect("could not send Matrix event");
+        self.send
+            .send(Matui(event))
+            .expect("could not send Matrix event");
     }
 
     pub fn init(&self) {
@@ -242,7 +246,7 @@ impl Matrix {
 
             for msg in reversed.clone() {
                 sender
-                    .send(MatuiEvent::Timeline(msg))
+                    .send(Matui(MatuiEvent::Timeline(msg)))
                     .expect("could not send timeline event")
             }
 
@@ -250,14 +254,14 @@ impl Matrix {
             async fn send_member_event(
                 msg: &AnyTimelineEvent,
                 room: Joined,
-                sender: Sender<MatuiEvent>,
+                sender: Sender<Event>,
             ) -> anyhow::Result<()> {
                 let member = room
                     .get_member(msg.sender())
                     .await?
                     .context("not a member")?;
 
-                sender.send(MatuiEvent::Member(member))?;
+                sender.send(Matui(MatuiEvent::Member(member)))?;
 
                 Ok(())
             }
@@ -269,6 +273,9 @@ impl Matrix {
                     warn!("Could not send room member event: {}", e.to_string());
                 }
             }
+
+            // finally, send a tick event to force a render
+            sender.send(Tick).expect("could not send click event")
         });
     }
 
@@ -446,9 +453,9 @@ fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::Result
 
 fn add_default_handlers(client: Client) {
     client.add_event_handler(|event: AnySyncTimelineEvent, room: Room| async move {
-        App::get_sender().send(MatuiEvent::Timeline(
+        App::get_sender().send(Matui(MatuiEvent::Timeline(
             event.into_full_event(room.room_id().into()),
-        ))
+        )))
     });
 }
 
@@ -510,7 +517,7 @@ fn add_verification_handlers(client: Client) {
     );
 }
 
-async fn sas_verification_handler(sas: SasVerification, sender: Sender<MatuiEvent>) {
+async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
     sas.accept().await.unwrap();
 
     let mut stream = sas.changes();
@@ -526,14 +533,14 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<MatuiEven
                 let emoji_slice = emojis.expect("only emoji verification is supported").emojis;
 
                 sender
-                    .send(VerificationStarted(sas.clone(), emoji_slice))
+                    .send(Matui(VerificationStarted(sas.clone(), emoji_slice)))
                     .expect("could not send sas started event");
             }
             SasState::Done { .. } => {
                 info!("verification done");
 
                 sender
-                    .send(VerificationCompleted)
+                    .send(Matui(VerificationCompleted))
                     .expect("could not send sas completed event");
             }
             SasState::Started { .. } => info!("verification started"),

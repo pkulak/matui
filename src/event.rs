@@ -1,10 +1,12 @@
+use crate::handler::MatuiEvent;
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::sync::mpsc;
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
 
 /// Terminal events.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Event {
     /// Terminal tick.
     Tick,
@@ -14,6 +16,8 @@ pub enum Event {
     Mouse(MouseEvent),
     /// Terminal resize.
     Resize(u16, u16),
+    /// App event
+    Matui(MatuiEvent),
 }
 
 /// Terminal event handler.
@@ -72,5 +76,9 @@ impl EventHandler {
     /// there is no data available and it's possible for more data to be sent.
     pub fn next(&self) -> anyhow::Result<Event> {
         Ok(self.receiver.recv()?)
+    }
+
+    pub fn sender(&self) -> Sender<Event> {
+        self.sender.clone()
     }
 }

@@ -2,7 +2,7 @@ use matrix_sdk::encryption::verification::SasVerification;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
-use crate::handler::MatuiEvent;
+use crate::event::Event;
 use crate::matrix::matrix::Matrix;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
@@ -13,7 +13,7 @@ use crate::widgets::signin::Signin;
 use tui::backend::Backend;
 use tui::terminal::Frame;
 
-static mut SENDER: Mutex<Option<Sender<MatuiEvent>>> = Mutex::new(None);
+static mut SENDER: Mutex<Option<Sender<Event>>> = Mutex::new(None);
 
 /// Application.
 pub struct App {
@@ -33,14 +33,14 @@ pub struct App {
 
     /// And our single Matrix client and channel
     pub matrix: Matrix,
-    pub send: Sender<MatuiEvent>,
+    pub send: Sender<Event>,
 
     /// We'll hold on to any in-progress verifications here
     pub sas: Option<SasVerification>,
 }
 
 impl App {
-    pub fn new(send: Sender<MatuiEvent>) -> Self {
+    pub fn new(send: Sender<Event>) -> Self {
         let matrix = Matrix::new(send.clone());
 
         // Save the sender for future threads.
@@ -70,7 +70,7 @@ impl App {
     ///
     /// This is set once before the rest of the app starts, so should always
     /// be available and never set again.
-    pub fn get_sender() -> Sender<MatuiEvent> {
+    pub fn get_sender() -> Sender<Event> {
         unsafe {
             SENDER
                 .lock()

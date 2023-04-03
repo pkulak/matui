@@ -13,6 +13,7 @@ use matrix_sdk::encryption::verification::{Emoji, SasVerification};
 use matrix_sdk::room::RoomMember;
 use ruma::events::AnyTimelineEvent;
 
+#[derive(Clone, Debug)]
 pub enum MatuiEvent {
     Error(String),
     LoginComplete,
@@ -26,6 +27,7 @@ pub enum MatuiEvent {
     VerificationCompleted,
 }
 
+#[derive(Clone, Debug)]
 pub enum SyncType {
     Initial,
     Latest,
@@ -150,7 +152,7 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
                 }
             }
 
-            if app.signin.is_none() && app.rooms.is_none() && key_event.code == KeyCode::Char('r') {
+            if app.signin.is_none() && app.rooms.is_none() && key_event.code == KeyCode::Char('k') {
                 app.rooms = Some(Rooms::new(app.matrix.clone()));
             }
         }
