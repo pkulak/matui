@@ -271,6 +271,16 @@ impl Matrix {
             }
         });
     }
+
+    pub fn timeline_event(&self, event: &AnyTimelineEvent) {
+        let matrix = self.clone();
+        let event = event.clone();
+
+        self.rt.spawn(async move {
+            let client = matrix.client();
+            matrix.room_cache.timeline_event(client, &event).await;
+        });
+    }
 }
 
 /// The data needed to re-build a client.

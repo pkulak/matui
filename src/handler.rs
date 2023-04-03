@@ -70,12 +70,14 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             // now we can sync forever
             app.matrix.sync();
         }
-
-        // Let the chat update to new timeline events
         MatuiEvent::Timeline(event) => {
             if let Some(c) = &mut app.chat {
-                c.timeline_event(event);
+                c.timeline_event(&event);
             }
+
+            // is it weird to send events all the way up here, then right
+            // back down?
+            app.matrix.timeline_event(&event)
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
             app.sas = Some(sas);

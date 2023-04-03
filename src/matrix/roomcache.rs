@@ -7,6 +7,7 @@ use ruma::api::Direction;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::room::message::TextMessageEventContent;
 use ruma::events::AnyMessageLikeEvent::RoomMessage;
+use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
 use ruma::events::MessageLikeEvent::Original;
 use ruma::MilliSecondsSinceUnixEpoch;
@@ -52,6 +53,24 @@ impl RoomCache {
 
     pub fn get_rooms(&self) -> Vec<DecoratedRoom> {
         self.rooms.lock().expect("to unlock rooms").clone()
+    }
+
+    pub async fn timeline_event(&self, client: Client, event: &AnyTimelineEvent) {
+        let joined = match client.get_joined_room(event.room_id()) {
+            Some(joined) => joined,
+            None => return,
+        };
+
+        let decorated = DecoratedRoom::from_joined(joined).await;
+
+        let mut rooms = self.rooms.lock().expect("to unlock rooms");
+
+        for dec in rooms.iter_mut() {
+            if dec.room.room_id() == event.room_id() {
+                *dec = decorated;
+                return;
+            }
+        }
     }
 }
 

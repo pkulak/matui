@@ -1,6 +1,5 @@
 use crate::matrix::matrix::Matrix;
 use crate::widgets::get_margin;
-use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::room::message::TextMessageEventContent;
@@ -100,12 +99,12 @@ impl Chat {
         self.list_state.set(state);
     }
 
-    pub fn timeline_event(&mut self, event: AnyTimelineEvent) {
+    pub fn timeline_event(&mut self, event: &AnyTimelineEvent) {
         if self.room.is_none() || event.room_id() != self.room.as_ref().unwrap().room_id() {
             return;
         }
 
-        self.events.push(event);
+        self.events.push(event.clone());
         self.messages = make_message_list(&self.events, &self.members);
         self.reset();
     }
