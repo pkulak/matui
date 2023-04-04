@@ -17,3 +17,6 @@ pub mod widgets;
 
 /// Matrix
 pub mod matrix;
+
+/// Using external apps to do our bidding
+pub mod spawn;

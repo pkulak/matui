@@ -15,23 +15,24 @@ fn main() -> anyhow::Result<()> {
     let terminal = Terminal::new(backend)?;
     let events = EventHandler::new(250);
     let sender = events.sender();
-    let mut tui = Tui::new(terminal, events);
+    let mut tui = Tui::new(terminal);
     tui.init()?;
 
     // Create an application.
-    let mut app = App::new(sender);
+    let mut app = App::new(sender, events);
 
     // Start the main loop.
     while app.running {
         // Handle events.
-        match tui.events.next()? {
+        match app.events.next()? {
             Event::Tick => {
                 app.tick();
-                tui.draw(&mut app)?;
+                tui.draw(&mut app, false)?;
             }
+            Event::Redraw => tui.draw(&mut app, true)?,
             Event::Key(key_event) => {
                 handle_key_event(key_event, &mut app)?;
-                tui.draw(&mut app)?;
+                tui.draw(&mut app, false)?;
             }
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}

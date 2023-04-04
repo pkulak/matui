@@ -37,6 +37,8 @@ impl Widget for ErrorWidget<'_> {
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];
 
+        buf.merge(&Buffer::empty(area));
+
         let splits = Layout::default()
             .direction(Direction::Vertical)
             .horizontal_margin(4)

@@ -1,5 +1,12 @@
+use crate::app::App;
+use crate::event::Event;
 use crate::matrix::matrix::Matrix;
-use crate::widgets::get_margin;
+use crate::spawn::get_text;
+use crate::widgets::Action::Typing;
+use crate::widgets::EventResult::Consumed;
+use crate::widgets::{get_margin, EventResult};
+use anyhow::bail;
+use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::room::message::TextMessageEventContent;
@@ -25,6 +32,7 @@ pub struct Chat {
     list_state: Cell<ListState>,
 }
 
+#[allow(dead_code)]
 pub struct Message {
     id: OwnedEventId,
     body: String,
@@ -97,6 +105,32 @@ impl Chat {
         let mut state = self.list_state.take();
         state.select(Some(0));
         self.list_state.set(state);
+    }
+
+    pub fn input(&self, app: &App, input: &KeyEvent) -> anyhow::Result<EventResult> {
+        match input.code {
+            KeyCode::Char('i') => {
+                app.events.park();
+                let result = get_text();
+                app.events.unpark();
+
+                // make sure we redraw the whole app when we come back
+                app.sender.send(Event::Redraw)?;
+
+                if let Ok(input) = result {
+                    if let Some(input) = input {
+                        self.matrix
+                            .send_text_message(self.room.clone().unwrap(), input);
+                        return Ok(Consumed(Typing));
+                    } else {
+                        bail!("Ignoring blank message.")
+                    }
+                } else {
+                    bail!("Couldn't read from editor.")
+                }
+            }
+            _ => return Ok(EventResult::Ignored),
+        };
     }
 
     pub fn timeline_event(&mut self, event: &AnyTimelineEvent) {

@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::app::App;
 use crate::event::Event;
 use crate::event::Event::{Matui, Tick};
-use crate::handler::MatuiEvent::{Error, VerificationCompleted, VerificationStarted};
+use crate::handler::MatuiEvent::{
+    Error, ProgressComplete, ProgressStarted, VerificationCompleted, VerificationStarted,
+};
 use crate::handler::{MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
 use anyhow::{bail, Context};
@@ -30,6 +32,7 @@ use matrix_sdk::{Client, LoopCtrl, ServerName, Session};
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
+use ruma::events::room::message::RoomMessageEventContent;
 use ruma::events::{AnySyncTimelineEvent, AnyTimelineEvent};
 use ruma::UInt;
 use serde::{Deserialize, Serialize};
@@ -112,8 +115,6 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
-            add_default_handlers(client.clone());
-
             if let Err(err) = sync_once(client.clone(), token, &session_file).await {
                 matrix.send(Error(err.to_string()));
                 return;
@@ -162,6 +163,7 @@ impl Matrix {
     }
 
     pub fn sync(&self) {
+        add_default_handlers(self.client());
         add_verification_handlers(self.client());
 
         let client = self.client();
@@ -276,6 +278,23 @@ impl Matrix {
 
             // finally, send a tick event to force a render
             sender.send(Tick).expect("could not send click event")
+        });
+    }
+
+    pub fn send_text_message(&self, room: Joined, message: String) {
+        let matrix = self.clone();
+
+        self.rt.spawn(async move {
+            matrix.send(ProgressStarted("Sending message.".to_string()));
+
+            if let Err(err) = room
+                .send(RoomMessageEventContent::text_plain(message), None)
+                .await
+            {
+                matrix.send(Error(err.to_string()));
+            }
+
+            matrix.send(ProgressComplete);
         });
     }
 

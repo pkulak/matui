@@ -9,6 +9,7 @@ use crate::widgets::signin::Signin;
 use crate::widgets::Action::{ButtonNo, ButtonYes, SelectRoom};
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
+
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
 use matrix_sdk::room::RoomMember;
 use ruma::events::AnyTimelineEvent;
@@ -20,6 +21,8 @@ pub enum MatuiEvent {
     LoginRequired,
     LoginStarted,
     Member(RoomMember),
+    ProgressStarted(String),
+    ProgressComplete,
     SyncComplete,
     SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
@@ -57,6 +60,8 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.room_member_event(rm);
             }
         }
+        MatuiEvent::ProgressStarted(msg) => app.progress = Some(Progress::new(&msg)),
+        MatuiEvent::ProgressComplete => app.progress = None,
         MatuiEvent::SyncStarted(st) => {
             app.error = None;
             match st {
@@ -120,6 +125,7 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
                 if let Consumed(ButtonYes) = w.input(&key_event) {
                     app.matrix
                         .login(w.id.value().as_str(), w.password.value().as_str());
+                    return Ok(());
                 }
             }
 
@@ -131,6 +137,8 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
                     room.set_room(joined);
 
                     app.chat = Some(room);
+
+                    return Ok(());
                 }
             }
 
@@ -142,18 +150,36 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
                             app.confirm = None;
                             app.progress =
                                 Some(Progress::new("Waiting for your other device to confirm."));
+                            return Ok(());
                         }
                         Consumed(ButtonNo) => {
                             app.matrix.mismatched_verification(sas);
                             app.confirm = None;
+                            return Ok(());
                         }
                         _ => {}
                     }
                 }
             }
 
-            if app.signin.is_none() && app.rooms.is_none() && key_event.code == KeyCode::Char('k') {
-                app.rooms = Some(Rooms::new(app.matrix.clone()));
+            // there's probably a more elegant way to do this...
+            if app.signin.is_none()
+                && app.rooms.is_none()
+                && app.confirm.is_none()
+                && app.progress.is_none()
+                && app.error.is_none()
+            {
+                if let Some(chat) = &app.chat {
+                    match chat.input(&app, &key_event) {
+                        Err(err) => app.error = Some(Error::new(err.to_string())),
+                        _ => {}
+                    }
+                }
+
+                match key_event.code {
+                    KeyCode::Char('k') => app.rooms = Some(Rooms::new(app.matrix.clone())),
+                    _ => {}
+                }
             }
         }
     }

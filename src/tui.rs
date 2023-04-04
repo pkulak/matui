@@ -1,5 +1,4 @@
 use crate::app::App;
-use crate::event::EventHandler;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use std::io;
@@ -14,14 +13,12 @@ use tui::Terminal;
 pub struct Tui<B: Backend> {
     /// Interface to the Terminal.
     terminal: Terminal<B>,
-    /// Terminal event handler.
-    pub events: EventHandler,
 }
 
 impl<B: Backend> Tui<B> {
     /// Constructs a new instance of [`Tui`].
-    pub fn new(terminal: Terminal<B>, events: EventHandler) -> Self {
-        Self { terminal, events }
+    pub fn new(terminal: Terminal<B>) -> Self {
+        Self { terminal }
     }
 
     /// Initializes the terminal interface.
@@ -39,7 +36,11 @@ impl<B: Backend> Tui<B> {
     ///
     /// [`Draw`]: tui::Terminal::draw
     /// [`rendering`]: crate::app::App::render
-    pub fn draw(&mut self, app: &mut App) -> anyhow::Result<()> {
+    pub fn draw(&mut self, app: &mut App, clear: bool) -> anyhow::Result<()> {
+        if clear {
+            self.terminal.clear()?;
+        }
+        
         self.terminal.draw(|frame| app.render(frame))?;
         Ok(())
     }

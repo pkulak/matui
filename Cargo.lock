@@ -1702,6 +1702,7 @@ dependencies = [
  "ruma",
  "serde",
  "simple-logging",
+ "tempfile",
  "textwrap",
  "tokio",
  "tui",

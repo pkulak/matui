@@ -50,6 +50,8 @@ impl Widget for ProgressWidget<'_> {
             .constraints([Constraint::Length(5)].as_ref())
             .split(area)[0];
 
+        buf.merge(&Buffer::empty(area));
+
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)

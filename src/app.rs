@@ -2,7 +2,7 @@ use matrix_sdk::encryption::verification::SasVerification;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
-use crate::event::Event;
+use crate::event::{Event, EventHandler};
 use crate::matrix::matrix::Matrix;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
@@ -17,6 +17,8 @@ static mut SENDER: Mutex<Option<Sender<Event>>> = Mutex::new(None);
 
 /// Application.
 pub struct App {
+    pub events: EventHandler,
+
     /// Is the application running?
     pub running: bool,
 
@@ -33,14 +35,14 @@ pub struct App {
 
     /// And our single Matrix client and channel
     pub matrix: Matrix,
-    pub send: Sender<Event>,
+    pub sender: Sender<Event>,
 
     /// We'll hold on to any in-progress verifications here
     pub sas: Option<SasVerification>,
 }
 
 impl App {
-    pub fn new(send: Sender<Event>) -> Self {
+    pub fn new(send: Sender<Event>, events: EventHandler) -> Self {
         let matrix = Matrix::new(send.clone());
 
         // Save the sender for future threads.
@@ -48,6 +50,7 @@ impl App {
         unsafe { SENDER = Mutex::new(Some(send.clone())) }
 
         Self {
+            events,
             running: true,
             timestamp: 0,
             progress: None,
@@ -57,7 +60,7 @@ impl App {
             rooms: None,
             chat: None,
             matrix,
-            send,
+            sender: send,
             sas: None,
         }
     }
@@ -100,6 +103,10 @@ impl App {
 
     /// Renders the user interface widgets.
     pub fn render<B: Backend>(&mut self, frame: &mut Frame<'_, B>) {
+        if let Some(c) = &self.chat {
+            frame.render_widget(c.widget(), frame.size())
+        }
+
         if let Some(w) = &self.error {
             frame.render_widget(w.widget(), frame.size());
             return;
@@ -118,10 +125,6 @@ impl App {
         if let Some(c) = &self.confirm {
             frame.render_widget(c.widget(), frame.size());
             return;
-        }
-
-        if let Some(c) = &self.chat {
-            frame.render_widget(c.widget(), frame.size())
         }
 
         if let Some(r) = &self.rooms {
