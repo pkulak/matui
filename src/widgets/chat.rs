@@ -7,16 +7,21 @@ use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
+use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::room::message::TextMessageEventContent;
+use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
 use ruma::events::AnyMessageLikeEvent::RoomMessage;
 use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
 use ruma::events::MessageLikeEvent::Original;
 use ruma::OwnedEventId;
+use sorted_vec::SortedVec;
 use std::cell::Cell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::ops::Deref;
 use tui::buffer::Buffer;
 use tui::layout::{Constraint, Corner, Direction, Layout, Rect};
 use tui::style::{Color, Style};
@@ -26,15 +31,60 @@ use tui::widgets::{List, ListItem, ListState, StatefulWidget, Widget};
 pub struct Chat {
     matrix: Matrix,
     room: Option<Joined>,
-    events: Vec<AnyTimelineEvent>,
+    events: SortedVec<OrderedEvent>,
     messages: Vec<Message>,
     members: HashMap<String, String>,
     list_state: Cell<ListState>,
 }
 
-#[allow(dead_code)]
+// a good PR would be to add Ord to AnyTimelineEvent
+pub struct OrderedEvent {
+    inner: AnyTimelineEvent,
+}
+
+impl OrderedEvent {
+    pub fn new(inner: AnyTimelineEvent) -> OrderedEvent {
+        OrderedEvent { inner }
+    }
+}
+
+impl Deref for OrderedEvent {
+    type Target = AnyTimelineEvent;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl Ord for OrderedEvent {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.origin_server_ts().cmp(&other.origin_server_ts())
+    }
+}
+
+impl PartialOrd for OrderedEvent {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.origin_server_ts()
+            .partial_cmp(&other.origin_server_ts())
+    }
+}
+
+impl PartialEq for OrderedEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.event_id().eq(other.event_id())
+    }
+}
+
+impl Eq for OrderedEvent {}
+
 pub struct Message {
     id: OwnedEventId,
+    body: String,
+    sender: String,
+    reactions: Vec<Reaction>,
+}
+
+pub struct Reaction {
     body: String,
     sender: String,
 }
@@ -42,7 +92,9 @@ pub struct Message {
 impl Message {
     // can we make a brand-new message, just from this event?
     fn try_from(event: &AnyTimelineEvent) -> Option<Self> {
-        if let MessageLike(RoomMessage(Original(c))) = event.clone() {
+        if let MessageLike(RoomMessage(Original(c))) = event {
+            let c = c.clone();
+
             let body = match c.content.msgtype {
                 Text(TextMessageEventContent { body, .. }) => body,
                 _ => return None,
@@ -52,26 +104,75 @@ impl Message {
                 id: c.event_id,
                 body,
                 sender: c.sender.to_string(),
+                reactions: Vec::new(),
             });
         }
 
         None
     }
 
+    fn merge_into_message_list(messages: &mut Vec<Message>, event: &AnyTimelineEvent) {
+        if let MessageLike(Rctn(Original(c))) = event {
+            let relates = c.content.relates_to.clone();
+
+            let sender = c.sender.to_string();
+            let body = relates.key;
+            let event_id = relates.event_id;
+
+            for message in messages.iter_mut() {
+                if message.id == event_id {
+                    message.reactions.push(Reaction { body, sender });
+                    return;
+                }
+            }
+        }
+    }
+
+    fn update_senders(&mut self, map: &HashMap<String, String>) {
+        if let Some(sender) = map.get(&self.sender) {
+            self.sender = sender.clone();
+        }
+
+        for reaction in self.reactions.iter_mut() {
+            if let Some(sender) = map.get(&reaction.sender) {
+                reaction.sender = sender.clone();
+            }
+        }
+    }
+
     fn to_list_item(&self, width: usize) -> ListItem {
         use tui::text::Text;
 
+        // author
         let spans = vec![Span::styled(
             self.sender.clone(),
             Style::default().fg(Color::Green),
         )];
 
+        // message
         let mut lines = Text::from(Spans::from(spans));
 
         let wrapped = textwrap::wrap(&self.body, width);
 
         for l in wrapped {
             lines.extend(Text::from(l))
+        }
+
+        // reactions
+        for r in &self.reactions {
+            let line = if let Some(emoji) = emojis::get(&r.body) {
+                if let Some(shortcode) = emoji.shortcode() {
+                    format!("{} ({})", emoji.as_str(), shortcode)
+                } else {
+                    r.body.clone()
+                }
+            } else {
+                r.body.clone()
+            };
+
+            let line = format!("{} {}", line, r.sender);
+
+            lines.extend(Text::styled(line, Style::default().fg(Color::DarkGray)))
         }
 
         lines.extend(Text::from(" ".to_string()));
@@ -85,7 +186,7 @@ impl Chat {
         Self {
             matrix,
             room: None,
-            events: vec![],
+            events: SortedVec::new(),
             messages: vec![],
             members: HashMap::new(),
             list_state: Cell::new(ListState::default()),
@@ -138,7 +239,7 @@ impl Chat {
             return;
         }
 
-        self.events.push(event.clone());
+        self.events.push(OrderedEvent::new(event.clone()));
         self.messages = make_message_list(&self.events, &self.members);
         self.reset();
     }
@@ -186,23 +287,32 @@ impl Widget for ChatWidget<'_> {
 }
 
 fn make_message_list(
-    timeline: &Vec<AnyTimelineEvent>,
+    timeline: &SortedVec<OrderedEvent>,
     members: &HashMap<String, String>,
 ) -> Vec<Message> {
     let mut messages = vec![];
+    let mut modifiers = vec![];
 
-    for event in timeline {
-        if let Some(mut message) = Message::try_from(event) {
-            if members.contains_key(&message.sender) {
-                message.sender = members.get(&message.sender).unwrap().to_string();
-            }
-
+    // split everything into either a starting message, or something that
+    // modifies an existing message
+    for event in timeline.iter() {
+        if let Some(message) = Message::try_from(event) {
             messages.push(message);
+        } else {
+            modifiers.push(event);
         }
     }
 
+    // now apply all the modifiers to the message list
+    for event in modifiers {
+        Message::merge_into_message_list(&mut messages, event)
+    }
+
+    // update senders to friendly names
+    messages.iter_mut().for_each(|m| m.update_senders(members));
+
     // our message list is reversed because we start at the bottom of the
-    // window and move up, like any good chat list
+    // window and move up, like any good chat
     messages.reverse();
 
     messages
