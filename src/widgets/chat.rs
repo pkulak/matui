@@ -7,8 +7,8 @@ use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
-use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
+use once_cell::unsync::OnceCell;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::room::message::TextMessageEventContent;
 use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
@@ -84,9 +84,55 @@ pub struct Message {
     reactions: Vec<Reaction>,
 }
 
+#[derive(Clone)]
 pub struct Reaction {
     body: String,
-    sender: String,
+    senders: Vec<String>,
+    pretty_senders: OnceCell<String>,
+}
+
+impl Reaction {
+    // drain the given reactions to create a merged version
+    pub fn merge(reactions: &mut Vec<Reaction>) -> Vec<Reaction> {
+        let mut merged: Vec<Reaction> = vec![];
+
+        for r in reactions {
+            let mut added = false;
+
+            for m in merged.iter_mut() {
+                if m.body == r.body {
+                    m.senders.append(&mut r.senders);
+                    added = true;
+                }
+            }
+
+            if !added {
+                merged.push(r.clone());
+            }
+        }
+
+        merged
+    }
+
+    pub fn pretty_senders(&self) -> &str {
+        self.pretty_senders.get_or_init(|| {
+            let all: Vec<&str> = self
+                .senders
+                .iter()
+                .map(|s| s.split_whitespace().next().unwrap_or_default())
+                .collect();
+
+            return match all.len() {
+                0 => "".to_string(),
+                1 => all.get(0).unwrap().to_string(),
+                _ => format!(
+                    "{} and {}",
+                    all[0..all.len() - 1].join(", "),
+                    all.last().unwrap()
+                ),
+            };
+        })
+    }
 }
 
 impl Message {
@@ -121,7 +167,11 @@ impl Message {
 
             for message in messages.iter_mut() {
                 if message.id == event_id {
-                    message.reactions.push(Reaction { body, sender });
+                    message.reactions.push(Reaction {
+                        body,
+                        senders: vec![sender],
+                        pretty_senders: OnceCell::new(),
+                    });
                     return;
                 }
             }
@@ -134,8 +184,10 @@ impl Message {
         }
 
         for reaction in self.reactions.iter_mut() {
-            if let Some(sender) = map.get(&reaction.sender) {
-                reaction.sender = sender.clone();
+            for sender in reaction.senders.iter_mut() {
+                if let Some(s) = map.get(sender) {
+                    *sender = s.clone();
+                }
             }
         }
     }
@@ -170,7 +222,7 @@ impl Message {
                 r.body.clone()
             };
 
-            let line = format!("{} {}", line, r.sender);
+            let line = format!("{} {}", line, r.pretty_senders());
 
             lines.extend(Text::styled(line, Style::default().fg(Color::DarkGray)))
         }
@@ -310,6 +362,11 @@ fn make_message_list(
 
     // update senders to friendly names
     messages.iter_mut().for_each(|m| m.update_senders(members));
+
+    // merge all the reactions
+    for m in messages.iter_mut() {
+        m.reactions = Reaction::merge(&mut m.reactions);
+    }
 
     // our message list is reversed because we start at the bottom of the
     // window and move up, like any good chat
