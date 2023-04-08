@@ -5,7 +5,7 @@ use crate::widgets::error::Error;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
-use crate::widgets::Action::{ButtonNo, ButtonYes, SelectRoom};
+use crate::widgets::Action::{ButtonNo, ButtonYes, Exit, SelectRoom};
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -132,73 +132,70 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
         return Ok(());
     }
 
-    match key_event.code {
-        KeyCode::Esc => {
-            if app.rooms.is_some() {
+    if let Some(w) = &mut app.signin {
+        if let Consumed(ButtonYes) = w.input(&key_event) {
+            app.matrix
+                .login(w.id.value().as_str(), w.password.value().as_str());
+            return Ok(());
+        }
+    }
+
+    if let Some(w) = &mut app.rooms {
+        match w.input(&key_event) {
+            Consumed(SelectRoom(joined)) => {
                 app.rooms = None;
-            } else {
-                app.running = false;
+                app.select_room(joined);
+                return Ok(());
+            }
+            Consumed(Exit) => {
+                app.rooms = None;
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(w) = &mut app.confirm {
+        if let Some(sas) = app.sas.clone() {
+            match w.input(&key_event) {
+                Consumed(ButtonYes) => {
+                    app.matrix.confirm_verification(sas);
+                    app.confirm = None;
+                    app.progress = Some(Progress::new("Waiting for your other device to confirm."));
+                    return Ok(());
+                }
+                Consumed(ButtonNo) => {
+                    app.matrix.mismatched_verification(sas);
+                    app.confirm = None;
+                    return Ok(());
+                }
+                _ => {}
             }
         }
-        _ => {
-            if let Some(w) = &mut app.signin {
-                if let Consumed(ButtonYes) = w.input(&key_event) {
-                    app.matrix
-                        .login(w.id.value().as_str(), w.password.value().as_str());
-                    return Ok(());
-                }
-            }
+    }
 
-            if let Some(w) = &mut app.rooms {
-                if let Consumed(SelectRoom(joined)) = w.input(&key_event) {
-                    app.rooms = None;
-                    app.select_room(joined);
-                    return Ok(());
-                }
-            }
+    // there's probably a more elegant way to do this...
+    if app.signin.is_none() && app.rooms.is_none() && app.confirm.is_none() && app.error.is_none() {
+        if key_event.code == KeyCode::Char('q') {
+            app.running = false;
+            return Ok(());
+        }
 
-            if let Some(w) = &mut app.confirm {
-                if let Some(sas) = app.sas.clone() {
-                    match w.input(&key_event) {
-                        Consumed(ButtonYes) => {
-                            app.matrix.confirm_verification(sas);
-                            app.confirm = None;
-                            app.progress =
-                                Some(Progress::new("Waiting for your other device to confirm."));
-                            return Ok(());
-                        }
-                        Consumed(ButtonNo) => {
-                            app.matrix.mismatched_verification(sas);
-                            app.confirm = None;
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            // there's probably a more elegant way to do this...
-            if app.signin.is_none()
-                && app.rooms.is_none()
-                && app.confirm.is_none()
-                && app.progress.is_none()
-                && app.error.is_none()
-            {
-                if let Some(chat) = &app.chat {
-                    match chat.input(&app, &key_event) {
-                        Err(err) => app.error = Some(Error::new(err.to_string())),
-                        Ok(Consumed(_)) => return Ok(()),
-                        _ => {}
-                    }
-                }
-
-                match key_event.code {
-                    KeyCode::Char(' ') => {
-                        let current = &app.chat.as_ref().and_then(|c| c.room.clone());
-                        app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
-                    }
+        if app.progress.is_none() {
+            if let Some(chat) = &app.chat {
+                match chat.input(&app, &key_event) {
+                    Err(err) => app.error = Some(Error::new(err.to_string())),
+                    Ok(Consumed(_)) => return Ok(()),
                     _ => {}
                 }
+            }
+
+            match key_event.code {
+                KeyCode::Char(' ') => {
+                    let current = &app.chat.as_ref().and_then(|c| c.room.clone());
+                    app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
+                }
+                _ => {}
             }
         }
     }

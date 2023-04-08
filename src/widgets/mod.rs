@@ -22,6 +22,7 @@ pub enum Action {
     ButtonYes,
     ButtonNo,
     ChangeFocus,
+    Exit,
     SelectRoom(Joined),
     Typing,
 }

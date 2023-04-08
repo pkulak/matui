@@ -11,7 +11,7 @@ use tui::widgets::{Block, Borders, Paragraph, Widget};
 pub struct TextInput {
     title: String,
     pub value: String,
-    focused: bool,
+    pub focused: bool,
     password: bool,
     cursor: usize,
 

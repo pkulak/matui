@@ -9,7 +9,9 @@ use tui::style::{Color, Style};
 use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
+use crate::widgets::rooms::Mode::{INSERT, NORMAL};
 use crate::widgets::textinput::TextInput;
+use crate::widgets::Action::{Exit, Typing};
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::{get_margin, Action, EventResult, KeyEventing};
 
@@ -17,6 +19,12 @@ pub struct Rooms {
     pub textinput: TextInput,
     pub joined: Vec<DecoratedRoom>,
     pub list_state: Cell<ListState>,
+}
+
+#[derive(Eq, PartialEq)]
+enum Mode {
+    NORMAL,
+    INSERT,
 }
 
 impl Rooms {
@@ -33,14 +41,24 @@ impl Rooms {
         }
 
         let mut ret = Self {
-            textinput: TextInput::new("Search".to_string(), true, false),
+            textinput: TextInput::new("Search".to_string(), false, false),
             joined: rooms,
             list_state: Cell::new(ListState::default()),
         };
 
         ret.reset();
-
         ret
+    }
+
+    fn mode(&self) -> Mode {
+        if self.textinput.focused {
+            return INSERT;
+        }
+        return NORMAL;
+    }
+
+    fn set_mode(&mut self, mode: Mode) {
+        self.textinput.focused = mode == INSERT;
     }
 
     pub fn widget(&self) -> RoomsWidget {
@@ -48,18 +66,42 @@ impl Rooms {
     }
 
     pub fn input(&mut self, input: &KeyEvent) -> EventResult {
-        match input.code {
-            KeyCode::Down => self.next(),
-            KeyCode::Up => self.previous(),
+        return match input.code {
+            KeyCode::Char('i') if self.mode() == NORMAL => {
+                self.set_mode(INSERT);
+                Consumed(Typing)
+            }
+            KeyCode::Char('j') if self.mode() == NORMAL => {
+                self.next();
+                Consumed(Typing)
+            }
+            KeyCode::Char('k') if self.mode() == NORMAL => {
+                self.previous();
+                Consumed(Typing)
+            }
+            KeyCode::Esc if self.mode() == INSERT => {
+                self.set_mode(NORMAL);
+                Consumed(Typing)
+            }
+            KeyCode::Esc if self.mode() == NORMAL => Consumed(Exit),
+            KeyCode::Down => {
+                self.next();
+                Consumed(Typing)
+            }
+            KeyCode::Up => {
+                self.previous();
+                Consumed(Typing)
+            }
             KeyCode::Enter => return Consumed(Action::SelectRoom(self.selected_room().room)),
             _ => {
                 if let Consumed(_) = (&mut self.textinput).input(input) {
-                    self.reset()
+                    self.reset();
+                    Consumed(Typing)
+                } else {
+                    Ignored
                 }
             }
         };
-
-        Ignored
     }
 
     fn next(&mut self) {
