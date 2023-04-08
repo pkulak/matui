@@ -337,7 +337,7 @@ impl Widget for ChatWidget<'_> {
             .chat
             .messages
             .iter()
-            .map(|m| m.to_list_item(area.width as usize))
+            .map(|m| m.to_list_item((area.width - 2) as usize))
             .collect();
 
         let mut list_state = self.chat.list_state.take();
