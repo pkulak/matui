@@ -193,7 +193,7 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
                 }
 
                 match key_event.code {
-                    KeyCode::Char('k') => app.rooms = Some(Rooms::new(app.matrix.clone())),
+                    KeyCode::Char(' ') => app.rooms = Some(Rooms::new(app.matrix.clone())),
                     _ => {}
                 }
             }

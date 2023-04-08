@@ -221,7 +221,7 @@ impl Matrix {
         self.room_cache.get_rooms()
     }
 
-    pub fn fetch_messages(&self, room: Joined) {
+    pub fn fetch_messages(&self, room: Joined, cursor: Option<String>) {
         let matrix = self.clone();
         let sender = self.send.clone();
 
@@ -229,6 +229,7 @@ impl Matrix {
             // fetch the actual messages
             let mut options = MessagesOptions::new(Direction::Backward);
             options.limit = UInt::from(25 as u16);
+            options.from = cursor;
 
             let messages = match room.messages(options).await {
                 Ok(msg) => msg,

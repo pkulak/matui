@@ -8,6 +8,7 @@ use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
+use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use once_cell::unsync::OnceCell;
 use ruma::events::room::message::MessageType::Text;
@@ -36,6 +37,8 @@ pub struct Chat {
     messages: Vec<Message>,
     members: HashMap<String, String>,
     list_state: Cell<ListState>,
+    next_cursor: Option<String>,
+    fetching: Cell<bool>,
 }
 
 // a good PR would be to add Ord to AnyTimelineEvent
@@ -243,22 +246,15 @@ impl Chat {
             messages: vec![],
             members: HashMap::new(),
             list_state: Cell::new(ListState::default()),
+            next_cursor: None,
+            fetching: Cell::new(false),
         }
     }
 
     pub fn set_room(&mut self, room: Joined) {
-        self.matrix.fetch_messages(room.clone());
+        self.matrix.fetch_messages(room.clone(), None);
+        self.fetching.set(true);
         self.room = Some(room);
-    }
-
-    fn reset(&mut self) {
-        if self.messages.is_empty() {
-            return;
-        }
-
-        let mut state = self.list_state.take();
-        state.select(Some(0));
-        self.list_state.set(state);
     }
 
     pub fn input(&self, app: &App, input: &KeyEvent) -> anyhow::Result<EventResult> {
@@ -269,6 +265,7 @@ impl Chat {
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.next();
+                self.try_fetch_previous();
                 return Ok(Consumed(Typing));
             }
             KeyCode::Char('i') => {
@@ -302,7 +299,6 @@ impl Chat {
 
         self.events.push(OrderedEvent::new(event));
         self.messages = make_message_list(&self.events, &self.members);
-        self.reset();
     }
 
     pub fn batch_event(&mut self, batch: Batch) {
@@ -310,18 +306,47 @@ impl Chat {
             return;
         }
 
+        self.next_cursor = batch.cursor;
+
         for event in batch.events {
             self.events.push(OrderedEvent::new(event));
         }
 
+        let reset = self.messages.is_empty();
+
         self.messages = make_message_list(&self.events, &self.members);
-        self.reset();
+        self.fetching.set(false);
+
+        if reset {
+            let mut state = self.list_state.take();
+            state.select(Some(0));
+            self.list_state.set(state);
+        }
     }
 
     pub fn room_member_event(&mut self, member: RoomMember) {
         self.members
             .insert(member.user_id().into(), member.name().to_string());
         self.messages = make_message_list(&self.events, &self.members);
+    }
+
+    fn try_fetch_previous(&self) {
+        if self.next_cursor.is_none() || self.room.is_none() || self.fetching.get() {
+            return;
+        }
+
+        let state = self.list_state.take();
+        let buffer = self.messages.len() - state.selected().unwrap_or_default();
+        self.list_state.set(state);
+
+        if buffer < 25 {
+            self.matrix.fetch_messages(
+                self.room.as_ref().unwrap().clone(),
+                self.next_cursor.clone(),
+            );
+            self.fetching.set(true);
+            info!("fetching more events...")
+        }
     }
 
     fn next(&self) {
