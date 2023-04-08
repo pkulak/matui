@@ -32,7 +32,7 @@ use tui::widgets::{List, ListItem, ListState, StatefulWidget, Widget};
 
 pub struct Chat {
     matrix: Matrix,
-    room: Option<Joined>,
+    pub room: Option<Joined>,
     events: SortedVec<OrderedEvent>,
     messages: Vec<Message>,
     members: HashMap<String, String>,

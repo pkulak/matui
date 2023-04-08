@@ -193,7 +193,10 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
                 }
 
                 match key_event.code {
-                    KeyCode::Char(' ') => app.rooms = Some(Rooms::new(app.matrix.clone())),
+                    KeyCode::Char(' ') => {
+                        let current = &app.chat.as_ref().and_then(|c| c.room.clone());
+                        app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
+                    }
                     _ => {}
                 }
             }

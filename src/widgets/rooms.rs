@@ -1,6 +1,7 @@
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crossterm::event::{KeyCode, KeyEvent};
+use matrix_sdk::room::Joined;
 use std::cell::Cell;
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -19,9 +20,17 @@ pub struct Rooms {
 }
 
 impl Rooms {
-    pub fn new(matrix: Matrix) -> Self {
+    pub fn new(matrix: Matrix, current: Option<Joined>) -> Self {
         let mut rooms = matrix.fetch_rooms();
         sort_rooms(&mut rooms);
+
+        // if the current room is at the top, put it at the bottom
+        if let Some(current) = current {
+            if rooms.len() > 1 && rooms.first().unwrap().room.room_id() == current.room_id() {
+                let first = rooms.remove(0);
+                rooms.push(first);
+            }
+        }
 
         let mut ret = Self {
             textinput: TextInput::new("Search".to_string(), true, false),
