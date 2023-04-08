@@ -1,4 +1,5 @@
 use matrix_sdk::encryption::verification::SasVerification;
+use matrix_sdk::room::Joined;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
@@ -82,6 +83,12 @@ impl App {
                 .unwrap()
                 .clone()
         }
+    }
+
+    pub fn select_room(&mut self, room: Joined) {
+        let mut chat = Chat::new(self.matrix.clone());
+        chat.set_room(room);
+        self.chat = Some(chat);
     }
 
     /// Handles the tick event of the terminal.

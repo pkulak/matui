@@ -1,10 +1,9 @@
 use crate::app::App;
 use crate::matrix::matrix::format_emojis;
-use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;
 use crate::widgets::progress::Progress;
-use crate::widgets::rooms::Rooms;
+use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::Action::{ButtonNo, ButtonYes, SelectRoom};
 use crate::widgets::EventResult::Consumed;
@@ -76,6 +75,14 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
 
             // now we can sync forever
             app.matrix.sync();
+
+            // and show the first room
+            let mut rooms = app.matrix.fetch_rooms();
+            sort_rooms(&mut rooms);
+
+            if let Some(room) = rooms.first() {
+                app.select_room(room.room.clone())
+            }
         }
         MatuiEvent::Timeline(event) => {
             if let Some(c) = &mut app.chat {
@@ -132,12 +139,7 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
             if let Some(w) = &mut app.rooms {
                 if let Consumed(SelectRoom(joined)) = w.input(&key_event) {
                     app.rooms = None;
-
-                    let mut room = Chat::new(app.matrix.clone());
-                    room.set_room(joined);
-
-                    app.chat = Some(room);
-
+                    app.select_room(joined);
                     return Ok(());
                 }
             }

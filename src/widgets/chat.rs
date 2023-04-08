@@ -315,7 +315,6 @@ impl Widget for ChatWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let area = Layout::default()
             .direction(Direction::Horizontal)
-            .vertical_margin(2)
             .horizontal_margin(get_margin(area.width, 80))
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];

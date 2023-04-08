@@ -202,7 +202,7 @@ fn make_list_item(joined: &DecoratedRoom) -> ListItem {
     ListItem::new(lines)
 }
 
-fn sort_rooms(rooms: &mut [DecoratedRoom]) {
+pub fn sort_rooms(rooms: &mut [DecoratedRoom]) {
     rooms.sort_by_key(|r| {
         (
             r.room.unread_notification_counts().notification_count,
