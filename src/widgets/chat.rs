@@ -263,6 +263,14 @@ impl Chat {
 
     pub fn input(&self, app: &App, input: &KeyEvent) -> anyhow::Result<EventResult> {
         match input.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.previous();
+                return Ok(Consumed(Typing));
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.next();
+                return Ok(Consumed(Typing));
+            }
             KeyCode::Char('i') => {
                 app.events.park();
                 let result = get_text();
@@ -314,6 +322,42 @@ impl Chat {
         self.members
             .insert(member.user_id().into(), member.name().to_string());
         self.messages = make_message_list(&self.events, &self.members);
+    }
+
+    fn next(&self) {
+        let mut state = self.list_state.take();
+
+        let i = match state.selected() {
+            Some(i) => {
+                if i >= &self.messages.len() - 1 {
+                    &self.messages.len() - 1
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+
+        state.select(Some(i));
+        self.list_state.set(state);
+    }
+
+    fn previous(&self) {
+        let mut state = self.list_state.take();
+
+        let i = match state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    0
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+
+        state.select(Some(i));
+        self.list_state.set(state);
     }
 
     pub fn widget(&self) -> ChatWidget {

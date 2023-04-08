@@ -187,6 +187,7 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
                 if let Some(chat) = &app.chat {
                     match chat.input(&app, &key_event) {
                         Err(err) => app.error = Some(Error::new(err.to_string())),
+                        Ok(Consumed(_)) => return Ok(()),
                         _ => {}
                     }
                 }
