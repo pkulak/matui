@@ -9,7 +9,7 @@ use crate::event::Event::{Matui, Tick};
 use crate::handler::MatuiEvent::{
     Error, ProgressComplete, ProgressStarted, VerificationCompleted, VerificationStarted,
 };
-use crate::handler::{MatuiEvent, SyncType};
+use crate::handler::{Batch, MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
@@ -238,19 +238,21 @@ impl Matrix {
                 }
             };
 
-            let mut reversed: Vec<AnyTimelineEvent> = messages
+            let unpacked: Vec<AnyTimelineEvent> = messages
                 .chunk
                 .iter()
                 .map(|te| te.event.deserialize().expect("could not deserialize"))
                 .collect();
 
-            reversed.reverse();
+            let batch = Batch {
+                room: room.clone(),
+                events: unpacked.clone(),
+                cursor: messages.end,
+            };
 
-            for msg in reversed.clone() {
-                sender
-                    .send(Matui(MatuiEvent::Timeline(msg)))
-                    .expect("could not send timeline event")
-            }
+            sender
+                .send(Matui(MatuiEvent::TimelineBatch(batch)))
+                .expect("could not send messages event");
 
             // and look up the detail about every user
             async fn send_member_event(
@@ -268,7 +270,7 @@ impl Matrix {
                 Ok(())
             }
 
-            for msg in reversed {
+            for msg in unpacked {
                 let sender = sender.clone();
 
                 if let Err(e) = send_member_event(&msg, room.clone(), sender).await {
@@ -298,9 +300,8 @@ impl Matrix {
         });
     }
 
-    pub fn timeline_event(&self, event: &AnyTimelineEvent) {
+    pub fn timeline_event(&self, event: AnyTimelineEvent) {
         let matrix = self.clone();
-        let event = event.clone();
 
         self.rt.spawn(async move {
             let client = matrix.client();

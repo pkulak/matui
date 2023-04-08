@@ -10,7 +10,7 @@ use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
-use matrix_sdk::room::RoomMember;
+use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::AnyTimelineEvent;
 
 #[derive(Clone, Debug)]
@@ -25,6 +25,7 @@ pub enum MatuiEvent {
     SyncComplete,
     SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
+    TimelineBatch(Batch),
     VerificationStarted(SasVerification, [Emoji; 7]),
     VerificationCompleted,
 }
@@ -33,6 +34,13 @@ pub enum MatuiEvent {
 pub enum SyncType {
     Initial,
     Latest,
+}
+
+#[derive(Clone, Debug)]
+pub struct Batch {
+    pub room: Joined,
+    pub events: Vec<AnyTimelineEvent>,
+    pub cursor: Option<String>,
 }
 
 pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
@@ -86,12 +94,17 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::Timeline(event) => {
             if let Some(c) = &mut app.chat {
-                c.timeline_event(&event);
+                c.timeline_event(event.clone());
             }
 
             // is it weird to send events all the way up here, then right
             // back down?
-            app.matrix.timeline_event(&event)
+            app.matrix.timeline_event(event)
+        }
+        MatuiEvent::TimelineBatch(batch) => {
+            if let Some(c) = &mut app.chat {
+                c.batch_event(batch);
+            }
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
             app.sas = Some(sas);

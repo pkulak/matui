@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::event::Event;
+use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
 use crate::spawn::get_text;
 use crate::widgets::Action::Typing;
@@ -286,12 +287,25 @@ impl Chat {
         };
     }
 
-    pub fn timeline_event(&mut self, event: &AnyTimelineEvent) {
+    pub fn timeline_event(&mut self, event: AnyTimelineEvent) {
         if self.room.is_none() || event.room_id() != self.room.as_ref().unwrap().room_id() {
             return;
         }
 
-        self.events.push(OrderedEvent::new(event.clone()));
+        self.events.push(OrderedEvent::new(event));
+        self.messages = make_message_list(&self.events, &self.members);
+        self.reset();
+    }
+
+    pub fn batch_event(&mut self, batch: Batch) {
+        if self.room.is_none() || batch.room.room_id() != self.room.as_ref().unwrap().room_id() {
+            return;
+        }
+
+        for event in batch.events {
+            self.events.push(OrderedEvent::new(event));
+        }
+
         self.messages = make_message_list(&self.events, &self.members);
         self.reset();
     }
