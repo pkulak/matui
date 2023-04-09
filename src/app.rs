@@ -1,10 +1,11 @@
+use config::Config;
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::Joined;
 use once_cell::sync::OnceCell;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
-use crate::event::{Event, EventHandler};
+use crate::event::Event;
 use crate::matrix::matrix::Matrix;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
@@ -19,8 +20,6 @@ static SENDER: OnceCell<Mutex<Sender<Event>>> = OnceCell::new();
 
 /// Application.
 pub struct App {
-    pub events: EventHandler,
-
     /// Is the application running?
     pub running: bool,
 
@@ -44,7 +43,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(send: Sender<Event>, events: EventHandler) -> Self {
+    pub fn new(send: Sender<Event>) -> Self {
         let matrix = Matrix::new(send.clone());
 
         // Save the sender for future threads.
@@ -53,7 +52,6 @@ impl App {
             .expect("could not set sender");
 
         Self {
-            events,
             running: true,
             timestamp: 0,
             progress: None,
@@ -75,6 +73,21 @@ impl App {
             .lock()
             .expect("could not lock sender")
             .clone()
+    }
+
+    pub fn get_settings() -> &'static Config {
+        static SETTINGS: OnceCell<Config> = OnceCell::new();
+
+        SETTINGS.get_or_init(|| {
+            let mut dir = dirs::config_dir().expect("no config directory");
+            dir.push("matui");
+            dir.push("config.toml");
+
+            Config::builder()
+                .add_source(config::File::from(dir))
+                .build()
+                .expect("could not build settings")
+        })
     }
 
     pub fn select_room(&mut self, room: Joined) {

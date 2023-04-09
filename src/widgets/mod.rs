@@ -11,6 +11,7 @@ pub mod signin;
 pub mod button;
 pub mod chat;
 pub mod confirm;
+pub mod react;
 pub mod textinput;
 
 pub enum EventResult {
@@ -24,6 +25,8 @@ pub enum Action {
     ChangeFocus,
     Exit,
     SelectRoom(Joined),
+    SelectReaction(String),
+    RemoveReaction(String),
     Typing,
 }
 

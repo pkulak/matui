@@ -19,19 +19,19 @@ fn main() -> anyhow::Result<()> {
     tui.init()?;
 
     // Create an application.
-    let mut app = App::new(sender, events);
+    let mut app = App::new(sender);
 
     // Start the main loop.
     while app.running {
         // Handle events.
-        match app.events.next()? {
+        match events.next()? {
             Event::Tick => {
                 app.tick();
                 tui.draw(&mut app, false)?;
             }
             Event::Redraw => tui.draw(&mut app, true)?,
             Event::Key(key_event) => {
-                handle_key_event(key_event, &mut app)?;
+                handle_key_event(key_event, &mut app, &events)?;
                 tui.draw(&mut app, false)?;
             }
             Event::Mouse(_) => {}

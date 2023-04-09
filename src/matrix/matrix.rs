@@ -32,9 +32,11 @@ use matrix_sdk::{Client, LoopCtrl, ServerName, Session};
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
+use ruma::events::reaction::ReactionEventContent;
+use ruma::events::relation::Annotation;
 use ruma::events::room::message::RoomMessageEventContent;
 use ruma::events::{AnySyncTimelineEvent, AnyTimelineEvent};
-use ruma::UInt;
+use ruma::{OwnedEventId, UInt};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
@@ -299,6 +301,44 @@ impl Matrix {
 
             matrix.send(ProgressComplete);
         });
+    }
+
+    pub fn send_reaction(&self, room: Joined, event_id: OwnedEventId, key: String) {
+        let matrix = self.clone();
+
+        self.rt.spawn(async move {
+            matrix.send(ProgressStarted("Sending reaction.".to_string()));
+
+            if let Err(err) = room
+                .send(
+                    ReactionEventContent::new(Annotation::new(event_id, key)),
+                    None,
+                )
+                .await
+            {
+                matrix.send(Error(err.to_string()));
+            }
+
+            matrix.send(ProgressComplete);
+        });
+    }
+
+    pub fn redact_event(&self, room: Joined, event_id: OwnedEventId) {
+        let matrix = self.clone();
+
+        self.rt.spawn(async move {
+            matrix.send(ProgressStarted("Removing.".to_string()));
+
+            if let Err(err) = room.redact(&event_id, None, None).await {
+                matrix.send(Error(err.to_string()));
+            }
+
+            matrix.send(ProgressComplete);
+        });
+    }
+
+    pub fn me(&self) -> String {
+        self.client().user_id().unwrap().as_str().to_string()
     }
 
     pub fn timeline_event(&self, event: AnyTimelineEvent) {
@@ -572,30 +612,32 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
     }
 }
 
-/// Gratefully borrowed from the SDK, but modified to be a single line.
+pub fn pad_emoji(emoji: &str) -> String {
+    // These are emojis that need VARIATION-SELECTOR-16 (U+FE0F) so that they are
+    // rendered with coloured glyphs. For these, we need to add an extra
+    // space after them so that they are rendered properly in terminals.
+    const VARIATION_SELECTOR_EMOJIS: [&str; 8] = ["☁️", "❤️", "☂️", "✏️", "✂️", "☎️", "✈️", "‼️"];
+
+    // Hack to make terminals behave properly when one of the above is printed.
+    if VARIATION_SELECTOR_EMOJIS.contains(&emoji) {
+        format!("{emoji} ")
+    } else {
+        emoji.to_owned()
+    }
+}
+
+pub fn center_emoji(emoji: &str) -> String {
+    let emoji = pad_emoji(emoji);
+
+    // This is a trick to account for the fact that emojis are wider than other
+    // monospace characters.
+    let placeholder = ".".repeat(2);
+
+    format!("{placeholder:^6}").replace(&placeholder, &emoji)
+}
+
 pub fn format_emojis(emojis: [Emoji; 7]) -> String {
     let emojis: Vec<_> = emojis.iter().map(|e| e.symbol).collect();
-
-    let center_emoji = |emoji: &str| -> String {
-        const EMOJI_WIDTH: usize = 2;
-        // These are emojis that need VARIATION-SELECTOR-16 (U+FE0F) so that they are
-        // rendered with coloured glyphs. For these, we need to add an extra
-        // space after them so that they are rendered properly in terminals.
-        const VARIATION_SELECTOR_EMOJIS: [&str; 7] = ["☁️", "❤️", "☂️", "✏️", "✂️", "☎️", "✈️"];
-
-        // Hack to make terminals behave properly when one of the above is printed.
-        let emoji = if VARIATION_SELECTOR_EMOJIS.contains(&emoji) {
-            format!("{emoji} ")
-        } else {
-            emoji.to_owned()
-        };
-
-        // This is a trick to account for the fact that emojis are wider than other
-        // monospace characters.
-        let placeholder = ".".repeat(EMOJI_WIDTH);
-
-        format!("{placeholder:^6}").replace(&placeholder, &emoji)
-    };
 
     emojis
         .iter()

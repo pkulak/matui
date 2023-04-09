@@ -9,6 +9,7 @@ use crate::widgets::Action::{ButtonNo, ButtonYes, Exit, SelectRoom};
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent};
 
+use crate::event::EventHandler;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::AnyTimelineEvent;
@@ -125,7 +126,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
     }
 }
 
-pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()> {
+pub fn handle_key_event(
+    key_event: KeyEvent,
+    app: &mut App,
+    handler: &EventHandler,
+) -> anyhow::Result<()> {
     // hide an error message on any key event
     if app.error.is_some() {
         app.error = None;
@@ -182,8 +187,8 @@ pub fn handle_key_event(key_event: KeyEvent, app: &mut App) -> anyhow::Result<()
         }
 
         if app.progress.is_none() {
-            if let Some(chat) = &app.chat {
-                match chat.input(&app, &key_event) {
+            if let Some(chat) = &mut app.chat {
+                match chat.input(&handler, &key_event) {
                     Err(err) => app.error = Some(Error::new(err.to_string())),
                     Ok(Consumed(_)) => return Ok(()),
                     _ => {}
