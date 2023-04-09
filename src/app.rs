@@ -1,5 +1,6 @@
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::Joined;
+use once_cell::sync::OnceCell;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
@@ -14,7 +15,7 @@ use crate::widgets::signin::Signin;
 use tui::backend::Backend;
 use tui::terminal::Frame;
 
-static mut SENDER: Mutex<Option<Sender<Event>>> = Mutex::new(None);
+static SENDER: OnceCell<Mutex<Sender<Event>>> = OnceCell::new();
 
 /// Application.
 pub struct App {
@@ -47,8 +48,9 @@ impl App {
         let matrix = Matrix::new(send.clone());
 
         // Save the sender for future threads.
-        // Safety: let's make sure to only have one App
-        unsafe { SENDER = Mutex::new(Some(send.clone())) }
+        SENDER
+            .set(Mutex::new(send.clone()))
+            .expect("could not set sender");
 
         Self {
             events,
@@ -66,23 +68,13 @@ impl App {
         }
     }
 
-    /// Last resort; it's probably better to pass around a Sender like normal,
-    /// rather than deal with lock contention. If anyone knows a safe way to
-    /// avoid async hell, please let me know!
-    ///
-    /// # Safety
-    ///
-    /// This is set once before the rest of the app starts, so should always
-    /// be available and never set again.
     pub fn get_sender() -> Sender<Event> {
-        unsafe {
-            SENDER
-                .lock()
-                .expect("could not unlock sender")
-                .as_ref()
-                .unwrap()
-                .clone()
-        }
+        SENDER
+            .get()
+            .expect("could not get sender")
+            .lock()
+            .expect("could not lock sender")
+            .clone()
     }
 
     pub fn select_room(&mut self, room: Joined) {
