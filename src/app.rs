@@ -44,7 +44,7 @@ pub struct App {
 
 impl App {
     pub fn new(send: Sender<Event>) -> Self {
-        let matrix = Matrix::new(send.clone());
+        let matrix = Matrix::default();
 
         // Save the sender for future threads.
         SENDER

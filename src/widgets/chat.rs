@@ -3,6 +3,8 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::{pad_emoji, Matrix};
 use crate::spawn::get_text;
+use crate::widgets::chat::MessageType::Image;
+use crate::widgets::chat::MessageType::Video;
 use crate::widgets::react::React;
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
@@ -11,8 +13,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use once_cell::unsync::OnceCell;
-use ruma::events::room::message::MessageType::Text;
-use ruma::events::room::message::TextMessageEventContent;
+use ruma::events::room::message::MessageType::{self, Text};
+use ruma::events::room::message::{
+    ImageMessageEventContent, TextMessageEventContent, VideoMessageEventContent,
+};
 use ruma::events::room::redaction::RoomRedactionEvent;
 use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
 use ruma::events::AnyMessageLikeEvent::RoomMessage;
@@ -112,6 +116,12 @@ impl Chat {
             KeyCode::Char('k') | KeyCode::Up => {
                 self.next();
                 self.try_fetch_previous();
+                return Ok(Consumed(Action::Typing));
+            }
+            KeyCode::Char('o') | KeyCode::Enter => {
+                if let Some(message) = &self.selected_message() {
+                    message.open(self.matrix.clone())
+                }
                 return Ok(Consumed(Action::Typing));
             }
             KeyCode::Char('i') => {
@@ -351,19 +361,43 @@ impl Eq for OrderedEvent {}
 // of constant mutation, as opposed to "events", which just come in, in order.
 pub struct Message {
     id: OwnedEventId,
-    body: String,
+    body: MessageType,
     sender: String,
     reactions: Vec<Reaction>,
 }
 
 impl Message {
+    fn display(&self) -> &str {
+        match &self.body {
+            Text(TextMessageEventContent { body, .. }) => body,
+            Image(ImageMessageEventContent { body, .. }) => body,
+            Video(VideoMessageEventContent { body, .. }) => body,
+            _ => "unknown",
+        }
+    }
+
+    fn style(&self) -> Style {
+        match &self.body {
+            Text(_) => Style::default(),
+            _ => Style::default().fg(Color::Blue),
+        }
+    }
+
+    fn open(&self, matrix: Matrix) {
+        match &self.body {
+            Image(_) => matrix.open_content(self.body.clone()),
+            Video(_) => matrix.open_content(self.body.clone()),
+            _ => {}
+        }
+    }
+
     // can we make a brand-new message, just from this event?
     fn try_from(event: &AnyTimelineEvent) -> Option<Self> {
         if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
             let c = c.clone();
 
             let body = match c.content.msgtype {
-                Text(TextMessageEventContent { body, .. }) => body,
+                Text(_) | Image(_) | Video(_) => c.content.msgtype,
                 _ => return None,
             };
 
@@ -421,7 +455,11 @@ impl Message {
 
             // then look at the messages
             messages.retain(|m| &m.id != id);
+
+            return;
         }
+
+        info!("{:?}", event);
     }
 
     fn update_senders(&mut self, map: &HashMap<String, String>) {
@@ -450,10 +488,10 @@ impl Message {
         // message
         let mut lines = Text::from(Spans::from(spans));
 
-        let wrapped = textwrap::wrap(&self.body, width);
+        let wrapped = textwrap::wrap(&self.display(), width);
 
         for l in wrapped {
-            lines.extend(Text::from(l))
+            lines.extend(Text::styled(l, self.style()))
         }
 
         // reactions

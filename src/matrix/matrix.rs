@@ -5,17 +5,19 @@ use std::sync::Arc;
 
 use crate::app::App;
 use crate::event::Event;
-use crate::event::Event::{Matui, Tick};
+use crate::event::Event::Matui;
 use crate::handler::MatuiEvent::{
     Error, ProgressComplete, ProgressStarted, VerificationCompleted, VerificationStarted,
 };
 use crate::handler::{Batch, MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
+use crate::spawn::view_file;
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info, warn};
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
+use matrix_sdk::media::{MediaFormat, MediaRequest};
 use matrix_sdk::room::{Joined, MessagesOptions, Room};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
@@ -34,6 +36,8 @@ use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
 use ruma::events::reaction::ReactionEventContent;
 use ruma::events::relation::Annotation;
+use ruma::events::room::message::MessageType::Image;
+use ruma::events::room::message::MessageType::Video;
 use ruma::events::room::message::RoomMessageEventContent;
 use ruma::events::{AnySyncTimelineEvent, AnyTimelineEvent};
 use ruma::{OwnedEventId, UInt};
@@ -46,11 +50,10 @@ pub struct Matrix {
     rt: Arc<Runtime>,
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
-    send: Sender<Event>,
 }
 
-impl Matrix {
-    pub fn new(send: Sender<Event>) -> Matrix {
+impl Default for Matrix {
+    fn default() -> Self {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -61,10 +64,11 @@ impl Matrix {
             rt: Arc::new(rt),
             client: Arc::new(OnceCell::default()),
             room_cache: Arc::new(RoomCache::default()),
-            send,
         }
     }
+}
 
+impl Matrix {
     fn dirs() -> (PathBuf, PathBuf) {
         let data_dir = dirs::data_dir()
             .expect("no data directory found")
@@ -81,8 +85,8 @@ impl Matrix {
             .to_owned()
     }
 
-    fn send(&self, event: MatuiEvent) {
-        self.send
+    fn send(event: MatuiEvent) {
+        App::get_sender()
             .send(Matui(event))
             .expect("could not send Matrix event");
     }
@@ -93,19 +97,19 @@ impl Matrix {
         let (_, session_file) = Matrix::dirs();
 
         if !session_file.exists() {
-            self.send(MatuiEvent::LoginRequired);
+            Matrix::send(MatuiEvent::LoginRequired);
             return;
         }
 
         let matrix = self.clone();
 
         self.rt.spawn(async move {
-            matrix.send(MatuiEvent::SyncStarted(SyncType::Latest));
+            Matrix::send(MatuiEvent::SyncStarted(SyncType::Latest));
 
             let (client, token) = match restore_session(session_file.as_path()).await {
                 Ok(tuple) => tuple,
                 Err(err) => {
-                    matrix.send(Error(err.to_string()));
+                    Matrix::send(Error(err.to_string()));
                     return;
                 }
             };
@@ -118,13 +122,13 @@ impl Matrix {
                 .expect("could not set client");
 
             if let Err(err) = sync_once(client.clone(), token, &session_file).await {
-                matrix.send(Error(err.to_string()));
+                Matrix::send(Error(err.to_string()));
                 return;
             };
 
             matrix.room_cache.populate(client).await;
 
-            matrix.send(MatuiEvent::SyncComplete);
+            Matrix::send(MatuiEvent::SyncComplete);
         });
     }
 
@@ -135,12 +139,12 @@ impl Matrix {
         let matrix = self.clone();
 
         self.rt.spawn(async move {
-            matrix.send(MatuiEvent::LoginStarted);
+            Matrix::send(MatuiEvent::LoginStarted);
 
             let client = match login(&data_dir, &session_file, &user, &pass).await {
                 Ok(client) => client,
                 Err(err) => {
-                    matrix.send(Error(err.to_string()));
+                    Matrix::send(Error(err.to_string()));
                     return;
                 }
             };
@@ -150,17 +154,17 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
-            matrix.send(MatuiEvent::LoginComplete);
-            matrix.send(MatuiEvent::SyncStarted(SyncType::Initial));
+            Matrix::send(MatuiEvent::LoginComplete);
+            Matrix::send(MatuiEvent::SyncStarted(SyncType::Initial));
 
             if let Err(err) = sync_once(client.clone(), None, &session_file).await {
-                matrix.send(Error(err.to_string()));
+                Matrix::send(Error(err.to_string()));
                 return;
             };
 
             matrix.room_cache.populate(client).await;
 
-            matrix.send(MatuiEvent::SyncComplete);
+            Matrix::send(MatuiEvent::SyncComplete);
         });
     }
 
@@ -199,12 +203,10 @@ impl Matrix {
     }
 
     pub fn confirm_verification(&self, sas: SasVerification) {
-        let matrix = self.clone();
-
         self.rt.spawn(async move {
             if let Err(err) = sas.confirm().await {
                 error!("could not verify: {}", err.to_string());
-                matrix.send(Error(format!("Could not verify: {}", err.to_string())));
+                Matrix::send(Error(format!("Could not verify: {}", err.to_string())));
             }
         });
     }
@@ -224,9 +226,6 @@ impl Matrix {
     }
 
     pub fn fetch_messages(&self, room: Joined, cursor: Option<String>) {
-        let matrix = self.clone();
-        let sender = self.send.clone();
-
         self.rt.spawn(async move {
             // fetch the actual messages
             let mut options = MessagesOptions::new(Direction::Backward);
@@ -236,7 +235,7 @@ impl Matrix {
             let messages = match room.messages(options).await {
                 Ok(msg) => msg,
                 Err(err) => {
-                    matrix.send(Error(err.to_string()));
+                    Matrix::send(Error(err.to_string()));
                     return;
                 }
             };
@@ -253,61 +252,93 @@ impl Matrix {
                 cursor: messages.end,
             };
 
-            sender
-                .send(Matui(MatuiEvent::TimelineBatch(batch)))
-                .expect("could not send messages event");
+            Matrix::send(MatuiEvent::TimelineBatch(batch));
 
             // and look up the detail about every user
-            async fn send_member_event(
-                msg: &AnyTimelineEvent,
-                room: Joined,
-                sender: Sender<Event>,
-            ) -> anyhow::Result<()> {
+            // this needs to go away
+            async fn send_member_event(msg: &AnyTimelineEvent, room: Joined) -> anyhow::Result<()> {
                 let member = room
                     .get_member(msg.sender())
                     .await?
                     .context("not a member")?;
 
-                sender.send(Matui(MatuiEvent::Member(member)))?;
+                Matrix::send(MatuiEvent::Member(member));
 
                 Ok(())
             }
 
             for msg in unpacked {
-                let sender = sender.clone();
-
-                if let Err(e) = send_member_event(&msg, room.clone(), sender).await {
+                if let Err(e) = send_member_event(&msg, room.clone()).await {
                     warn!("Could not send room member event: {}", e.to_string());
                 }
             }
+        });
+    }
 
-            // finally, send a tick event to force a render
-            sender.send(Tick).expect("could not send click event")
+    pub fn open_content(&self, message: MessageType) {
+        let matrix = self.clone();
+
+        self.rt.spawn(async move {
+            Matrix::send(ProgressStarted("Downloading file.".to_string()));
+
+            let (content_type, request) = match message {
+                Image(content) => (
+                    content.info.unwrap().mimetype.unwrap(),
+                    MediaRequest {
+                        source: content.source,
+                        format: MediaFormat::File,
+                    },
+                ),
+                Video(content) => (
+                    content.info.unwrap().mimetype.unwrap(),
+                    MediaRequest {
+                        source: content.source,
+                        format: MediaFormat::File,
+                    },
+                ),
+                _ => {
+                    Matrix::send(Error("Unknown file type.".to_string()));
+                    return;
+                }
+            };
+
+            let handle = match matrix
+                .client()
+                .media()
+                .get_media_file(&request, &content_type.parse().unwrap(), true)
+                .await
+            {
+                Err(err) => {
+                    Matrix::send(Error(err.to_string()));
+                    return;
+                }
+                Ok(mfh) => mfh,
+            };
+
+            Matrix::send(ProgressComplete);
+
+            tokio::task::spawn_blocking(move || view_file(handle));
         });
     }
 
     pub fn send_text_message(&self, room: Joined, message: String) {
-        let matrix = self.clone();
-
         self.rt.spawn(async move {
-            matrix.send(ProgressStarted("Sending message.".to_string()));
+            Matrix::send(ProgressStarted("Sending message.".to_string()));
 
             if let Err(err) = room
                 .send(RoomMessageEventContent::text_plain(message), None)
                 .await
             {
-                matrix.send(Error(err.to_string()));
+                Matrix::send(Error(err.to_string()));
             }
 
-            matrix.send(ProgressComplete);
+            Matrix::send(ProgressComplete);
         });
     }
 
     pub fn send_reaction(&self, room: Joined, event_id: OwnedEventId, key: String) {
-        let matrix = self.clone();
-
         self.rt.spawn(async move {
-            matrix.send(ProgressStarted("Sending reaction.".to_string()));
+            Matrix::send(ProgressStarted("Sending reaction.".to_string()));
 
             if let Err(err) = room
                 .send(
@@ -316,24 +347,22 @@ impl Matrix {
                 )
                 .await
             {
-                matrix.send(Error(err.to_string()));
+                Matrix::send(Error(err.to_string()));
             }
 
-            matrix.send(ProgressComplete);
+            Matrix::send(ProgressComplete);
         });
     }
 
     pub fn redact_event(&self, room: Joined, event_id: OwnedEventId) {
-        let matrix = self.clone();
-
         self.rt.spawn(async move {
-            matrix.send(ProgressStarted("Removing.".to_string()));
+            Matrix::send(ProgressStarted("Removing.".to_string()));
 
             if let Err(err) = room.redact(&event_id, None, None).await {
-                matrix.send(Error(err.to_string()));
+                Matrix::send(Error(err.to_string()));
             }
 
-            matrix.send(ProgressComplete);
+            Matrix::send(ProgressComplete);
         });
     }
 

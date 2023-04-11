@@ -1,4 +1,5 @@
 use anyhow::bail;
+use matrix_sdk::media::MediaFileHandle;
 use std::env::var;
 use std::io::Read;
 use std::process::Command;
@@ -36,4 +37,17 @@ pub fn get_text() -> anyhow::Result<Option<String>> {
     }
 
     Ok(Some(contents))
+}
+
+pub fn view_file(handle: MediaFileHandle) -> anyhow::Result<()> {
+    let status = open::commands(handle.path())[0].status()?;
+
+    // keep the file handle open until the viewer exits
+    drop(handle);
+
+    if !status.success() {
+        bail!("Invalid status code.")
+    }
+
+    Ok(())
 }
