@@ -23,21 +23,15 @@ fn main() -> anyhow::Result<()> {
 
     // Start the main loop.
     while app.running {
+        tui.draw(&mut app, false)?;
+
         // Handle events.
         match events.next()? {
-            Event::Tick => {
-                app.tick();
-                tui.draw(&mut app, false)?;
-            }
+            Event::Tick => app.tick(),
             Event::Redraw => tui.draw(&mut app, true)?,
-            Event::Key(key_event) => {
-                handle_key_event(key_event, &mut app, &events)?;
-                tui.draw(&mut app, false)?;
-            }
+            Event::Key(key_event) => handle_key_event(key_event, &mut app, &events)?,
             Event::Mouse(_) => {}
             Event::Resize(_, _) => {}
-
-            // these events can come in pretty heavy, so don't render
             Event::Matui(app_event) => handle_app_event(app_event, &mut app),
         }
     }

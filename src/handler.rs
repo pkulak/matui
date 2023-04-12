@@ -20,9 +20,9 @@ pub enum MatuiEvent {
     LoginComplete,
     LoginRequired,
     LoginStarted,
-    Member(RoomMember),
     ProgressStarted(String),
     ProgressComplete,
+    RoomMembers(Joined, Vec<RoomMember>),
     SyncComplete,
     SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
@@ -62,10 +62,10 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.progress = None;
         }
 
-        // Let the chat update when we learn about new usernames
-        MatuiEvent::Member(rm) => {
+        // Let the chat update when we learn about room membership
+        MatuiEvent::RoomMembers(room, members) => {
             if let Some(c) = &mut app.chat {
-                c.room_member_event(rm);
+                c.room_members_event(room, members);
             }
         }
         MatuiEvent::ProgressStarted(msg) => app.progress = Some(Progress::new(&msg)),

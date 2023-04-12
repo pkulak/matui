@@ -28,7 +28,6 @@ use ruma::OwnedEventId;
 use sorted_vec::SortedVec;
 use std::cell::Cell;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::ops::Deref;
 use tui::buffer::Buffer;
 use tui::layout::{Constraint, Corner, Direction, Layout, Rect};
@@ -43,7 +42,7 @@ pub struct Chat {
     pub room: Option<Joined>,
     events: SortedVec<OrderedEvent>,
     messages: Vec<Message>,
-    members: HashMap<String, String>,
+    members: Vec<RoomMember>,
     react: Option<React>,
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
@@ -57,7 +56,7 @@ impl Chat {
             room: None,
             events: SortedVec::new(),
             messages: vec![],
-            members: HashMap::new(),
+            members: vec![],
             react: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
@@ -67,6 +66,7 @@ impl Chat {
 
     pub fn set_room(&mut self, room: Joined) {
         self.matrix.fetch_messages(room.clone(), None);
+        self.matrix.fetch_room_members(room.clone());
         self.fetching.set(true);
         self.room = Some(room);
     }
@@ -193,9 +193,12 @@ impl Chat {
         }
     }
 
-    pub fn room_member_event(&mut self, member: RoomMember) {
-        self.members
-            .insert(member.user_id().into(), member.name().to_string());
+    pub fn room_members_event(&mut self, room: Joined, members: Vec<RoomMember>) {
+        if self.room.is_none() || self.room.as_ref().unwrap().room_id() != room.room_id() {
+            return;
+        }
+
+        self.members = members;
         self.messages = make_message_list(&self.events, &self.members);
     }
 
@@ -462,15 +465,24 @@ impl Message {
         info!("{:?}", event);
     }
 
-    fn update_senders(&mut self, map: &HashMap<String, String>) {
-        if let Some(sender) = map.get(&self.sender) {
-            self.sender = sender.clone();
+    fn update_senders(&mut self, members: &Vec<RoomMember>) {
+        fn set_name(old: &mut String, new: &RoomMember) {
+            *old = new.display_name().unwrap_or_else(|| old).to_string();
         }
 
-        for reaction in self.reactions.iter_mut() {
-            for event in reaction.events.iter_mut() {
-                if let Some(s) = map.get(&event.sender_id) {
-                    event.sender_name = s.clone();
+        // maybe we use a map, or sorted list at some point to avoid looping
+        for member in members {
+            let user_id: String = member.user_id().into();
+
+            if self.sender == user_id {
+                set_name(&mut self.sender, member);
+            }
+
+            for reaction in self.reactions.iter_mut() {
+                for event in reaction.events.iter_mut() {
+                    if event.sender_id == user_id {
+                        set_name(&mut event.sender_name, member);
+                    }
                 }
             }
         }
@@ -623,7 +635,7 @@ impl Widget for ChatWidget<'_> {
 
 fn make_message_list(
     timeline: &SortedVec<OrderedEvent>,
-    members: &HashMap<String, String>,
+    members: &Vec<RoomMember>,
 ) -> Vec<Message> {
     let mut messages = vec![];
     let mut modifiers = vec![];

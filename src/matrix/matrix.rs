@@ -3,18 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
-use crate::app::App;
-use crate::event::Event;
-use crate::event::Event::Matui;
-use crate::handler::MatuiEvent::{
-    Error, ProgressComplete, ProgressStarted, VerificationCompleted, VerificationStarted,
-};
-use crate::handler::{Batch, MatuiEvent, SyncType};
-use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
-use crate::spawn::view_file;
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
-use log::{error, info, warn};
+use log::{error, info};
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
 use matrix_sdk::media::{MediaFormat, MediaRequest};
@@ -43,6 +34,16 @@ use ruma::events::{AnySyncTimelineEvent, AnyTimelineEvent};
 use ruma::{OwnedEventId, UInt};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
+
+use crate::app::App;
+use crate::event::Event;
+use crate::event::Event::Matui;
+use crate::handler::MatuiEvent::{
+    Error, ProgressComplete, ProgressStarted, VerificationCompleted, VerificationStarted,
+};
+use crate::handler::{Batch, MatuiEvent, SyncType};
+use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
+use crate::spawn::view_file;
 
 /// A Matrix client that maintains it's own Tokio runtime
 #[derive(Clone)]
@@ -253,25 +254,15 @@ impl Matrix {
             };
 
             Matrix::send(MatuiEvent::TimelineBatch(batch));
+        });
+    }
 
-            // and look up the detail about every user
-            // this needs to go away
-            async fn send_member_event(msg: &AnyTimelineEvent, room: Joined) -> anyhow::Result<()> {
-                let member = room
-                    .get_member(msg.sender())
-                    .await?
-                    .context("not a member")?;
-
-                Matrix::send(MatuiEvent::Member(member));
-
-                Ok(())
-            }
-
-            for msg in unpacked {
-                if let Err(e) = send_member_event(&msg, room.clone()).await {
-                    warn!("Could not send room member event: {}", e.to_string());
-                }
-            }
+    pub fn fetch_room_members(&self, room: Joined) {
+        self.rt.spawn(async move {
+            match room.members().await {
+                Ok(members) => Matrix::send(MatuiEvent::RoomMembers(room, members)),
+                Err(err) => error!("could not fetch room members: {}", err.to_string()),
+            };
         });
     }
 
@@ -367,7 +358,7 @@ impl Matrix {
     }
 
     pub fn me(&self) -> String {
-        self.client().user_id().unwrap().as_str().to_string()
+        self.client().user_id().unwrap().into()
     }
 
     pub fn timeline_event(&self, event: AnyTimelineEvent) {
