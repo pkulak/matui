@@ -1,6 +1,6 @@
 use config::Config;
 use matrix_sdk::encryption::verification::SasVerification;
-use matrix_sdk::room::Joined;
+use matrix_sdk::room::{Joined, Room};
 use once_cell::sync::OnceCell;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
@@ -91,9 +91,17 @@ impl App {
     }
 
     pub fn select_room(&mut self, room: Joined) {
+        // don't re-select the same room
+        if let Some(Chat { room: Some(r), .. }) = &self.chat {
+            if r.room_id() == room.room_id() {
+                return;
+            }
+        }
+
         let mut chat = Chat::new(self.matrix.clone());
-        chat.set_room(room);
+        chat.set_room(room.clone());
         self.chat = Some(chat);
+        self.matrix.clone().room_visit_event(Room::Joined(room));
     }
 
     /// Handles the tick event of the terminal.

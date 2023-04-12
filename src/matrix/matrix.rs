@@ -45,12 +45,15 @@ use crate::handler::{Batch, MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
 use crate::spawn::view_file;
 
+use super::notify::Notify;
+
 /// A Matrix client that maintains it's own Tokio runtime
 #[derive(Clone)]
 pub struct Matrix {
     rt: Arc<Runtime>,
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
+    notify: Arc<Notify>,
 }
 
 impl Default for Matrix {
@@ -65,6 +68,7 @@ impl Default for Matrix {
             rt: Arc::new(rt),
             client: Arc::new(OnceCell::default()),
             room_cache: Arc::new(RoomCache::default()),
+            notify: Arc::new(Notify::default()),
         }
     }
 }
@@ -86,7 +90,7 @@ impl Matrix {
             .to_owned()
     }
 
-    fn send(event: MatuiEvent) {
+    pub fn send(event: MatuiEvent) {
         App::get_sender()
             .send(Matui(event))
             .expect("could not send Matrix event");
@@ -365,9 +369,27 @@ impl Matrix {
         let matrix = self.clone();
 
         self.rt.spawn(async move {
-            let client = matrix.client();
-            matrix.room_cache.timeline_event(client, &event).await;
+            matrix
+                .room_cache
+                .timeline_event(matrix.client(), &event)
+                .await;
+
+            if let Err(e) = matrix.notify.timeline_event(matrix.client(), event).await {
+                error!("could not send notification: {}", e.to_string());
+            }
         });
+    }
+
+    pub fn focus_event(&self) {
+        self.notify.focus_event();
+    }
+
+    pub fn blur_event(&self) {
+        self.notify.blur_event();
+    }
+
+    pub fn room_visit_event(&self, room: Room) {
+        self.notify.room_visit_event(room);
     }
 }
 

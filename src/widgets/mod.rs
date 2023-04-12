@@ -13,6 +13,7 @@ pub mod chat;
 pub mod confirm;
 pub mod react;
 pub mod textinput;
+pub mod message;
 
 pub enum EventResult {
     Consumed(Action),

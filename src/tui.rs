@@ -1,5 +1,5 @@
 use crate::app::App;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::{DisableMouseCapture, EnableFocusChange};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use std::io;
 use tui::backend::Backend;
@@ -26,7 +26,7 @@ impl<B: Backend> Tui<B> {
     /// It enables the raw mode and sets terminal properties.
     pub fn init(&mut self) -> anyhow::Result<()> {
         terminal::enable_raw_mode()?;
-        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableMouseCapture)?;
+        crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableFocusChange)?;
         self.terminal.hide_cursor()?;
         self.terminal.clear()?;
         Ok(())
@@ -40,7 +40,7 @@ impl<B: Backend> Tui<B> {
         if clear {
             self.terminal.clear()?;
         }
-        
+
         self.terminal.draw(|frame| app.render(frame))?;
         Ok(())
     }

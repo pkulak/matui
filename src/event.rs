@@ -1,5 +1,5 @@
 use crate::handler::MatuiEvent;
-use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 use std::ops::Sub;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -12,12 +12,12 @@ pub enum Event {
     Tick,
     /// Force a clear and full re-draw.
     Redraw,
+    /// The window has gained focus
+    Focus,
+    /// The window has lost focus
+    Blur,
     /// Key press.
     Key(KeyEvent),
-    /// Mouse click/scroll.
-    Mouse(MouseEvent),
-    /// Terminal resize.
-    Resize(u16, u16),
     /// App event
     Matui(MatuiEvent),
 }
@@ -79,9 +79,9 @@ impl EventHandler {
                         if last_park.elapsed() > Duration::from_millis(250) {
                             match event {
                                 CrosstermEvent::Key(e) => sender.send(Event::Key(e)),
-                                CrosstermEvent::Mouse(e) => sender.send(Event::Mouse(e)),
-                                CrosstermEvent::Resize(w, h) => sender.send(Event::Resize(w, h)),
-                                _ => unimplemented!(),
+                                CrosstermEvent::FocusGained => sender.send(Event::Focus),
+                                CrosstermEvent::FocusLost => sender.send(Event::Blur),
+                                _ => Ok(()),
                             }
                             .expect("failed to send terminal event")
                         }

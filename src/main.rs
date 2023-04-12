@@ -1,7 +1,7 @@
 use log::LevelFilter;
 use matui::app::App;
 use matui::event::{Event, EventHandler};
-use matui::handler::{handle_app_event, handle_key_event};
+use matui::handler::{handle_app_event, handle_blur_event, handle_focus_event, handle_key_event};
 use matui::tui::Tui;
 use std::io;
 use tui::backend::CrosstermBackend;
@@ -30,9 +30,9 @@ fn main() -> anyhow::Result<()> {
             Event::Tick => app.tick(),
             Event::Redraw => tui.draw(&mut app, true)?,
             Event::Key(key_event) => handle_key_event(key_event, &mut app, &events)?,
-            Event::Mouse(_) => {}
-            Event::Resize(_, _) => {}
             Event::Matui(app_event) => handle_app_event(app_event, &mut app),
+            Event::Focus => handle_focus_event(&mut app),
+            Event::Blur => handle_blur_event(&mut app),
         }
     }
 

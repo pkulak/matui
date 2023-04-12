@@ -1,7 +1,9 @@
 use anyhow::bail;
+use image::imageops::FilterType;
 use matrix_sdk::media::MediaFileHandle;
+use notify_rust::Hint;
 use std::env::var;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::process::Command;
 use tempfile::NamedTempFile;
 
@@ -47,6 +49,27 @@ pub fn view_file(handle: MediaFileHandle) -> anyhow::Result<()> {
 
     if !status.success() {
         bail!("Invalid status code.")
+    }
+
+    Ok(())
+}
+
+pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> anyhow::Result<()> {
+    if let Some(img) = image {
+        let data = Cursor::new(img);
+        let reader = image::io::Reader::new(data).with_guessed_format()?;
+
+        let img = reader
+            .decode()?
+            .resize_to_fill(250, 250, FilterType::Lanczos3);
+
+        notify_rust::Notification::new()
+            .summary(summary)
+            .body(body)
+            .hint(Hint::ImageData(notify_rust::Image::try_from(img)?))
+            .show()?;
+    } else {
+        notify_rust::Notification::new().body(body).show()?;
     }
 
     Ok(())

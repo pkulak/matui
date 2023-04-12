@@ -7,11 +7,11 @@ use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::Action::{ButtonNo, ButtonYes, Exit, SelectRoom};
 use crate::widgets::EventResult::Consumed;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::event::EventHandler;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
-use matrix_sdk::room::{Joined, RoomMember};
+use matrix_sdk::room::{Joined, Room, RoomMember};
 use ruma::events::AnyTimelineEvent;
 
 #[derive(Clone, Debug)]
@@ -23,6 +23,7 @@ pub enum MatuiEvent {
     ProgressStarted(String),
     ProgressComplete,
     RoomMembers(Joined, Vec<RoomMember>),
+    RoomSelected(Joined),
     SyncComplete,
     SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
@@ -70,6 +71,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::ProgressStarted(msg) => app.progress = Some(Progress::new(&msg)),
         MatuiEvent::ProgressComplete => app.progress = None,
+        MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::SyncStarted(st) => {
             app.error = None;
             match st {
@@ -131,6 +133,12 @@ pub fn handle_key_event(
     app: &mut App,
     handler: &EventHandler,
 ) -> anyhow::Result<()> {
+    // ctrl-c always quits
+    if key_event.modifiers == KeyModifiers::CONTROL && key_event.code == KeyCode::Char('c') {
+        app.running = false;
+        return Ok(());
+    }
+
     // hide an error message on any key event
     if app.error.is_some() {
         app.error = None;
@@ -206,4 +214,20 @@ pub fn handle_key_event(
     }
 
     Ok(())
+}
+
+pub fn handle_focus_event(app: &mut App) {
+    app.matrix.focus_event();
+
+    // we consider it a room "visit" if you come back to the app and view a
+    // room
+    if let Some(chat) = &app.chat {
+        if let Some(joined) = chat.room.clone() {
+            app.matrix.clone().room_visit_event(Room::Joined(joined));
+        }
+    }
+}
+
+pub fn handle_blur_event(app: &mut App) {
+    app.matrix.blur_event();
 }
