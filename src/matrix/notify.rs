@@ -10,12 +10,14 @@ use std::{
 use image::imageops::FilterType;
 use log::error;
 use matrix_sdk::{
-    media::MediaFormat,
+    media::{MediaFormat, MediaThumbnailSize},
     room::{Room, RoomMember},
     Client,
 };
 use notify_rust::{CloseReason, Hint};
-use ruma::{events::AnyTimelineEvent, UserId};
+use ruma::{
+    api::client::media::get_content_thumbnail::v3::Method, events::AnyTimelineEvent, UInt, UserId,
+};
 
 use crate::{handler::MatuiEvent, widgets::message::Message};
 
@@ -29,7 +31,7 @@ pub struct Notify {
 impl Default for Notify {
     fn default() -> Self {
         Notify {
-            focus: AtomicBool::new(true),
+            focus: AtomicBool::new(false),
             rooms: Mutex::new(HashMap::new()),
         }
     }
@@ -48,9 +50,9 @@ impl Notify {
 
         if let Some(message) = Message::try_from(&event) {
             // don't send notifications for our own messages
-            // if message.sender == client.user_id().unwrap().to_string() {
-            //     return Ok(())/* ; */
-            // }
+            if message.sender == client.user_id().unwrap().to_string() {
+                return Ok(());
+            }
 
             let room = client.get_room(&message.room_id).unwrap();
 
@@ -109,15 +111,21 @@ impl Notify {
         }
 
         let mut map = self.rooms.lock().expect("could not lock rooms");
+        let mut watch = true; // should we monitor for the close callback?
 
         if let Some(handle_id) = map.remove(room.room_id().as_str()) {
             notification.id(handle_id);
+            watch = false;
         }
 
         let handle = notification.show()?;
         let handle_id = handle.id();
 
         map.insert(room.room_id().to_string(), handle_id);
+
+        if !watch {
+            return Ok(());
+        }
 
         // spawn a thread to sit around and wait for the notification to close
         std::thread::spawn(move || {
@@ -136,7 +144,13 @@ impl Notify {
     }
 
     async fn get_image(room: Room, user: RoomMember) -> Option<Vec<u8>> {
-        let mut avatar = match room.avatar(MediaFormat::File).await {
+        let format = MediaFormat::Thumbnail(MediaThumbnailSize {
+            method: Method::Scale,
+            width: UInt::new(250).unwrap(),
+            height: UInt::new(250).unwrap(),
+        });
+
+        let mut avatar = match room.avatar(format).await {
             Ok(a) => a,
             Err(e) => {
                 error!("could not fetch room avatar: {}", e.to_string());

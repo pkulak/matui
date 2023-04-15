@@ -92,7 +92,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             sort_rooms(&mut rooms);
 
             if let Some(room) = rooms.first() {
-                app.select_room(room.room.clone())
+                app.select_room(room.inner.clone())
             }
         }
         MatuiEvent::Timeline(event) => {
@@ -138,6 +138,9 @@ pub fn handle_key_event(
         app.running = false;
         return Ok(());
     }
+
+    // consider any key event also a sign of "focus"
+    handle_focus_event(app);
 
     // hide an error message on any key event
     if app.error.is_some() {
@@ -205,7 +208,7 @@ pub fn handle_key_event(
 
             match key_event.code {
                 KeyCode::Char(' ') => {
-                    let current = &app.chat.as_ref().and_then(|c| c.room.clone());
+                    let current = &app.chat.as_ref().and_then(|c| c.room().clone());
                     app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
                 }
                 _ => {}
@@ -221,13 +224,18 @@ pub fn handle_focus_event(app: &mut App) {
 
     // we consider it a room "visit" if you come back to the app and view a
     // room
-    if let Some(chat) = &app.chat {
-        if let Some(joined) = chat.room.clone() {
+    if let Some(chat) = &mut app.chat {
+        if let Some(joined) = chat.room().clone() {
             app.matrix.clone().room_visit_event(Room::Joined(joined));
+            chat.focus_event();
         }
     }
 }
 
 pub fn handle_blur_event(app: &mut App) {
     app.matrix.blur_event();
+
+    if let Some(chat) = &mut app.chat {
+        chat.blur_event();
+    }
 }

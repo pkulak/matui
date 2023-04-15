@@ -39,6 +39,7 @@ impl<B: Backend> Tui<B> {
     pub fn draw(&mut self, app: &mut App, clear: bool) -> anyhow::Result<()> {
         if clear {
             self.terminal.clear()?;
+            crossterm::execute!(io::stderr(), EnableFocusChange)?;
         }
 
         self.terminal.draw(|frame| app.render(frame))?;

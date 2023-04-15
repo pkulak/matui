@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::widgets::get_margin;
 use tui::buffer::Buffer;
 use tui::layout::Direction::Vertical;
@@ -13,6 +15,7 @@ const FRAMES: &[&str] = &[
 pub struct Progress {
     text: String,
     tail: String,
+    created: Instant,
 }
 
 impl Progress {
@@ -20,11 +23,12 @@ impl Progress {
         Progress {
             text: text.to_string(),
             tail: "".to_string(),
+            created: Instant::now(),
         }
     }
 
     pub fn widget(&self) -> ProgressWidget {
-        ProgressWidget { notification: self }
+        ProgressWidget { progress: self }
     }
 
     pub fn tick(&mut self, timestamp: usize) {
@@ -33,14 +37,19 @@ impl Progress {
 }
 
 pub struct ProgressWidget<'a> {
-    notification: &'a Progress,
+    progress: &'a Progress,
 }
 
 impl Widget for ProgressWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        // don't even render until it's been half a second
+        if self.progress.created.elapsed() < Duration::from_millis(500) {
+            return;
+        }
+
         let value = format!(
             "{} {} {}",
-            self.notification.tail, self.notification.text, self.notification.tail
+            self.progress.tail, self.progress.text, self.progress.tail
         );
 
         let area = Layout::default()
@@ -61,7 +70,7 @@ impl Widget for ProgressWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(
                 area.width,
-                (self.notification.text.len() + 4) as u16,
+                (self.progress.text.len() + 4) as u16,
             ))
             .vertical_margin(2)
             .constraints([Constraint::Percentage(100)].as_ref())

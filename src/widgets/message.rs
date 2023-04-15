@@ -1,9 +1,14 @@
+use std::time::{Duration, SystemTime};
+
 use crate::matrix::matrix::{pad_emoji, Matrix};
+use crate::pretty_list;
+use log::info;
 use matrix_sdk::room::RoomMember;
 use once_cell::unsync::OnceCell;
+use ruma::events::relation::Replacement;
 use ruma::events::room::message::MessageType::{self, Image, Text, Video};
 use ruma::events::room::message::{
-    ImageMessageEventContent, TextMessageEventContent, VideoMessageEventContent,
+    ImageMessageEventContent, Relation, TextMessageEventContent, VideoMessageEventContent,
 };
 use ruma::events::room::redaction::RoomRedactionEvent;
 use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
@@ -12,7 +17,7 @@ use ruma::events::AnyMessageLikeEvent::RoomRedaction;
 use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
 use ruma::events::MessageLikeEvent;
-use ruma::{OwnedEventId, OwnedRoomId};
+use ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId};
 use tui::style::{Color, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::ListItem;
@@ -23,7 +28,9 @@ use tui::widgets::ListItem;
 pub struct Message {
     pub id: OwnedEventId,
     pub room_id: OwnedRoomId,
+    pub sent: MilliSecondsSinceUnixEpoch,
     pub body: MessageType,
+    pub history: Vec<MessageType>,
     pub sender: String,
     pub reactions: Vec<Reaction>,
 }
@@ -53,6 +60,11 @@ impl Message {
         }
     }
 
+    pub fn edit(&mut self, new_body: MessageType) {
+        let old = std::mem::replace(&mut self.body, new_body);
+        self.history.push(old);
+    }
+
     // can we make a brand-new message, just from this event?
     pub fn try_from(event: &AnyTimelineEvent) -> Option<Self> {
         if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
@@ -63,10 +75,18 @@ impl Message {
                 _ => return None,
             };
 
+            // skip replacements
+            if let Some(Relation::Replacement(_)) = c.content.relates_to {
+                info!("replacing {:?}", event);
+                return None;
+            }
+
             return Some(Message {
                 id: c.event_id,
                 room_id: c.room_id,
+                sent: c.origin_server_ts,
                 body,
+                history: vec![],
                 sender: c.sender.to_string(),
                 reactions: Vec::new(),
             });
@@ -78,6 +98,23 @@ impl Message {
     // if not, we should send the event here, to possibly act on existing
     // events
     pub fn merge_into_message_list(messages: &mut Vec<Message>, event: &AnyTimelineEvent) {
+        // replacements
+        if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
+            if let Some(Relation::Replacement(Replacement {
+                event_id: id,
+                new_content: content,
+                ..
+            })) = c.clone().content.relates_to
+            {
+                for message in messages.iter_mut() {
+                    if message.id == id {
+                        message.edit(content);
+                        return;
+                    }
+                }
+            }
+        }
+
         // reactions
         if let MessageLike(Rctn(MessageLikeEvent::Original(c))) = event {
             let relates = c.content.relates_to.clone();
@@ -121,6 +158,8 @@ impl Message {
 
             return;
         }
+
+        info!("unhandled event: {:?}", event);
     }
 
     pub fn update_senders(&mut self, members: &Vec<RoomMember>) {
@@ -149,11 +188,26 @@ impl Message {
     pub fn to_list_item(&self, width: usize) -> ListItem {
         use tui::text::Text;
 
+        let formatter = timeago::Formatter::new();
+
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let then: u64 = self.sent.as_secs().into();
+        let pretty_elapsed = formatter.convert(Duration::from_secs(now - then));
+        let pretty_elapsed = format!(" {}", pretty_elapsed);
+
         // author
-        let spans = vec![Span::styled(
-            self.sender.clone(),
-            Style::default().fg(Color::Green),
-        )];
+        let mut spans = vec![
+            Span::styled(self.sender.clone(), Style::default().fg(Color::Green)),
+            Span::styled(pretty_elapsed, Style::default().fg(Color::DarkGray)),
+        ];
+
+        if !self.history.is_empty() {
+            spans.push(Span::styled(" (edited)", Style::default().fg(Color::Red)))
+        }
 
         // message
         let mut lines = Text::from(Spans::from(spans));
@@ -227,15 +281,7 @@ impl Reaction {
                 .map(|s| s.sender_name.split_whitespace().next().unwrap_or_default())
                 .collect();
 
-            return match all.len() {
-                0 => "".to_string(),
-                1 => all.get(0).unwrap().to_string(),
-                _ => format!(
-                    "{} and {}",
-                    all[0..all.len() - 1].join(", "),
-                    all.last().unwrap()
-                ),
-            };
+            return pretty_list(all);
         })
     }
 }

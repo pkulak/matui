@@ -9,6 +9,7 @@ use tui::Terminal;
 
 fn main() -> anyhow::Result<()> {
     simple_logging::log_to_file("test.log", LevelFilter::Info)?;
+    log_panics::init();
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(io::stderr());

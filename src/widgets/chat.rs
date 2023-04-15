@@ -2,36 +2,45 @@ use crate::app::App;
 use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
+use crate::matrix::roomcache::DecoratedRoom;
 use crate::spawn::get_text;
 use crate::widgets::message::{Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
+use crate::{pretty_list, truncate};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
+use ruma::events::room::member::MembershipState;
 use ruma::events::AnyTimelineEvent;
+use ruma::OwnedEventId;
 use sorted_vec::SortedVec;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::ops::Deref;
 use tui::buffer::Buffer;
-use tui::layout::{Constraint, Corner, Direction, Layout, Rect};
-use tui::widgets::{List, ListItem, ListState, StatefulWidget, Widget};
+use tui::layout::{Alignment, Constraint, Corner, Direction, Layout, Rect};
+use tui::style::{Color, Style};
+use tui::widgets::{
+    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+};
 
 use super::Action;
 
 pub struct Chat {
     matrix: Matrix,
-    pub room: Option<Joined>,
+    pub room: Option<DecoratedRoom>,
     events: SortedVec<OrderedEvent>,
     messages: Vec<Message>,
+    read_to: Option<OwnedEventId>,
     members: Vec<RoomMember>,
     react: Option<React>,
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
     fetching: Cell<bool>,
+    focus: bool,
 }
 
 impl Chat {
@@ -41,11 +50,13 @@ impl Chat {
             room: None,
             events: SortedVec::new(),
             messages: vec![],
+            read_to: None,
             members: vec![],
             react: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
             fetching: Cell::new(false),
+            focus: true,
         }
     }
 
@@ -53,7 +64,48 @@ impl Chat {
         self.matrix.fetch_messages(room.clone(), None);
         self.matrix.fetch_room_members(room.clone());
         self.fetching.set(true);
-        self.room = Some(room);
+        self.room = self.matrix.wrap_room(&room);
+    }
+
+    fn set_fully_read(&mut self) {
+        if !self.focus {
+            return;
+        }
+
+        let read_to = self.messages.first().and_then(|m| Some(m.id.clone()));
+
+        if read_to == self.read_to {
+            return;
+        }
+
+        if let Some(id) = read_to.clone() {
+            if let Some(room) = self.room() {
+                self.matrix.read_to(room, id);
+                self.read_to = read_to;
+            }
+        }
+    }
+
+    pub fn room(&self) -> Option<Joined> {
+        self.room.as_ref().and_then(|r| Some(r.inner().clone()))
+    }
+
+    fn pretty_members(&self) -> String {
+        let names: Vec<&str> = self
+            .members
+            .iter()
+            .filter(|m| m.membership() == &MembershipState::Join)
+            .map(|m| {
+                m.display_name()
+                    .or_else(|| Some(m.user_id().localpart()))
+                    .unwrap()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+            })
+            .collect();
+
+        pretty_list(names)
     }
 
     pub fn input(
@@ -73,7 +125,7 @@ impl Chat {
 
                     if let Some(message) = self.selected_message() {
                         self.matrix.send_reaction(
-                            self.room.clone().unwrap(),
+                            self.room().unwrap(),
                             message.id.clone(),
                             reaction,
                         )
@@ -85,7 +137,7 @@ impl Chat {
 
                     if let Some(event) = self.my_selected_reaction_event(reaction) {
                         self.matrix
-                            .redact_event(self.room.clone().unwrap(), event.id.clone())
+                            .redact_event(self.room().unwrap(), event.id.clone())
                     }
                 }
                 Consumed(_) => return Ok(Consumed(Action::Typing)),
@@ -119,8 +171,7 @@ impl Chat {
 
                 if let Ok(input) = result {
                     if let Some(input) = input {
-                        self.matrix
-                            .send_text_message(self.room.clone().unwrap(), input);
+                        self.matrix.send_text_message(self.room().unwrap(), input);
                         return Ok(Consumed(Action::Typing));
                     } else {
                         bail!("Ignoring blank message.")
@@ -146,6 +197,15 @@ impl Chat {
         };
     }
 
+    pub fn focus_event(&mut self) {
+        self.focus = true;
+        self.set_fully_read();
+    }
+
+    pub fn blur_event(&mut self) {
+        self.focus = false;
+    }
+
     pub fn timeline_event(&mut self, event: AnyTimelineEvent) {
         if self.room.is_none() || event.room_id() != self.room.as_ref().unwrap().room_id() {
             return;
@@ -153,6 +213,7 @@ impl Chat {
 
         self.events.push(OrderedEvent::new(event));
         self.messages = make_message_list(&self.events, &self.members);
+        self.set_fully_read();
     }
 
     pub fn batch_event(&mut self, batch: Batch) {
@@ -170,6 +231,7 @@ impl Chat {
 
         self.messages = make_message_list(&self.events, &self.members);
         self.fetching.set(false);
+        self.set_fully_read();
 
         if reset {
             let mut state = self.list_state.take();
@@ -197,10 +259,8 @@ impl Chat {
         self.list_state.set(state);
 
         if buffer < 25 {
-            self.matrix.fetch_messages(
-                self.room.as_ref().unwrap().clone(),
-                self.next_cursor.clone(),
-            );
+            self.matrix
+                .fetch_messages(self.room().unwrap(), self.next_cursor.clone());
             self.fetching.set(true);
             info!("fetching more events...")
         }
@@ -350,12 +410,52 @@ pub struct ChatWidget<'a> {
 
 impl Widget for ChatWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width < 12 {
+            return;
+        }
+
         let area = Layout::default()
             .direction(Direction::Horizontal)
             .horizontal_margin(get_margin(area.width, 80))
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];
 
+        let splits = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
+            .split(area);
+
+        // render the header
+        let header = Block::default()
+            .title(
+                self.chat
+                    .room
+                    .as_ref()
+                    .and_then(|r| {
+                        let name = r.name.to_string();
+                        Some(truncate(name, (splits[0].width - 8).into()))
+                    })
+                    .unwrap_or_default(),
+            )
+            .title_alignment(Alignment::Center)
+            .style(Style::default().bg(Color::Black))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded);
+
+        header.render(splits[0], buf);
+
+        let p_area = Layout::default()
+            .direction(Direction::Vertical)
+            .horizontal_margin(2)
+            .vertical_margin(1)
+            .constraints([Constraint::Percentage(100)].as_ref())
+            .split(splits[0])[0];
+
+        Paragraph::new(self.chat.pretty_members())
+            .style(Style::default().fg(Color::Magenta))
+            .render(p_area, buf);
+
+        // chat messages
         let items: Vec<ListItem> = self
             .chat
             .messages
@@ -369,9 +469,10 @@ impl Widget for ChatWidget<'_> {
             .highlight_symbol("> ")
             .start_corner(Corner::BottomLeft);
 
-        StatefulWidget::render(list, area, buf, &mut list_state);
+        StatefulWidget::render(list, splits[1], buf, &mut list_state);
         self.chat.list_state.set(list_state);
 
+        // reaction window
         if let Some(react) = self.chat.react.as_ref() {
             react.widget().render(area, buf)
         }

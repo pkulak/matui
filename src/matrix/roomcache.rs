@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use futures::future::join_all;
 use log::info;
-use matrix_sdk::room::{Joined, MessagesOptions};
+use matrix_sdk::room::{Joined, MessagesOptions, Room};
 use matrix_sdk::{Client, DisplayName};
 use ruma::api::Direction;
 use ruma::events::room::message::MessageType::Text;
@@ -10,20 +10,11 @@ use ruma::events::AnyMessageLikeEvent::RoomMessage;
 use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
 use ruma::events::MessageLikeEvent::Original;
-use ruma::MilliSecondsSinceUnixEpoch;
+use ruma::{MilliSecondsSinceUnixEpoch, RoomId};
 use std::sync::Mutex;
 
 pub struct RoomCache {
     rooms: Mutex<Vec<DecoratedRoom>>,
-}
-
-#[derive(Clone)]
-pub struct DecoratedRoom {
-    pub room: Joined,
-    pub name: DisplayName,
-    pub last_message: Option<String>,
-    pub last_sender: Option<String>,
-    pub last_ts: Option<MilliSecondsSinceUnixEpoch>,
 }
 
 impl Default for RoomCache {
@@ -55,6 +46,29 @@ impl RoomCache {
         self.rooms.lock().expect("to unlock rooms").clone()
     }
 
+    pub fn wrap(&self, joined: &Joined) -> Option<DecoratedRoom> {
+        let rooms = self.rooms.lock().expect("to unlock rooms");
+
+        for r in rooms.iter() {
+            if r.inner.room_id() == joined.room_id() {
+                return Some(r.clone());
+            }
+        }
+
+        None
+    }
+
+    pub fn room_visit_event(&self, room: Room) {
+        let mut rooms = self.rooms.lock().expect("to unlock rooms");
+
+        for dec in rooms.iter_mut() {
+            if dec.inner.room_id() == room.room_id() {
+                dec.visited = true;
+                return;
+            }
+        }
+    }
+
     pub async fn timeline_event(&self, client: Client, event: &AnyTimelineEvent) {
         let joined = match client.get_joined_room(event.room_id()) {
             Some(joined) => joined,
@@ -66,7 +80,7 @@ impl RoomCache {
         let mut rooms = self.rooms.lock().expect("to unlock rooms");
 
         for dec in rooms.iter_mut() {
-            if dec.room.room_id() == event.room_id() {
+            if dec.inner.room_id() == event.room_id() {
                 *dec = decorated;
                 return;
             }
@@ -74,7 +88,41 @@ impl RoomCache {
     }
 }
 
+#[derive(Clone)]
+pub struct DecoratedRoom {
+    pub inner: Joined,
+    pub name: DisplayName,
+    pub visited: bool,
+    pub last_message: Option<String>,
+    pub last_sender: Option<String>,
+    pub last_ts: Option<MilliSecondsSinceUnixEpoch>,
+}
+
 impl DecoratedRoom {
+    pub fn room_id(&self) -> &RoomId {
+        self.inner.room_id()
+    }
+
+    pub fn inner(&self) -> Joined {
+        self.inner.clone()
+    }
+
+    pub fn unread_count(&self) -> u64 {
+        if self.visited {
+            return 0;
+        }
+
+        return self.inner.unread_notification_counts().notification_count;
+    }
+
+    pub fn highlight_count(&self) -> u64 {
+        if self.visited {
+            return 0;
+        }
+
+        return self.inner.unread_notification_counts().highlight_count;
+    }
+
     async fn from_joined(room: Joined) -> DecoratedRoom {
         let name = room.display_name().await.unwrap_or(DisplayName::Empty);
 
@@ -98,8 +146,9 @@ impl DecoratedRoom {
                     let member = room.get_member(&c.sender).await?.context("not a member")?;
 
                     return Ok(DecoratedRoom {
-                        room,
+                        inner: room,
                         name,
+                        visited: false,
                         last_message: Some(body),
                         last_sender: Some(member.name().to_string()),
                         last_ts: Some(c.origin_server_ts),
@@ -115,8 +164,9 @@ impl DecoratedRoom {
             Err(e) => {
                 info!("could not fetch room details: {}", e.to_string());
                 DecoratedRoom {
-                    room,
+                    inner: room,
                     name,
+                    visited: false,
                     last_message: None,
                     last_sender: None,
                     last_ts: None,

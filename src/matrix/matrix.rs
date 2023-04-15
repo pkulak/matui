@@ -1,4 +1,5 @@
 use std::fs;
+
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use log::{error, info};
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
 use matrix_sdk::media::{MediaFormat, MediaRequest};
-use matrix_sdk::room::{Joined, MessagesOptions, Room};
+use matrix_sdk::room::{Joined, MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
@@ -88,6 +89,10 @@ impl Matrix {
             .get()
             .expect("client expected but not set")
             .to_owned()
+    }
+
+    pub fn wrap_room(&self, room: &Joined) -> Option<DecoratedRoom> {
+        self.room_cache.wrap(room)
     }
 
     pub fn send(event: MatuiEvent) {
@@ -389,7 +394,22 @@ impl Matrix {
     }
 
     pub fn room_visit_event(&self, room: Room) {
-        self.notify.room_visit_event(room);
+        self.notify.room_visit_event(room.clone());
+        self.room_cache.room_visit_event(room);
+    }
+
+    pub fn read_to(&self, room: Joined, to: OwnedEventId) {
+        let receipts = Receipts::new()
+            .fully_read_marker(Some(to.clone()))
+            .public_read_receipt(Some(to.clone()));
+
+        self.rt.spawn(async move {
+            if let Err(e) = room.send_multiple_receipts(receipts).await {
+                error!("could not send read receipt: {}", e.to_string());
+            } else {
+                info!("send read receipt");
+            }
+        });
     }
 }
 

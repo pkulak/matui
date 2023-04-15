@@ -34,7 +34,7 @@ impl Rooms {
 
         // if the current room is at the top, put it at the bottom
         if let Some(current) = current {
-            if rooms.len() > 1 && rooms.first().unwrap().room.room_id() == current.room_id() {
+            if rooms.len() > 1 && rooms.first().unwrap().inner.room_id() == current.room_id() {
                 let first = rooms.remove(0);
                 rooms.push(first);
             }
@@ -83,7 +83,7 @@ impl Rooms {
                 self.set_mode(NORMAL);
                 Consumed(Typing)
             }
-            KeyCode::Esc if self.mode() == NORMAL => Consumed(Exit),
+            KeyCode::Esc | KeyCode::Char(' ') if self.mode() == NORMAL => Consumed(Exit),
             KeyCode::Down => {
                 self.next();
                 Consumed(Typing)
@@ -92,7 +92,7 @@ impl Rooms {
                 self.previous();
                 Consumed(Typing)
             }
-            KeyCode::Enter => return Consumed(Action::SelectRoom(self.selected_room().room)),
+            KeyCode::Enter => return Consumed(Action::SelectRoom(self.selected_room().inner)),
             _ => {
                 if let Consumed(_) = (&mut self.textinput).input(input) {
                     self.reset();
@@ -218,8 +218,8 @@ impl Widget for RoomsWidget<'_> {
 
 fn make_list_item(joined: &DecoratedRoom) -> ListItem {
     let name = joined.name.to_string();
-    let unread = joined.room.unread_notification_counts().notification_count;
-    let highlights = joined.room.unread_notification_counts().highlight_count;
+    let unread = joined.unread_count();
+    let highlights = joined.highlight_count();
 
     let mut spans = vec![Span::from(name)];
 
@@ -254,12 +254,6 @@ fn make_list_item(joined: &DecoratedRoom) -> ListItem {
 }
 
 pub fn sort_rooms(rooms: &mut [DecoratedRoom]) {
-    rooms.sort_by_key(|r| {
-        (
-            r.room.unread_notification_counts().notification_count,
-            r.last_ts,
-        )
-    });
-
+    rooms.sort_by_key(|r| (r.unread_count(), r.last_ts));
     rooms.reverse()
 }
