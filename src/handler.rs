@@ -208,7 +208,7 @@ pub fn handle_key_event(
 
             match key_event.code {
                 KeyCode::Char(' ') => {
-                    let current = &app.chat.as_ref().and_then(|c| c.room().clone());
+                    let current = &app.chat.as_ref().and_then(|c| Some(c.room().clone()));
                     app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
                 }
                 _ => {}
@@ -225,10 +225,10 @@ pub fn handle_focus_event(app: &mut App) {
     // we consider it a room "visit" if you come back to the app and view a
     // room
     if let Some(chat) = &mut app.chat {
-        if let Some(joined) = chat.room().clone() {
-            app.matrix.clone().room_visit_event(Room::Joined(joined));
-            chat.focus_event();
-        }
+        app.matrix
+            .clone()
+            .room_visit_event(Room::Joined(chat.room().clone()));
+        chat.focus_event();
     }
 }
 

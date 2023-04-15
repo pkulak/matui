@@ -20,6 +20,9 @@ use sorted_vec::SortedVec;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::ops::Deref;
+use std::sync::mpsc::{channel, TryRecvError};
+use std::thread;
+use std::time::Duration;
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Corner, Direction, Layout, Rect};
 use tui::style::{Color, Style};
@@ -31,7 +34,7 @@ use super::Action;
 
 pub struct Chat {
     matrix: Matrix,
-    pub room: Option<DecoratedRoom>,
+    pub room: DecoratedRoom,
     events: SortedVec<OrderedEvent>,
     messages: Vec<Message>,
     read_to: Option<OwnedEventId>,
@@ -44,10 +47,13 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub fn new(matrix: Matrix) -> Self {
+    pub fn new(matrix: Matrix, room: Joined) -> Self {
+        matrix.fetch_messages(room.clone(), None);
+        matrix.fetch_room_members(room.clone());
+
         Self {
-            matrix,
-            room: None,
+            matrix: matrix.clone(),
+            room: matrix.wrap_room(&room).unwrap(),
             events: SortedVec::new(),
             messages: vec![],
             read_to: None,
@@ -55,16 +61,9 @@ impl Chat {
             react: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
-            fetching: Cell::new(false),
+            fetching: Cell::new(true),
             focus: true,
         }
-    }
-
-    pub fn set_room(&mut self, room: Joined) {
-        self.matrix.fetch_messages(room.clone(), None);
-        self.matrix.fetch_room_members(room.clone());
-        self.fetching.set(true);
-        self.room = self.matrix.wrap_room(&room);
     }
 
     fn set_fully_read(&mut self) {
@@ -79,15 +78,13 @@ impl Chat {
         }
 
         if let Some(id) = read_to.clone() {
-            if let Some(room) = self.room() {
-                self.matrix.read_to(room, id);
-                self.read_to = read_to;
-            }
+            self.matrix.read_to(self.room(), id);
+            self.read_to = read_to;
         }
     }
 
-    pub fn room(&self) -> Option<Joined> {
-        self.room.as_ref().and_then(|r| Some(r.inner().clone()))
+    pub fn room(&self) -> Joined {
+        self.room.inner()
     }
 
     fn pretty_members(&self) -> String {
@@ -124,11 +121,8 @@ impl Chat {
                     self.react = None;
 
                     if let Some(message) = self.selected_message() {
-                        self.matrix.send_reaction(
-                            self.room().unwrap(),
-                            message.id.clone(),
-                            reaction,
-                        )
+                        self.matrix
+                            .send_reaction(self.room(), message.id.clone(), reaction)
                     }
                     return Ok(Consumed(Action::Typing));
                 }
@@ -136,8 +130,7 @@ impl Chat {
                     self.react = None;
 
                     if let Some(event) = self.my_selected_reaction_event(reaction) {
-                        self.matrix
-                            .redact_event(self.room().unwrap(), event.id.clone())
+                        self.matrix.redact_event(self.room(), event.id.clone())
                     }
                 }
                 Consumed(_) => return Ok(Consumed(Action::Typing)),
@@ -162,16 +155,34 @@ impl Chat {
                 return Ok(Consumed(Action::Typing));
             }
             KeyCode::Char('i') => {
+                // start a thread to hammer out typing notifications
+                let matrix = self.matrix.clone();
+                let room = self.room().clone();
+                let (send, recv) = channel();
+
+                thread::spawn(move || loop {
+                    if let Err(TryRecvError::Empty) = recv.try_recv() {
+                        matrix.typing_notification(room.clone(), true);
+                        thread::sleep(Duration::from_millis(1000));
+                    } else {
+                        break;
+                    }
+                });
+
                 handler.park();
                 let result = get_text();
                 handler.unpark();
+
+                // stop typing
+                send.send(())?;
+                self.matrix.typing_notification(self.room(), false);
 
                 // make sure we redraw the whole app when we come back
                 App::get_sender().send(Event::Redraw)?;
 
                 if let Ok(input) = result {
                     if let Some(input) = input {
-                        self.matrix.send_text_message(self.room().unwrap(), input);
+                        self.matrix.send_text_message(self.room(), input);
                         return Ok(Consumed(Action::Typing));
                     } else {
                         bail!("Ignoring blank message.")
@@ -207,7 +218,7 @@ impl Chat {
     }
 
     pub fn timeline_event(&mut self, event: AnyTimelineEvent) {
-        if self.room.is_none() || event.room_id() != self.room.as_ref().unwrap().room_id() {
+        if event.room_id() != self.room.room_id() {
             return;
         }
 
@@ -217,7 +228,7 @@ impl Chat {
     }
 
     pub fn batch_event(&mut self, batch: Batch) {
-        if self.room.is_none() || batch.room.room_id() != self.room.as_ref().unwrap().room_id() {
+        if batch.room.room_id() != self.room.room_id() {
             return;
         }
 
@@ -241,7 +252,7 @@ impl Chat {
     }
 
     pub fn room_members_event(&mut self, room: Joined, members: Vec<RoomMember>) {
-        if self.room.is_none() || self.room.as_ref().unwrap().room_id() != room.room_id() {
+        if self.room.room_id() != room.room_id() {
             return;
         }
 
@@ -250,7 +261,7 @@ impl Chat {
     }
 
     fn try_fetch_previous(&self) {
-        if self.next_cursor.is_none() || self.room.is_none() || self.fetching.get() {
+        if self.next_cursor.is_none() || self.fetching.get() {
             return;
         }
 
@@ -260,7 +271,7 @@ impl Chat {
 
         if buffer < 25 {
             self.matrix
-                .fetch_messages(self.room().unwrap(), self.next_cursor.clone());
+                .fetch_messages(self.room(), self.next_cursor.clone());
             self.fetching.set(true);
             info!("fetching more events...")
         }
@@ -427,16 +438,10 @@ impl Widget for ChatWidget<'_> {
 
         // render the header
         let header = Block::default()
-            .title(
-                self.chat
-                    .room
-                    .as_ref()
-                    .and_then(|r| {
-                        let name = r.name.to_string();
-                        Some(truncate(name, (splits[0].width - 8).into()))
-                    })
-                    .unwrap_or_default(),
-            )
+            .title(truncate(
+                self.chat.room.name.to_string(),
+                (splits[0].width - 8).into(),
+            ))
             .title_alignment(Alignment::Center)
             .style(Style::default().bg(Color::Black))
             .borders(Borders::ALL)

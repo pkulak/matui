@@ -411,6 +411,14 @@ impl Matrix {
             }
         });
     }
+
+    pub fn typing_notification(&self, room: Joined, typing: bool) {
+        self.rt.spawn(async move {
+            if let Err(e) = room.typing_notice(typing).await {
+                error!("could not send typing notice: {}", e.to_string());
+            }
+        });
+    }
 }
 
 /// The data needed to re-build a client.

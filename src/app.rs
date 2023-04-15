@@ -92,16 +92,15 @@ impl App {
 
     pub fn select_room(&mut self, room: Joined) {
         // don't re-select the same room
-        if let Some(Chat { room: Some(r), .. }) = &self.chat {
+        if let Some(Chat { room: r, .. }) = &self.chat {
             if r.room_id() == room.room_id() {
                 return;
             }
         }
 
-        let mut chat = Chat::new(self.matrix.clone());
-        chat.set_room(room.clone());
+        let chat = Chat::new(self.matrix.clone(), room.clone());
         self.chat = Some(chat);
-        self.matrix.clone().room_visit_event(Room::Joined(room));
+        self.matrix.room_visit_event(Room::Joined(room));
     }
 
     /// Handles the tick event of the terminal.
