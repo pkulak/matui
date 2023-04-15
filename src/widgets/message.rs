@@ -2,6 +2,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::matrix::matrix::{pad_emoji, Matrix};
 use crate::pretty_list;
+use crate::spawn::view_text;
 use matrix_sdk::room::RoomMember;
 use once_cell::unsync::OnceCell;
 use ruma::events::relation::Replacement;
@@ -55,6 +56,7 @@ impl Message {
         match &self.body {
             Image(_) => matrix.open_content(self.body.clone()),
             Video(_) => matrix.open_content(self.body.clone()),
+            Text(_) => view_text(self.display()),
             _ => {}
         }
     }

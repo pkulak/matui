@@ -1,10 +1,12 @@
 use anyhow::bail;
 use image::imageops::FilterType;
+use linkify::LinkFinder;
+use log::error;
 use matrix_sdk::media::MediaFileHandle;
 use notify_rust::Hint;
 use std::env::var;
 use std::io::{Cursor, Read};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use tempfile::NamedTempFile;
 
 pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
@@ -56,6 +58,20 @@ pub fn view_file(handle: MediaFileHandle) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn view_text(text: &str) {
+    let finder = LinkFinder::new();
+
+    for link in finder.links(text) {
+        let mut command = open::commands(link.as_str()).into_iter().next().unwrap();
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+
+        if let Err(e) = command.status() {
+            error!("could not open link: {} {}", link.as_str(), e.to_string());
+        }
+    }
 }
 
 pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> anyhow::Result<()> {
