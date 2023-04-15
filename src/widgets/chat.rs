@@ -173,6 +173,7 @@ impl Chat {
                         if let Some(edit) = edit {
                             self.matrix
                                 .replace_event(self.room(), message.id.clone(), edit);
+
                             return Ok(Consumed(Action::Typing));
                         } else {
                             bail!("Ignoring blank message.")
@@ -453,6 +454,8 @@ impl Widget for ChatWidget<'_> {
         if area.width < 12 {
             return;
         }
+
+        buf.set_style(area, Style::default().bg(Color::Black));
 
         let area = Layout::default()
             .direction(Direction::Horizontal)
