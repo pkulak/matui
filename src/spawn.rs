@@ -24,11 +24,18 @@ pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
     // main screen is not at all ideal
     command.env("TERM", "xterm1");
 
-    if existing.is_none() && (editor.ends_with("vim") || editor.ends_with("vi")) {
-        // for vim, open in insert, and map enter to save and quit
-        command.arg("+star");
+    // set up vim just right, if that's what we're using
+    if editor.ends_with("vim") || editor.ends_with("vi") {
+        // if the file is empty, open in insert, and map enter to save and quit
+        if existing.is_none() {
+            command.arg("+star");
+            command.arg("-c");
+            command.arg("imap <C-M> <esc>:wq<enter>");
+        }
+
+        // but always turn on word wrap
         command.arg("-c");
-        command.arg("imap <C-M> <esc>:wq<enter>");
+        command.arg("set wrap linebreak nolist");
     }
 
     let status = command.arg(tmpfile.path()).status()?;
