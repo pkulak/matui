@@ -100,11 +100,13 @@ impl Message {
     pub fn merge_into_message_list(messages: &mut Vec<Message>, event: &AnyTimelineEvent) {
         // replacements
         if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
+            let event = c.clone().content;
+
             if let Some(Relation::Replacement(Replacement {
                 event_id: id,
                 new_content: content,
                 ..
-            })) = c.clone().content.relates_to
+            })) = event.relates_to
             {
                 for message in messages.iter_mut() {
                     if message.id == id {

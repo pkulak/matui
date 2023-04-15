@@ -7,9 +7,13 @@ use std::io::{Cursor, Read};
 use std::process::Command;
 use tempfile::NamedTempFile;
 
-pub fn get_text() -> anyhow::Result<Option<String>> {
+pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
     let editor = &var("EDITOR")?;
     let mut tmpfile = NamedTempFile::new()?;
+
+    if let Some(str) = existing {
+        std::fs::write(&tmpfile, str)?;
+    }
 
     let mut command = Command::new(editor);
 
@@ -18,7 +22,7 @@ pub fn get_text() -> anyhow::Result<Option<String>> {
     // main screen is not at all ideal
     command.env("TERM", "xterm1");
 
-    if editor.ends_with("vim") || editor.ends_with("vi") {
+    if existing.is_none() && (editor.ends_with("vim") || editor.ends_with("vi")) {
         // for vim, open in insert, and map enter to save and quit
         command.arg("+star");
         command.arg("-c");

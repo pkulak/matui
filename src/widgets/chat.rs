@@ -14,6 +14,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::member::MembershipState;
+use ruma::events::room::message::MessageType::Text;
 use ruma::events::AnyTimelineEvent;
 use ruma::OwnedEventId;
 use sorted_vec::SortedVec;
@@ -154,6 +155,35 @@ impl Chat {
                 }
                 return Ok(Consumed(Action::Typing));
             }
+            KeyCode::Char('c') => {
+                let message = match self.selected_message() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                if matches!(message.body, Text(_)) {
+                    handler.park();
+                    let result = get_text(Some(message.display()));
+                    handler.unpark();
+
+                    // make sure we redraw the whole app when we come back
+                    App::get_sender().send(Event::Redraw)?;
+
+                    if let Ok(edit) = result {
+                        if let Some(edit) = edit {
+                            self.matrix
+                                .replace_event(self.room(), message.id.clone(), edit);
+                            return Ok(Consumed(Action::Typing));
+                        } else {
+                            bail!("Ignoring blank message.")
+                        }
+                    } else {
+                        bail!("Couldn't read from editor.")
+                    }
+                }
+
+                return Ok(Consumed(Action::Typing));
+            }
             KeyCode::Char('i') => {
                 // start a thread to hammer out typing notifications
                 let matrix = self.matrix.clone();
@@ -170,14 +200,13 @@ impl Chat {
                 });
 
                 handler.park();
-                let result = get_text();
+                let result = get_text(None);
                 handler.unpark();
 
                 // stop typing
                 send.send(())?;
                 self.matrix.typing_notification(self.room(), false);
 
-                // make sure we redraw the whole app when we come back
                 App::get_sender().send(Event::Redraw)?;
 
                 if let Ok(input) = result {

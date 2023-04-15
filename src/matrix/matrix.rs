@@ -366,6 +366,24 @@ impl Matrix {
         });
     }
 
+    pub fn replace_event(&self, room: Joined, id: OwnedEventId, message: String) {
+        self.rt.spawn(async move {
+            Matrix::send(ProgressStarted("Editing message.".to_string()));
+
+            if let Err(err) = room
+                .send(
+                    RoomMessageEventContent::text_plain(message).make_replacement(id, None),
+                    None,
+                )
+                .await
+            {
+                Matrix::send(Error(err.to_string()));
+            }
+
+            Matrix::send(ProgressComplete);
+        });
+    }
+
     pub fn me(&self) -> String {
         self.client().user_id().unwrap().into()
     }
