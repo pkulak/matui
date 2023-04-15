@@ -159,7 +159,7 @@ impl Chat {
                     "Yes".to_string(),
                     ConfirmResult::RedactEvent(self.room(), message.id.clone()),
                     "No".to_string(),
-                    ConfirmResult::Close,
+                    ConfirmResult::Cancel,
                 );
 
                 return Ok(Consumed(Action::ShowConfirmation(confirm)));

@@ -175,24 +175,26 @@ pub fn handle_key_event(
 
     if let Some(w) = &mut app.confirm {
         match w.input(&key_event) {
-            ConfirmResult::Close => {
+            Consumed(Action::ConfirmResult(ConfirmResult::Cancel)) | Consumed(Exit) => {
                 app.confirm = None;
-                app.progress = None;
                 return Ok(());
             }
-            ConfirmResult::Consumed => return Ok(()),
-            ConfirmResult::RedactEvent(room, id) => {
+            Consumed(Action::ConfirmResult(ConfirmResult::RedactEvent(room, id))) => {
                 app.confirm = None;
                 app.matrix.redact_event(room, id);
                 return Ok(());
             }
-            ConfirmResult::VerificationConfirm if app.sas.is_some() => {
+            Consumed(Action::ConfirmResult(ConfirmResult::VerificationConfirm))
+                if app.sas.is_some() =>
+            {
                 app.matrix.confirm_verification(app.sas.clone().unwrap());
                 app.confirm = None;
                 app.progress = Some(Progress::new("Waiting for your other device to confirm."));
                 return Ok(());
             }
-            ConfirmResult::VerificationCancel if app.sas.is_some() => {
+            Consumed(Action::ConfirmResult(ConfirmResult::VerificationCancel))
+                if app.sas.is_some() =>
+            {
                 app.matrix.mismatched_verification(app.sas.clone().unwrap());
                 app.confirm = None;
                 return Ok(());

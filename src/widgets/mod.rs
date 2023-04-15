@@ -3,7 +3,7 @@ use crate::widgets::EventResult::{Consumed, Ignored};
 use crossterm::event::KeyEvent;
 use matrix_sdk::room::Joined;
 
-use self::confirm::Confirm;
+use self::confirm::{Confirm, ConfirmResult};
 
 pub mod error;
 pub mod progress;
@@ -25,6 +25,7 @@ pub enum EventResult {
 pub enum Action {
     ButtonYes,
     ChangeFocus,
+    ConfirmResult(ConfirmResult),
     Exit,
     SelectRoom(Joined),
     SelectReaction(String),

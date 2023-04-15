@@ -9,13 +9,11 @@ use tui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use crate::widgets::button::Button;
 use crate::widgets::{focus_next, Focusable};
 
-use super::get_margin;
+use super::{get_margin, Action, EventResult};
 
 #[derive(Clone)]
 pub enum ConfirmResult {
-    Close,
-    Ignored,
-    Consumed,
+    Cancel,
     RedactEvent(Joined, OwnedEventId),
     VerificationConfirm,
     VerificationCancel,
@@ -53,7 +51,7 @@ impl Confirm {
         ConfirmWidget { confirm: self }
     }
 
-    pub fn input(&mut self, input: &KeyEvent) -> ConfirmResult {
+    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
         match input.code {
             KeyCode::Tab
             | KeyCode::BackTab
@@ -66,16 +64,17 @@ impl Confirm {
             | KeyCode::Char('k')
             | KeyCode::Char('l') => {
                 focus_next(self.focus_order());
-                ConfirmResult::Consumed
+                EventResult::Consumed(Action::Typing)
             }
+            KeyCode::Esc => EventResult::Consumed(Action::Exit),
             KeyCode::Enter => {
                 if (&mut self.yes).focused() {
-                    self.yes_result.clone()
+                    EventResult::Consumed(Action::ConfirmResult(self.yes_result.clone()))
                 } else {
-                    self.no_result.clone()
+                    EventResult::Consumed(Action::ConfirmResult(self.no_result.clone()))
                 }
             }
-            _ => ConfirmResult::Ignored,
+            _ => EventResult::Ignored,
         }
     }
 
