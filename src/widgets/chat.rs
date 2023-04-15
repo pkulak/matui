@@ -92,7 +92,7 @@ impl Chat {
     }
 
     fn pretty_members(&self) -> String {
-        let names: Vec<&str> = self
+        let mut names: Vec<&str> = self
             .members
             .iter()
             .filter(|m| m.membership() == &MembershipState::Join)
@@ -105,6 +105,9 @@ impl Chat {
                     .unwrap_or_default()
             })
             .collect();
+
+        names.sort();
+        names.dedup();
 
         pretty_list(names)
     }
