@@ -306,6 +306,8 @@ impl Chat {
             state.select(Some(0));
             self.list_state.set(state);
         }
+
+        self.try_fetch_previous();
     }
 
     pub fn room_members_event(&mut self, room: Joined, members: Vec<RoomMember>) {
