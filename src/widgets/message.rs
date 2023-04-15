@@ -2,7 +2,6 @@ use std::time::{Duration, SystemTime};
 
 use crate::matrix::matrix::{pad_emoji, Matrix};
 use crate::pretty_list;
-use log::info;
 use matrix_sdk::room::RoomMember;
 use once_cell::unsync::OnceCell;
 use ruma::events::relation::Replacement;
@@ -77,7 +76,6 @@ impl Message {
 
             // skip replacements
             if let Some(Relation::Replacement(_)) = c.content.relates_to {
-                info!("replacing {:?}", event);
                 return None;
             }
 
@@ -160,8 +158,6 @@ impl Message {
 
             return;
         }
-
-        info!("unhandled event: {:?}", event);
     }
 
     pub fn update_senders(&mut self, members: &Vec<RoomMember>) {

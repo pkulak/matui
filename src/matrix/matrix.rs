@@ -131,6 +131,8 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
+            info!("syncing with token {:?}", token);
+
             if let Err(err) = sync_once(client.clone(), token, &session_file).await {
                 Matrix::send(Error(err.to_string()));
                 return;
@@ -424,8 +426,6 @@ impl Matrix {
         self.rt.spawn(async move {
             if let Err(e) = room.send_multiple_receipts(receipts).await {
                 error!("could not send read receipt: {}", e.to_string());
-            } else {
-                info!("send read receipt");
             }
         });
     }

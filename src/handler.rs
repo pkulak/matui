@@ -1,11 +1,11 @@
 use crate::app::App;
 use crate::matrix::matrix::format_emojis;
-use crate::widgets::confirm::Confirm;
+use crate::widgets::confirm::{Confirm, ConfirmResult};
 use crate::widgets::error::Error;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
-use crate::widgets::Action::{ButtonNo, ButtonYes, Exit, SelectRoom};
+use crate::widgets::Action::{self, ButtonYes, Exit, SelectRoom};
 use crate::widgets::EventResult::Consumed;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -118,7 +118,9 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                     format_emojis(emoji)
                 ),
                 "Yes".to_string(),
+                ConfirmResult::VerificationConfirm,
                 "No".to_string(),
+                ConfirmResult::VerificationCancel,
             ));
         }
         MatuiEvent::VerificationCompleted => {
@@ -172,21 +174,30 @@ pub fn handle_key_event(
     }
 
     if let Some(w) = &mut app.confirm {
-        if let Some(sas) = app.sas.clone() {
-            match w.input(&key_event) {
-                Consumed(ButtonYes) => {
-                    app.matrix.confirm_verification(sas);
-                    app.confirm = None;
-                    app.progress = Some(Progress::new("Waiting for your other device to confirm."));
-                    return Ok(());
-                }
-                Consumed(ButtonNo) => {
-                    app.matrix.mismatched_verification(sas);
-                    app.confirm = None;
-                    return Ok(());
-                }
-                _ => {}
+        match w.input(&key_event) {
+            ConfirmResult::Close => {
+                app.confirm = None;
+                app.progress = None;
+                return Ok(());
             }
+            ConfirmResult::Consumed => return Ok(()),
+            ConfirmResult::RedactEvent(room, id) => {
+                app.confirm = None;
+                app.matrix.redact_event(room, id);
+                return Ok(());
+            }
+            ConfirmResult::VerificationConfirm if app.sas.is_some() => {
+                app.matrix.confirm_verification(app.sas.clone().unwrap());
+                app.confirm = None;
+                app.progress = Some(Progress::new("Waiting for your other device to confirm."));
+                return Ok(());
+            }
+            ConfirmResult::VerificationCancel if app.sas.is_some() => {
+                app.matrix.mismatched_verification(app.sas.clone().unwrap());
+                app.confirm = None;
+                return Ok(());
+            }
+            _ => {}
         }
     }
 
@@ -200,7 +211,14 @@ pub fn handle_key_event(
         if app.progress.is_none() {
             if let Some(chat) = &mut app.chat {
                 match chat.input(&handler, &key_event) {
-                    Err(err) => app.error = Some(Error::new(err.to_string())),
+                    Err(err) => {
+                        app.error = Some(Error::new(err.to_string()));
+                        return Ok(());
+                    }
+                    Ok(Consumed(Action::ShowConfirmation(confirm))) => {
+                        app.confirm = Some(confirm);
+                        return Ok(());
+                    }
                     Ok(Consumed(_)) => return Ok(()),
                     _ => {}
                 }

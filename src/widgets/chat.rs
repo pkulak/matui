@@ -8,7 +8,7 @@ use crate::widgets::message::{Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
-use crate::{pretty_list, truncate};
+use crate::{pretty_list, truncate, KeyCombo};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
@@ -31,6 +31,7 @@ use tui::widgets::{
     Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
 };
 
+use super::confirm::{Confirm, ConfirmResult};
 use super::Action;
 
 pub struct Chat {
@@ -45,6 +46,7 @@ pub struct Chat {
     next_cursor: Option<String>,
     fetching: Cell<bool>,
     focus: bool,
+    delete_combo: KeyCombo,
 }
 
 impl Chat {
@@ -64,6 +66,7 @@ impl Chat {
             next_cursor: None,
             fetching: Cell::new(true),
             focus: true,
+            delete_combo: KeyCombo::new(vec!['d', 'd']),
         }
     }
 
@@ -136,6 +139,30 @@ impl Chat {
                 }
                 Consumed(_) => return Ok(Consumed(Action::Typing)),
                 _ => {}
+            }
+        }
+
+        // then look for key combos
+        if let KeyCode::Char(c) = input.code {
+            if self.delete_combo.record(c) {
+                let message = match self.selected_message() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                let preview = truncate(message.display().to_string(), 16);
+                let warning = format!("Are you sure you want to delete \"{}\"", preview);
+
+                let confirm = Confirm::new(
+                    "Delete Message".to_string(),
+                    warning,
+                    "Yes".to_string(),
+                    ConfirmResult::RedactEvent(self.room(), message.id.clone()),
+                    "No".to_string(),
+                    ConfirmResult::Close,
+                );
+
+                return Ok(Consumed(Action::ShowConfirmation(confirm)));
             }
         }
 

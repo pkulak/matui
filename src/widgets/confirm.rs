@@ -1,30 +1,51 @@
 use crossterm::event::{KeyCode, KeyEvent};
+use matrix_sdk::room::Joined;
+use ruma::OwnedEventId;
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
 use tui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::widgets::button::Button;
-use crate::widgets::Action::{ButtonNo, ButtonYes};
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{focus_next, EventResult, Focusable};
+use crate::widgets::{focus_next, Focusable};
 
 use super::get_margin;
+
+#[derive(Clone)]
+pub enum ConfirmResult {
+    Close,
+    Ignored,
+    Consumed,
+    RedactEvent(Joined, OwnedEventId),
+    VerificationConfirm,
+    VerificationCancel,
+}
 
 pub struct Confirm {
     title: String,
     message: String,
     yes: Button,
+    yes_result: ConfirmResult,
     no: Button,
+    no_result: ConfirmResult,
 }
 
 impl Confirm {
-    pub fn new(title: String, message: String, yes: String, no: String) -> Self {
+    pub fn new(
+        title: String,
+        message: String,
+        yes: String,
+        yes_result: ConfirmResult,
+        no: String,
+        no_result: ConfirmResult,
+    ) -> Self {
         Self {
             title,
             message,
             yes: Button::new(yes, true),
+            yes_result,
             no: Button::new(no, false),
+            no_result,
         }
     }
 
@@ -32,7 +53,7 @@ impl Confirm {
         ConfirmWidget { confirm: self }
     }
 
-    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
+    pub fn input(&mut self, input: &KeyEvent) -> ConfirmResult {
         match input.code {
             KeyCode::Tab
             | KeyCode::BackTab
@@ -43,15 +64,18 @@ impl Confirm {
             | KeyCode::Char('h')
             | KeyCode::Char('j')
             | KeyCode::Char('k')
-            | KeyCode::Char('l') => focus_next(self.focus_order()),
+            | KeyCode::Char('l') => {
+                focus_next(self.focus_order());
+                ConfirmResult::Consumed
+            }
             KeyCode::Enter => {
                 if (&mut self.yes).focused() {
-                    Consumed(ButtonYes)
+                    self.yes_result.clone()
                 } else {
-                    Consumed(ButtonNo)
+                    self.no_result.clone()
                 }
             }
-            _ => Ignored,
+            _ => ConfirmResult::Ignored,
         }
     }
 
@@ -71,6 +95,8 @@ impl Widget for ConfirmWidget<'_> {
             .vertical_margin(get_margin(area.height, 10))
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];
+
+        buf.merge(&Buffer::empty(area));
 
         let block = Block::default()
             .title(self.confirm.title.clone())
