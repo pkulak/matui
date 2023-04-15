@@ -248,6 +248,19 @@ impl Chat {
                     bail!("Couldn't read from editor.")
                 }
             }
+            KeyCode::Char('O') => {
+                let message = match self.selected_message() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                handler.park();
+                get_text(Some(&message.display_full()))?;
+                handler.unpark();
+
+                App::get_sender().send(Event::Redraw)?;
+                return Ok(EventResult::Consumed(Action::Typing));
+            }
             KeyCode::Char('r') => {
                 self.react = Some(React::new(
                     self.selected_reactions()

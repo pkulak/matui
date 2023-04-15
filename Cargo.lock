@@ -2088,6 +2088,7 @@ name = "matui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "config",
  "crossterm 0.26.1",
  "dirs 5.0.0",

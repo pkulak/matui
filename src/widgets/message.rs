@@ -1,8 +1,10 @@
+use chrono::TimeZone;
 use std::time::{Duration, SystemTime};
 
 use crate::matrix::matrix::{pad_emoji, Matrix};
 use crate::pretty_list;
 use crate::spawn::view_text;
+use chrono::offset::Local;
 use matrix_sdk::room::RoomMember;
 use once_cell::unsync::OnceCell;
 use ruma::events::relation::Replacement;
@@ -32,17 +34,71 @@ pub struct Message {
     pub body: MessageType,
     pub history: Vec<MessageType>,
     pub sender: String,
+    pub sender_id: String,
     pub reactions: Vec<Reaction>,
 }
 
 impl Message {
-    pub fn display(&self) -> &str {
-        match &self.body {
+    pub fn display_body(body: &MessageType) -> &str {
+        match body {
             Text(TextMessageEventContent { body, .. }) => body,
             Image(ImageMessageEventContent { body, .. }) => body,
             Video(VideoMessageEventContent { body, .. }) => body,
             _ => "unknown",
         }
+    }
+
+    pub fn display(&self) -> &str {
+        Message::display_body(&self.body)
+    }
+
+    pub fn display_full(&self) -> String {
+        let date = Local.timestamp_opt(self.sent.as_secs().into(), 0).unwrap();
+
+        let mut ret = format!(
+            "Sent {} by {} ({})\n\n",
+            date.format("%Y-%m-%d at %I:%M:%S %p"),
+            self.sender_id,
+            self.sender_id
+        );
+
+        ret.push_str(self.display());
+        ret.push_str("\n");
+
+        if !self.reactions.is_empty() {
+            ret.push_str("### Reactions\n\n");
+
+            for r in &self.reactions {
+                for re in &r.events {
+                    ret.push_str(
+                        format!(
+                            "* {} by {} ({})\n",
+                            r.display(),
+                            re.sender_name,
+                            re.sender_id
+                        )
+                        .as_str(),
+                    );
+                }
+            }
+
+            ret.push_str("\n");
+        }
+
+        if !self.history.is_empty() {
+            let mut reversed_history = self.history.clone();
+            reversed_history.reverse();
+
+            ret.push_str("### History\n\n");
+
+            for h in reversed_history.into_iter() {
+                ret.push_str("* ");
+                ret.push_str(Message::display_body(&h));
+                ret.push_str("\n");
+            }
+        }
+
+        ret
     }
 
     pub fn style(&self) -> Style {
@@ -88,6 +144,7 @@ impl Message {
                 body,
                 history: vec![],
                 sender: c.sender.to_string(),
+                sender_id: c.sender.to_string(),
                 reactions: Vec::new(),
             });
         }
@@ -214,24 +271,21 @@ impl Message {
 
         let wrapped = textwrap::wrap(&self.display(), width);
 
-        for l in wrapped {
-            lines.extend(Text::styled(l, self.style()))
+        for l in wrapped.iter().take(10) {
+            lines.extend(Text::styled(l.to_string(), self.style()))
+        }
+
+        // overflow warning
+        if wrapped.len() > 10 || self.reactions.len() > 5 {
+            lines.extend(Text::styled(
+                "* overflow: type \"O\" to view entire message",
+                Style::default().fg(Color::Red),
+            ))
         }
 
         // reactions
-        for r in &self.reactions {
-            let line = if let Some(emoji) = emojis::get(&r.body) {
-                if let Some(shortcode) = emoji.shortcode() {
-                    format!("{} ({})", pad_emoji(&r.body), shortcode)
-                } else {
-                    pad_emoji(&r.body)
-                }
-            } else {
-                pad_emoji(&r.body)
-            };
-
-            let line = format!("{} {}", line, r.pretty_senders());
-
+        for r in self.reactions.iter().take(5) {
+            let line = format!("{} {}", r.display(), r.pretty_senders());
             lines.extend(Text::styled(line, Style::default().fg(Color::DarkGray)))
         }
 
@@ -271,6 +325,18 @@ impl Reaction {
         }
 
         merged
+    }
+
+    pub fn display(&self) -> String {
+        if let Some(emoji) = emojis::get(&self.body) {
+            if let Some(shortcode) = emoji.shortcode() {
+                format!("{} ({})", pad_emoji(&self.body), shortcode)
+            } else {
+                pad_emoji(&self.body)
+            }
+        } else {
+            pad_emoji(&self.body)
+        }
     }
 
     pub fn pretty_senders(&self) -> &str {

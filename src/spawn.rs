@@ -7,11 +7,11 @@ use notify_rust::Hint;
 use std::env::var;
 use std::io::{Cursor, Read};
 use std::process::{Command, Stdio};
-use tempfile::NamedTempFile;
+use tempfile::Builder;
 
 pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
     let editor = &var("EDITOR")?;
-    let mut tmpfile = NamedTempFile::new()?;
+    let mut tmpfile = Builder::new().suffix(".md").tempfile()?;
 
     if let Some(str) = existing {
         std::fs::write(&tmpfile, str)?;

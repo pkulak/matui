@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
+chrono = "0.4"
 crossterm = "0.26"
 config = { version = "0.13", features = ["toml"] }
 dirs = "5.0"
