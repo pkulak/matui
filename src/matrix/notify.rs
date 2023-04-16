@@ -20,7 +20,7 @@ use ruma::{
     api::client::media::get_content_thumbnail::v3::Method, events::AnyTimelineEvent, UInt, UserId,
 };
 
-use crate::{handler::MatuiEvent, widgets::message::Message};
+use crate::{handler::MatuiEvent, settings::is_muted, widgets::message::Message};
 
 use super::matrix::Matrix;
 
@@ -49,6 +49,11 @@ impl Notify {
         if let Some(message) = Message::try_from(&event) {
             // don't send notifications for our own messages
             if message.sender == client.user_id().unwrap().to_string() {
+                return Ok(());
+            }
+
+            // or when the room is muted
+            if is_muted(message.room_id.as_ref()) {
                 return Ok(());
             }
 

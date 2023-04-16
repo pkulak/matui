@@ -51,6 +51,19 @@ with all the files you care about. I recommend [mpv](https://mpv.io/) and
 
 KDialog and/or Zenity is required to show the file picker.
 
+# Configuration Example
+
+```
+# All the reactions that will show up in the picker.
+reactions = [ "❤️", "👍", "👎", "😂", "‼️", "❓️"]
+
+# Muted rooms.
+muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
+```
+
+The config file is hot reloaded and can generally be found at
+~/.config/matui/config.toml.
+
 # Windows/Mac Support
 
 There's nothing explicitly preventing this, but it's untested and Linux is

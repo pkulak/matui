@@ -3,6 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
+use crate::settings::{get_settings, is_muted};
 use crate::spawn::{get_file_path, get_text};
 use crate::widgets::message::{Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
@@ -68,6 +69,10 @@ impl Chat {
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
         }
+    }
+
+    fn muted(&self) -> bool {
+        is_muted(self.room.room_id())
     }
 
     fn set_fully_read(&mut self) {
@@ -554,12 +559,15 @@ impl Widget for ChatWidget<'_> {
             .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
             .split(area);
 
+        let mut header_text = self.chat.room.name.to_string();
+
+        if self.chat.muted() {
+            header_text.push_str(" (muted)")
+        }
+
         // render the header
         let header = Block::default()
-            .title(truncate(
-                self.chat.room.name.to_string(),
-                (splits[0].width - 8).into(),
-            ))
+            .title(truncate(header_text, (splits[0].width - 8).into()))
             .title_alignment(Alignment::Center)
             .style(Style::default().bg(Color::Black))
             .borders(Borders::ALL)

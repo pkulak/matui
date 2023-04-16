@@ -1,6 +1,7 @@
 use config::Config;
 use log::{info, warn};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use ruma::RoomId;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::{RwLock, RwLockReadGuard};
@@ -30,6 +31,11 @@ fn build_settings() -> Config {
 
 pub fn get_settings() -> RwLockReadGuard<'static, Config> {
     SETTINGS.read().unwrap()
+}
+
+pub fn is_muted(room: &RoomId) -> bool {
+    let muted: Vec<String> = get_settings().get("muted").unwrap_or_default();
+    muted.contains(&room.to_string())
 }
 
 fn watch_internal() {
