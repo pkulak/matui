@@ -2,27 +2,17 @@ use log::LevelFilter;
 use matui::app::App;
 use matui::event::{Event, EventHandler};
 use matui::handler::{handle_app_event, handle_blur_event, handle_focus_event, handle_key_event};
+use matui::settings::watch_settings_forever;
 use matui::tui::Tui;
-use std::{fs, io};
+use std::io;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
-
-const DEFAULT_CONFIG: &str = "reactions = [ \"❤️\", \"👍\", \"👎\", \"😂\", \"‼️\", \"❓️\"]\n";
 
 fn main() -> anyhow::Result<()> {
     simple_logging::log_to_file("test.log", LevelFilter::Info)?;
     log_panics::init();
 
-    // Create the config if it isn't there.
-    let mut path = dirs::config_dir().expect("no config directory");
-    path.push("matui");
-    path.push("config.toml");
-
-    if !path.exists() {
-        let dir = path.parent().unwrap();
-        std::fs::create_dir_all(dir).unwrap();
-        fs::write(path, DEFAULT_CONFIG)?;
-    }
+    watch_settings_forever();
 
     // Initialize the terminal user interface.
     let backend = CrosstermBackend::new(io::stderr());

@@ -20,6 +20,8 @@ pub mod widgets;
 /// Matrix
 pub mod matrix;
 
+pub mod settings;
+
 /// Using external apps to do our bidding
 pub mod spawn;
 

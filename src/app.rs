@@ -1,4 +1,3 @@
-use config::Config;
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::{Joined, Room};
 use once_cell::sync::OnceCell;
@@ -73,21 +72,6 @@ impl App {
             .lock()
             .expect("could not lock sender")
             .clone()
-    }
-
-    pub fn get_settings() -> &'static Config {
-        static SETTINGS: OnceCell<Config> = OnceCell::new();
-
-        SETTINGS.get_or_init(|| {
-            let mut dir = dirs::config_dir().expect("no config directory");
-            dir.push("matui");
-            dir.push("config.toml");
-
-            Config::builder()
-                .add_source(config::File::from(dir))
-                .build()
-                .expect("could not build settings")
-        })
     }
 
     pub fn select_room(&mut self, room: Joined) {

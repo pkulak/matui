@@ -1,5 +1,5 @@
-use crate::app::App;
 use crate::matrix::matrix::center_emoji;
+use crate::settings::get_settings;
 use crossterm::event::{KeyCode, KeyEvent};
 use std::cell::Cell;
 use tui::buffer::Buffer;
@@ -25,7 +25,7 @@ struct Reaction {
 
 impl React {
     pub fn new(additions: Vec<String>, existing: Vec<String>) -> Self {
-        let mut reactions: Vec<String> = App::get_settings().get("reactions").unwrap_or_default();
+        let mut reactions: Vec<String> = get_settings().get("reactions").unwrap_or_default();
 
         // get rid of any dupes
         reactions.retain(|r| {

@@ -59,4 +59,5 @@ currently assumed.
 
 There's a much more mature Matrix TUI here:
 
-[https://github.com/tulir/gomuks](gomuks)
+[gomuks](https://github.com/tulir/gomuks)
+
