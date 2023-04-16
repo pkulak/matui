@@ -179,7 +179,7 @@ impl Chat {
                 self.try_fetch_previous();
                 return Ok(Consumed(Action::Typing));
             }
-            KeyCode::Char('o') | KeyCode::Enter => {
+            KeyCode::Enter => {
                 if let Some(message) = &self.selected_message() {
                     message.open(self.matrix.clone())
                 }
@@ -251,7 +251,7 @@ impl Chat {
                     bail!("Couldn't read from editor.")
                 }
             }
-            KeyCode::Char('O') => {
+            KeyCode::Char('v') => {
                 let message = match self.selected_message() {
                     Some(m) => m,
                     None => return Ok(EventResult::Ignored),

@@ -42,4 +42,7 @@ features = [
 git = "https://github.com/ruma/ruma.git"
 rev = "8eea3e05490fa9a318f9ed66c3a75272e6ef0ee5"
 
+[profile.release]
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
 
