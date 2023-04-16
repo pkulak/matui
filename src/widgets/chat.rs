@@ -3,7 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
-use crate::settings::{get_settings, is_muted};
+use crate::settings::is_muted;
 use crate::spawn::{get_file_path, get_text};
 use crate::widgets::message::{Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;

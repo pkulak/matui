@@ -36,6 +36,7 @@ pub struct Message {
     pub sender: String,
     pub sender_id: String,
     pub reactions: Vec<Reaction>,
+    pub pretty_elapsed: OnceCell<String>,
 }
 
 impl Message {
@@ -101,6 +102,21 @@ impl Message {
         ret
     }
 
+    pub fn pretty_elapsed(&self) -> &str {
+        self.pretty_elapsed.get_or_init(|| {
+            let formatter = timeago::Formatter::new();
+
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            let then: u64 = self.sent.as_secs().into();
+            let pretty_elapsed = formatter.convert(Duration::from_secs(now - then));
+            return format!(" {}", pretty_elapsed);
+        })
+    }
+
     pub fn style(&self) -> Style {
         match &self.body {
             Text(_) => Style::default(),
@@ -146,6 +162,7 @@ impl Message {
                 sender: c.sender.to_string(),
                 sender_id: c.sender.to_string(),
                 reactions: Vec::new(),
+                pretty_elapsed: OnceCell::new(),
             });
         }
 
@@ -189,7 +206,7 @@ impl Message {
                     message.reactions.push(Reaction {
                         body,
                         events: vec![reaction_event],
-                        pretty_senders: OnceCell::new(),
+                        list_view: OnceCell::new(),
                     });
                     return;
                 }
@@ -245,21 +262,10 @@ impl Message {
     pub fn to_list_item(&self, width: usize) -> ListItem {
         use tui::text::Text;
 
-        let formatter = timeago::Formatter::new();
-
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let then: u64 = self.sent.as_secs().into();
-        let pretty_elapsed = formatter.convert(Duration::from_secs(now - then));
-        let pretty_elapsed = format!(" {}", pretty_elapsed);
-
         // author
         let mut spans = vec![
-            Span::styled(self.sender.clone(), Style::default().fg(Color::Green)),
-            Span::styled(pretty_elapsed, Style::default().fg(Color::DarkGray)),
+            Span::styled(&self.sender, Style::default().fg(Color::Green)),
+            Span::styled(self.pretty_elapsed(), Style::default().fg(Color::DarkGray)),
         ];
 
         if !self.history.is_empty() {
@@ -270,13 +276,14 @@ impl Message {
         let mut lines = Text::from(Spans::from(spans));
 
         let wrapped = textwrap::wrap(&self.display(), width);
+        let message_overlap = wrapped.len() > 10;
 
-        for l in wrapped.iter().take(10) {
-            lines.extend(Text::styled(l.to_string(), self.style()))
+        for l in wrapped.into_iter().take(10) {
+            lines.extend(Text::styled(l, self.style()))
         }
 
         // overflow warning
-        if wrapped.len() > 10 || self.reactions.len() > 5 {
+        if message_overlap || self.reactions.len() > 5 {
             lines.extend(Text::styled(
                 "* overflow: type \"O\" to view entire message",
                 Style::default().fg(Color::Red),
@@ -285,8 +292,10 @@ impl Message {
 
         // reactions
         for r in self.reactions.iter().take(5) {
-            let line = format!("{} {}", r.display(), r.pretty_senders());
-            lines.extend(Text::styled(line, Style::default().fg(Color::DarkGray)))
+            lines.extend(Text::styled(
+                r.list_view(),
+                Style::default().fg(Color::DarkGray),
+            ))
         }
 
         lines.extend(Text::from(" ".to_string()));
@@ -301,7 +310,7 @@ impl Message {
 pub struct Reaction {
     pub body: String,
     pub events: Vec<ReactionEvent>,
-    pub pretty_senders: OnceCell<String>,
+    pub list_view: OnceCell<String>,
 }
 
 impl Reaction {
@@ -339,16 +348,20 @@ impl Reaction {
         }
     }
 
-    pub fn pretty_senders(&self) -> &str {
-        self.pretty_senders.get_or_init(|| {
-            let all: Vec<&str> = self
-                .events
-                .iter()
-                .map(|s| s.sender_name.split_whitespace().next().unwrap_or_default())
-                .collect();
+    pub fn pretty_senders(&self) -> String {
+        let all: Vec<&str> = self
+            .events
+            .iter()
+            .map(|s| s.sender_name.split_whitespace().next().unwrap_or_default())
+            .collect();
 
-            return pretty_list(all);
-        })
+        pretty_list(all)
+    }
+
+    // cached to keep allocations out of the render loop
+    pub fn list_view(&self) -> &str {
+        self.list_view
+            .get_or_init(|| format!("{} {}", self.display(), self.pretty_senders()))
     }
 }
 
