@@ -1,3 +1,4 @@
+use ruma::OwnedRoomId;
 use std::{
     collections::HashMap,
     io::Cursor,
@@ -25,6 +26,7 @@ use super::matrix::Matrix;
 
 pub struct Notify {
     focus: AtomicBool,
+    room_id: Mutex<Option<OwnedRoomId>>,
     rooms: Mutex<HashMap<String, u32>>,
 }
 
@@ -32,6 +34,7 @@ impl Default for Notify {
     fn default() -> Self {
         Notify {
             focus: AtomicBool::new(false),
+            room_id: Mutex::new(None),
             rooms: Mutex::new(HashMap::new()),
         }
     }
@@ -43,15 +46,21 @@ impl Notify {
         client: Client,
         event: AnyTimelineEvent,
     ) -> anyhow::Result<()> {
-        // don't do anything if the app is focused
-        if self.focus.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
         if let Some(message) = Message::try_from(&event) {
             // don't send notifications for our own messages
             if message.sender == client.user_id().unwrap().to_string() {
                 return Ok(());
+            }
+
+            {
+                // don't do anything if the app is focused on our room
+                let current_room_id = self.room_id.lock().unwrap();
+
+                if self.focus.load(Ordering::Relaxed)
+                    && (*current_room_id).as_ref() == Some(&message.room_id)
+                {
+                    return Ok(());
+                }
             }
 
             let room = client.get_room(&message.room_id).unwrap();
@@ -71,11 +80,11 @@ impl Notify {
     }
 
     pub fn focus_event(&self) {
-        self.focus.store(true, Ordering::Relaxed)
+        self.focus.store(true, Ordering::Relaxed);
     }
 
     pub fn blur_event(&self) {
-        self.focus.store(false, Ordering::Relaxed)
+        self.focus.store(false, Ordering::Relaxed);
     }
 
     pub fn room_visit_event(&self, room: Room) {
@@ -86,6 +95,8 @@ impl Notify {
                 handle.close();
             }
         }
+
+        *self.room_id.lock().unwrap() = Some(room.room_id().to_owned());
     }
 
     fn send_notification(
