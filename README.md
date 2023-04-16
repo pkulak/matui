@@ -23,6 +23,7 @@ complicated. Especially if you don't implement too many features.
 | c     | Edit the selected message in the external editor.      | 
 | r     | React to the selected message.                         | 
 | v     | View the selected message in the external editor.      | 
+| V     | View the current room in the external editor.          | 
 | u     | Upload a file.                                         | 
 
 \* arrow keys are fine too

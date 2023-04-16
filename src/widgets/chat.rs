@@ -87,6 +87,26 @@ impl Chat {
         }
     }
 
+    fn display_full(&self) -> String {
+        let mut ret = format!(
+            "{} ({})\n\n",
+            self.room.name,
+            self.room.room_id().to_string()
+        );
+
+        ret.push_str("# Members\n\n");
+
+        for m in &self.members {
+            ret.push_str(&format!(
+                "* {} ({})\n",
+                m.display_name().unwrap_or(m.user_id().as_str()),
+                m.user_id()
+            ));
+        }
+
+        ret
+    }
+
     pub fn room(&self) -> Joined {
         self.room.inner()
     }
@@ -109,7 +129,7 @@ impl Chat {
         names.sort();
         names.dedup();
 
-        pretty_list(names)
+        pretty_list(names.into_iter().take(10).collect())
     }
 
     pub fn input(
@@ -259,6 +279,14 @@ impl Chat {
 
                 handler.park();
                 get_text(Some(&message.display_full()))?;
+                handler.unpark();
+
+                App::get_sender().send(Event::Redraw)?;
+                return Ok(EventResult::Consumed(Action::Typing));
+            }
+            KeyCode::Char('V') => {
+                handler.park();
+                get_text(Some(&self.display_full()))?;
                 handler.unpark();
 
                 App::get_sender().send(Event::Redraw)?;
