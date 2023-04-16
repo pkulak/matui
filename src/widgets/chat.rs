@@ -3,7 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
-use crate::spawn::get_text;
+use crate::spawn::{get_file_path, get_text};
 use crate::widgets::message::{Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::EventResult::Consumed;
@@ -275,6 +275,19 @@ impl Chat {
                         .map(|r| r.body)
                         .collect(),
                 ));
+                return Ok(Consumed(Action::Typing));
+            }
+            KeyCode::Char('u') => {
+                let path = get_file_path()?;
+
+                App::get_sender().send(Event::Redraw)?;
+
+                if path.is_none() {
+                    return Ok(EventResult::Ignored);
+                }
+
+                self.matrix.send_attachement(self.room(), path.unwrap());
+
                 return Ok(Consumed(Action::Typing));
             }
             _ => return Ok(EventResult::Ignored),

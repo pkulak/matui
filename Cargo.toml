@@ -17,6 +17,7 @@ linkify = "0.9"
 log = "0.4"
 log-panics = { version = "2", features = ["with-backtrace"]}
 mime = "0.3"
+native-dialog = "0.5.1"
 notify-rust = { version = "4.8", features = ["images"] }
 once_cell = "1.17"
 open = "4.0"

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info};
+use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
 use matrix_sdk::media::{MediaFormat, MediaRequest};
@@ -46,6 +47,7 @@ use crate::handler::{Batch, MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
 use crate::spawn::view_file;
 
+use super::mime::mime_from_path;
 use super::notify::Notify;
 
 /// A Matrix client that maintains it's own Tokio runtime
@@ -329,6 +331,38 @@ impl Matrix {
 
             if let Err(err) = room
                 .send(RoomMessageEventContent::text_plain(message), None)
+                .await
+            {
+                Matrix::send(Error(err.to_string()));
+            }
+
+            Matrix::send(ProgressComplete);
+        });
+    }
+
+    pub fn send_attachement(&self, room: Joined, path: PathBuf) {
+        let content_type = mime_from_path(&path);
+
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default()
+            .to_string();
+
+        self.rt.spawn(async move {
+            Matrix::send(ProgressStarted("Uploading".to_string()));
+
+            let data = match fs::read(path.to_str().unwrap()) {
+                Ok(d) => d,
+                Err(err) => {
+                    Matrix::send(Error(err.to_string()));
+                    return;
+                }
+            };
+
+            if let Err(err) = room
+                .send_attachment(&name, &content_type, data, AttachmentConfig::new())
                 .await
             {
                 Matrix::send(Error(err.to_string()));

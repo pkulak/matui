@@ -58,12 +58,12 @@ impl Message {
         let mut ret = format!(
             "Sent {} by {} ({})\n\n",
             date.format("%Y-%m-%d at %I:%M:%S %p"),
-            self.sender_id,
+            self.sender,
             self.sender_id
         );
 
         ret.push_str(self.display());
-        ret.push_str("\n");
+        ret.push_str("\n\n");
 
         if !self.reactions.is_empty() {
             ret.push_str("### Reactions\n\n");

@@ -1,16 +1,28 @@
-use anyhow::bail;
+use anyhow::{bail, Context};
 use image::imageops::FilterType;
 use linkify::LinkFinder;
 use log::error;
 use matrix_sdk::media::MediaFileHandle;
+use native_dialog::FileDialog;
 use notify_rust::Hint;
 use std::env::var;
 use std::io::{Cursor, Read};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tempfile::Builder;
 
+pub fn get_file_path() -> anyhow::Result<Option<PathBuf>> {
+    let home = dirs::home_dir().context("no home directory")?;
+
+    let path = FileDialog::new()
+        .set_location(home.as_path())
+        .show_open_single_file()?;
+
+    Ok(path)
+}
+
 pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
-    let editor = &var("EDITOR")?;
+    let editor = &var("EDITOR").unwrap_or("/usr/bin/vi".to_string());
     let mut tmpfile = Builder::new().suffix(".md").tempfile()?;
 
     if let Some(str) = existing {
