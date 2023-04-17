@@ -83,7 +83,7 @@ impl Message {
                 }
             }
 
-            ret.push_str("\n");
+            ret.push('\n');
         }
 
         if !self.history.is_empty() {
@@ -95,7 +95,7 @@ impl Message {
             for h in reversed_history.into_iter() {
                 ret.push_str("* ");
                 ret.push_str(Message::display_body(&h));
-                ret.push_str("\n");
+                ret.push('\n');
             }
         }
 
@@ -113,7 +113,7 @@ impl Message {
 
             let then: u64 = self.sent.as_secs().into();
             let pretty_elapsed = formatter.convert(Duration::from_secs(now - then));
-            return format!(" {}", pretty_elapsed);
+            format!(" {}", pretty_elapsed)
         })
     }
 
@@ -231,14 +231,12 @@ impl Message {
 
             // then look at the messages
             messages.retain(|m| &m.id != id);
-
-            return;
         }
     }
 
     pub fn update_senders(&mut self, members: &Vec<RoomMember>) {
         fn set_name(old: &mut String, new: &RoomMember) {
-            *old = new.display_name().unwrap_or_else(|| old).to_string();
+            *old = new.display_name().unwrap_or(old).to_string();
         }
 
         // maybe we use a map, or sorted list at some point to avoid looping
@@ -275,7 +273,7 @@ impl Message {
         // message
         let mut lines = Text::from(Spans::from(spans));
 
-        let wrapped = textwrap::wrap(&self.display(), width);
+        let wrapped = textwrap::wrap(self.display(), width);
         let message_overlap = wrapped.len() > 10;
 
         for l in wrapped.into_iter().take(10) {

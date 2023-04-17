@@ -9,7 +9,7 @@ use tui::style::{Color, Style};
 use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
-use crate::widgets::rooms::Mode::{INSERT, NORMAL};
+use crate::widgets::rooms::Mode::{Insert, Normal};
 use crate::widgets::textinput::TextInput;
 use crate::widgets::Action::{Exit, Typing};
 use crate::widgets::EventResult::{Consumed, Ignored};
@@ -23,8 +23,8 @@ pub struct Rooms {
 
 #[derive(Eq, PartialEq)]
 enum Mode {
-    NORMAL,
-    INSERT,
+    Normal,
+    Insert,
 }
 
 impl Rooms {
@@ -52,13 +52,13 @@ impl Rooms {
 
     fn mode(&self) -> Mode {
         if self.textinput.focused {
-            return INSERT;
+            return Insert;
         }
-        return NORMAL;
+        Normal
     }
 
     fn set_mode(&mut self, mode: Mode) {
-        self.textinput.focused = mode == INSERT;
+        self.textinput.focused = mode == Insert;
     }
 
     pub fn widget(&self) -> RoomsWidget {
@@ -66,24 +66,24 @@ impl Rooms {
     }
 
     pub fn input(&mut self, input: &KeyEvent) -> EventResult {
-        return match input.code {
-            KeyCode::Char('i') if self.mode() == NORMAL => {
-                self.set_mode(INSERT);
+        match input.code {
+            KeyCode::Char('i') if self.mode() == Normal => {
+                self.set_mode(Insert);
                 Consumed(Typing)
             }
-            KeyCode::Char('j') if self.mode() == NORMAL => {
+            KeyCode::Char('j') if self.mode() == Normal => {
                 self.next();
                 Consumed(Typing)
             }
-            KeyCode::Char('k') if self.mode() == NORMAL => {
+            KeyCode::Char('k') if self.mode() == Normal => {
                 self.previous();
                 Consumed(Typing)
             }
-            KeyCode::Esc if self.mode() == INSERT => {
-                self.set_mode(NORMAL);
+            KeyCode::Esc if self.mode() == Insert => {
+                self.set_mode(Normal);
                 Consumed(Typing)
             }
-            KeyCode::Esc | KeyCode::Char(' ') if self.mode() == NORMAL => Consumed(Exit),
+            KeyCode::Esc | KeyCode::Char(' ') if self.mode() == Normal => Consumed(Exit),
             KeyCode::Down => {
                 self.next();
                 Consumed(Typing)
@@ -92,7 +92,7 @@ impl Rooms {
                 self.previous();
                 Consumed(Typing)
             }
-            KeyCode::Enter => return Consumed(Action::SelectRoom(self.selected_room().inner)),
+            KeyCode::Enter => Consumed(Action::SelectRoom(self.selected_room().inner)),
             _ => {
                 if let Consumed(_) = (&mut self.textinput).input(input) {
                     self.reset();
@@ -101,7 +101,7 @@ impl Rooms {
                     Ignored
                 }
             }
-        };
+        }
     }
 
     fn next(&mut self) {

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use mime::{Mime, APPLICATION_OCTET_STREAM};
 
@@ -27,7 +27,7 @@ pub static MIME_TYPES: &[(&str, &str)] = &[
     ("zip", "application/zip"),
 ];
 
-pub fn mime_from_path(path: &PathBuf) -> Mime {
+pub fn mime_from_path(path: &Path) -> Mime {
     let ext = path
         .extension()
         .unwrap_or_default()
@@ -43,7 +43,7 @@ pub fn mime_from_path(path: &PathBuf) -> Mime {
         }
     }
 
-    return APPLICATION_OCTET_STREAM;
+    APPLICATION_OCTET_STREAM
 }
 
 #[cfg(test)]

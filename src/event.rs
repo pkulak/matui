@@ -61,7 +61,7 @@ impl EventHandler {
                         .checked_sub(last_tick.elapsed())
                         .unwrap_or(tick_rate);
 
-                    if let Ok(_) = pk_receiver.try_recv() {
+                    if pk_receiver.try_recv().is_ok() {
                         thread::park();
                         last_park = Instant::now()
                     }
@@ -69,7 +69,7 @@ impl EventHandler {
                     if event::poll(timeout).expect("no events available") {
                         let event = event::read().expect("unable to read event");
 
-                        if let Ok(_) = pk_receiver.try_recv() {
+                        if pk_receiver.try_recv().is_ok() {
                             thread::park();
                             last_park = Instant::now()
                         }

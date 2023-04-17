@@ -57,7 +57,7 @@ impl React {
             .collect();
 
         let mut list_state = ListState::default();
-        list_state.select(Some(0 as usize));
+        list_state.select(Some(0_usize));
         let list_state = Cell::new(list_state);
 
         React {
@@ -72,7 +72,7 @@ impl React {
     }
 
     pub fn input(&mut self, input: &KeyEvent) -> EventResult {
-        return match input.code {
+        match input.code {
             KeyCode::Char('k') | KeyCode::Up => {
                 self.previous();
                 Consumed(Typing)
@@ -94,7 +94,7 @@ impl React {
                 }
             }
             _ => Ignored,
-        };
+        }
     }
 
     fn next(&mut self) {
@@ -142,9 +142,7 @@ impl React {
         let selected = state.selected().unwrap_or_default();
         self.list_state.set(state);
 
-        self.reactions
-            .get(selected)
-            .and_then(|r| Some(r.emoji.clone()))
+        self.reactions.get(selected).map(|r| r.emoji.clone())
     }
 }
 

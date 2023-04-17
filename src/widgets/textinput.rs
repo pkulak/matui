@@ -305,7 +305,7 @@ mod tests {
         let width = buf.area.width as usize;
 
         buf.content()[(line * width)..((line + 1) * width)]
-            .into_iter()
+            .iter()
             .map(|c| c.symbol.clone())
             .collect()
     }

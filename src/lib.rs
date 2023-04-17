@@ -28,7 +28,7 @@ pub mod spawn;
 pub fn pretty_list(names: Vec<&str>) -> String {
     match names.len() {
         0 => "".to_string(),
-        1 => names.get(0).unwrap().to_string(),
+        1 => names.first().unwrap().to_string(),
         _ => format!(
             "{} and {}",
             names[0..names.len() - 1].join(", "),
@@ -40,7 +40,7 @@ pub fn pretty_list(names: Vec<&str>) -> String {
 fn truncate(s: String, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
         None => s,
-        Some((idx, _)) => format!("{}…", s[..(idx - 1)].to_string()),
+        Some((idx, _)) => format!("{}…", &s[..(idx - 1)]),
     }
 }
 
@@ -84,7 +84,7 @@ impl KeyCombo {
             return true;
         }
 
-        return false;
+        false
     }
 
     fn reset(&mut self) {
@@ -100,6 +100,7 @@ mod tests {
     use crate::KeyCombo;
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn it_finds_patterns() {
         let mut combo = KeyCombo::new(vec!['a', 'b', 'c']);
 
@@ -114,6 +115,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn it_ignores_after_delay() {
         let mut combo = KeyCombo::new(vec!['a', 'b', 'c']);
 
@@ -130,6 +132,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::bool_assert_comparison)]
     fn it_ignores_after_wront_key() {
         let mut combo = KeyCombo::new(vec!['a', 'b', 'c']);
 

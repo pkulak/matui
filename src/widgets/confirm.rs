@@ -67,7 +67,9 @@ impl Confirm {
                 EventResult::Consumed(Action::Typing)
             }
             KeyCode::Esc => EventResult::Consumed(Action::Exit),
-            KeyCode::Enter => {
+            KeyCode::Enter =>
+            {
+                #[allow(clippy::unnecessary_mut_passed)]
                 if (&mut self.yes).focused() {
                     EventResult::Consumed(Action::ConfirmResult(self.yes_result.clone()))
                 } else {

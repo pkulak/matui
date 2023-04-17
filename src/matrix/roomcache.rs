@@ -112,7 +112,7 @@ impl DecoratedRoom {
             return 0;
         }
 
-        return self.inner.unread_notification_counts().notification_count;
+        self.inner.unread_notification_counts().notification_count
     }
 
     pub fn highlight_count(&self) -> u64 {
@@ -120,7 +120,7 @@ impl DecoratedRoom {
             return 0;
         }
 
-        return self.inner.unread_notification_counts().highlight_count;
+        self.inner.unread_notification_counts().highlight_count
     }
 
     async fn from_joined(room: Joined) -> DecoratedRoom {

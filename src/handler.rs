@@ -212,7 +212,7 @@ pub fn handle_key_event(
 
         if app.progress.is_none() {
             if let Some(chat) = &mut app.chat {
-                match chat.input(&handler, &key_event) {
+                match chat.input(handler, &key_event) {
                     Err(err) => {
                         app.error = Some(Error::new(err.to_string()));
                         return Ok(());
@@ -226,12 +226,9 @@ pub fn handle_key_event(
                 }
             }
 
-            match key_event.code {
-                KeyCode::Char(' ') => {
-                    let current = &app.chat.as_ref().and_then(|c| Some(c.room().clone()));
-                    app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
-                }
-                _ => {}
+            if let KeyCode::Char(' ') = key_event.code {
+                let current = &app.chat.as_ref().map(|c| c.room());
+                app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
             }
         }
     }
@@ -247,7 +244,7 @@ pub fn handle_focus_event(app: &mut App) {
     if let Some(chat) = &mut app.chat {
         app.matrix
             .clone()
-            .room_visit_event(Room::Joined(chat.room().clone()));
+            .room_visit_event(Room::Joined(chat.room()));
         chat.focus_event();
     }
 }

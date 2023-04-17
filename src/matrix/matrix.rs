@@ -220,7 +220,7 @@ impl Matrix {
         self.rt.spawn(async move {
             if let Err(err) = sas.confirm().await {
                 error!("could not verify: {}", err.to_string());
-                Matrix::send(Error(format!("Could not verify: {}", err.to_string())));
+                Matrix::send(Error(format!("Could not verify: {}", err)));
             }
         });
     }
@@ -243,7 +243,7 @@ impl Matrix {
         self.rt.spawn(async move {
             // fetch the actual messages
             let mut options = MessagesOptions::new(Direction::Backward);
-            options.limit = UInt::from(25 as u16);
+            options.limit = UInt::from(25_u16);
             options.from = cursor;
 
             let messages = match room.messages(options).await {
@@ -262,7 +262,7 @@ impl Matrix {
 
             let batch = Batch {
                 room: room.clone(),
-                events: unpacked.clone(),
+                events: unpacked,
                 cursor: messages.end,
             };
 
@@ -455,7 +455,7 @@ impl Matrix {
     pub fn read_to(&self, room: Joined, to: OwnedEventId) {
         let receipts = Receipts::new()
             .fully_read_marker(Some(to.clone()))
-            .public_read_receipt(Some(to.clone()));
+            .public_read_receipt(Some(to));
 
         self.rt.spawn(async move {
             if let Err(e) = room.send_multiple_receipts(receipts).await {
@@ -467,7 +467,7 @@ impl Matrix {
     pub fn typing_notification(&self, room: Joined, typing: bool) {
         self.rt.spawn(async move {
             if let Err(e) = room.typing_notice(typing).await {
-                error!("could not send typing notice: {}", e.to_string());
+                error!("could not send typing notice: {}", e);
             }
         });
     }

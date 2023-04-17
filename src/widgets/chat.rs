@@ -80,7 +80,7 @@ impl Chat {
             return;
         }
 
-        let read_to = self.messages.first().and_then(|m| Some(m.id.clone()));
+        let read_to = self.messages.first().map(|m| m.id.clone());
 
         if read_to == self.read_to {
             return;
@@ -93,11 +93,7 @@ impl Chat {
     }
 
     fn display_full(&self) -> String {
-        let mut ret = format!(
-            "{} ({})\n\n",
-            self.room.name,
-            self.room.room_id().to_string()
-        );
+        let mut ret = format!("{} ({})\n\n", self.room.name, self.room.room_id());
 
         ret.push_str("# Members\n\n");
 
@@ -162,7 +158,7 @@ impl Chat {
                     self.react = None;
 
                     if let Some(event) = self.my_selected_reaction_event(reaction) {
-                        self.matrix.redact_event(self.room(), event.id.clone())
+                        self.matrix.redact_event(self.room(), event.id)
                     }
                 }
                 Consumed(_) => return Ok(Consumed(Action::Typing)),
@@ -197,18 +193,18 @@ impl Chat {
         match input.code {
             KeyCode::Char('j') | KeyCode::Down => {
                 self.previous();
-                return Ok(Consumed(Action::Typing));
+                Ok(Consumed(Action::Typing))
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.next();
                 self.try_fetch_previous();
-                return Ok(Consumed(Action::Typing));
+                Ok(Consumed(Action::Typing))
             }
             KeyCode::Enter => {
                 if let Some(message) = &self.selected_message() {
                     message.open(self.matrix.clone())
                 }
-                return Ok(Consumed(Action::Typing));
+                Ok(Consumed(Action::Typing))
             }
             KeyCode::Char('c') => {
                 let message = match self.selected_message() {
@@ -238,20 +234,18 @@ impl Chat {
                     }
                 }
 
-                return Ok(Consumed(Action::Typing));
+                Ok(Consumed(Action::Typing))
             }
             KeyCode::Char('i') => {
                 // start a thread to hammer out typing notifications
                 let matrix = self.matrix.clone();
-                let room = self.room().clone();
+                let room = self.room();
                 let (send, recv) = channel();
 
-                thread::spawn(move || loop {
-                    if let Err(TryRecvError::Empty) = recv.try_recv() {
+                thread::spawn(move || {
+                    while let Err(TryRecvError::Empty) = recv.try_recv() {
                         matrix.typing_notification(room.clone(), true);
                         thread::sleep(Duration::from_millis(1000));
-                    } else {
-                        break;
                     }
                 });
 
@@ -268,7 +262,7 @@ impl Chat {
                 if let Ok(input) = result {
                     if let Some(input) = input {
                         self.matrix.send_text_message(self.room(), input);
-                        return Ok(Consumed(Action::Typing));
+                        Ok(Consumed(Action::Typing))
                     } else {
                         bail!("Ignoring blank message.")
                     }
@@ -287,7 +281,7 @@ impl Chat {
                 handler.unpark();
 
                 App::get_sender().send(Event::Redraw)?;
-                return Ok(EventResult::Consumed(Action::Typing));
+                Ok(EventResult::Consumed(Action::Typing))
             }
             KeyCode::Char('V') => {
                 handler.park();
@@ -295,7 +289,7 @@ impl Chat {
                 handler.unpark();
 
                 App::get_sender().send(Event::Redraw)?;
-                return Ok(EventResult::Consumed(Action::Typing));
+                Ok(EventResult::Consumed(Action::Typing))
             }
             KeyCode::Char('r') => {
                 self.react = Some(React::new(
@@ -308,7 +302,7 @@ impl Chat {
                         .map(|r| r.body)
                         .collect(),
                 ));
-                return Ok(Consumed(Action::Typing));
+                Ok(Consumed(Action::Typing))
             }
             KeyCode::Char('u') => {
                 let path = get_file_path()?;
@@ -321,10 +315,10 @@ impl Chat {
 
                 self.matrix.send_attachement(self.room(), path.unwrap());
 
-                return Ok(Consumed(Action::Typing));
+                Ok(Consumed(Action::Typing))
             }
-            _ => return Ok(EventResult::Ignored),
-        };
+            _ => Ok(EventResult::Ignored),
+        }
     }
 
     pub fn focus_event(&mut self) {
@@ -444,7 +438,7 @@ impl Chat {
         let selected = state.selected().unwrap_or_default();
         self.list_state.set(state);
 
-        self.messages.get(selected).and_then(|m| Some(m.clone()))
+        self.messages.get(selected)
     }
 
     // the reactions on the currently selected message
@@ -488,7 +482,7 @@ impl Chat {
             }
         }
 
-        return None;
+        None
     }
 
     pub fn widget(&self) -> ChatWidget {

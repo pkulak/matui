@@ -48,7 +48,7 @@ impl Notify {
     ) -> anyhow::Result<()> {
         if let Some(message) = Message::try_from(&event) {
             // don't send notifications for our own messages
-            if message.sender == client.user_id().unwrap().to_string() {
+            if message.sender == *client.user_id().unwrap() {
                 return Ok(());
             }
 
@@ -146,8 +146,6 @@ impl Notify {
         // spawn a thread to sit around and wait for the notification to close
         std::thread::spawn(move || {
             handle.on_close({
-                let room = room.clone();
-
                 move |_: CloseReason| {
                     if let Room::Joined(joined) = room.clone() {
                         Matrix::send(MatuiEvent::RoomSelected(joined));
