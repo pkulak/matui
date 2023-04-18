@@ -27,6 +27,7 @@ use matrix_sdk::{Client, LoopCtrl, ServerName, Session};
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
+use ruma::events::key::verification::VerificationMethod;
 use ruma::events::reaction::ReactionEventContent;
 use ruma::events::relation::Annotation;
 use ruma::events::room::message::MessageType::Image;
@@ -176,9 +177,26 @@ impl Matrix {
                 return;
             };
 
-            matrix.room_cache.populate(client).await;
+            matrix.room_cache.populate(client.clone()).await;
 
             Matrix::send(MatuiEvent::SyncComplete);
+
+            if let Some(user_id) = client.user_id() {
+                match client.encryption().get_user_identity(user_id).await {
+                    Ok(Some(identity)) => {
+                        if let Err(err) = identity
+                            .request_verification_with_methods(vec![VerificationMethod::SasV1])
+                            .await
+                        {
+                            error!("could not request verification: {}", err);
+                        } else {
+                            info!("verification requested");
+                        }
+                    }
+                    Ok(None) => error!("no user identity"),
+                    Err(err) => error!("could not get user identity: {}", err),
+                }
+            }
         });
     }
 
@@ -237,6 +255,13 @@ impl Matrix {
 
     pub fn fetch_rooms(&self) -> Vec<DecoratedRoom> {
         self.room_cache.get_rooms()
+    }
+
+    pub fn refresh_room_cache(&self) {
+        let client = self.client();
+        let cache = self.room_cache.clone();
+
+        self.rt.spawn(async move { cache.populate(client).await });
     }
 
     pub fn fetch_messages(&self, room: Joined, cursor: Option<String>) {

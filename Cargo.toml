@@ -16,7 +16,7 @@ image = "0.24"
 linkify = "0.9"
 lazy_static = "1.4"
 log = "0.4"
-log-panics = { version = "2", features = ["with-backtrace"]}
+log-panics = { version = "2", features = ["with-backtrace"] }
 mime = "0.3"
 native-dialog = "0.5.1"
 notify-rust = { version = "4.8", features = ["images"] }
@@ -44,8 +44,4 @@ features = [
 [dependencies.ruma]
 git = "https://github.com/ruma/ruma.git"
 rev = "8eea3e05490fa9a318f9ed66c3a75272e6ef0ee5"
-
-[profile.release]
-lto = true          # Enable link-time optimization
-codegen-units = 1   # Reduce number of codegen units to increase optimizations
 

@@ -1,7 +1,12 @@
-use ruma::OwnedRoomId;
+use log::error;
+use ruma::UserId;
+use ruma::{events::AnyTimelineEvent, OwnedRoomId};
+use std::fs::OpenOptions;
 use std::{
     collections::HashMap,
-    io::Cursor,
+    fs,
+    io::{BufWriter, Cursor},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Mutex,
@@ -9,16 +14,13 @@ use std::{
 };
 
 use image::imageops::FilterType;
-use log::error;
+
 use matrix_sdk::{
-    media::{MediaFormat, MediaThumbnailSize},
+    media::MediaFormat,
     room::{Room, RoomMember},
     Client,
 };
 use notify_rust::{CloseReason, Hint};
-use ruma::{
-    api::client::media::get_content_thumbnail::v3::Method, events::AnyTimelineEvent, UInt, UserId,
-};
 
 use crate::{handler::MatuiEvent, settings::is_muted, widgets::message::Message};
 
@@ -109,21 +111,14 @@ impl Notify {
         summary: &str,
         body: &str,
         room: Room,
-        image: Option<Vec<u8>>,
+        image: Option<PathBuf>,
     ) -> anyhow::Result<()> {
         let mut notification = notify_rust::Notification::new();
 
         notification.summary(summary).body(body);
 
-        if let Some(img) = image {
-            let data = Cursor::new(img);
-            let reader = image::io::Reader::new(data).with_guessed_format()?;
-
-            let img = reader
-                .decode()?
-                .resize_to_fill(250, 250, FilterType::Lanczos3);
-
-            notification.hint(Hint::ImageData(notify_rust::Image::try_from(img)?));
+        if let Some(path) = image {
+            notification.hint(Hint::ImagePath(path.to_str().unwrap().to_string()));
         }
 
         let mut map = self.rooms.lock().expect("could not lock rooms");
@@ -157,31 +152,72 @@ impl Notify {
         Ok(())
     }
 
-    async fn get_image(room: Room, user: RoomMember) -> Option<Vec<u8>> {
-        let format = MediaFormat::Thumbnail(MediaThumbnailSize {
-            method: Method::Scale,
-            width: UInt::new(250).unwrap(),
-            height: UInt::new(250).unwrap(),
-        });
+    fn get_cache_path(key: &str) -> PathBuf {
+        let mut path = dirs::cache_dir().expect("no cache directory");
+        path.push("matui");
+        fs::create_dir_all(&path).unwrap();
+        path.push(&key);
+        path
+    }
 
-        let mut avatar = match room.avatar(format).await {
-            Ok(a) => a,
-            Err(e) => {
-                error!("could not fetch room avatar: {}", e.to_string());
-                None
-            }
-        };
+    fn write_image_to_file(img: Vec<u8>, path: &PathBuf) -> anyhow::Result<()> {
+        let data = Cursor::new(img);
+        let reader = image::io::Reader::new(data).with_guessed_format()?;
 
-        if avatar.is_none() {
-            avatar = match user.avatar(MediaFormat::File).await {
-                Ok(a) => a,
-                Err(e) => {
-                    error!("Could not fetch user avatar: {}", e.to_string());
-                    None
-                }
-            };
+        let img = reader
+            .decode()?
+            .resize_to_fill(250, 250, FilterType::Lanczos3);
+
+        let file = OpenOptions::new().create_new(true).write(true).open(path)?;
+
+        img.write_to(&mut BufWriter::new(file), image::ImageOutputFormat::Png)?;
+
+        Ok(())
+    }
+
+    async fn get_room_image(room: &Room) -> Option<PathBuf> {
+        let path = Notify::get_cache_path(room.room_id().as_str());
+
+        if path.exists() {
+            return Some(path);
         }
 
-        avatar
+        let avatar = match room.avatar(MediaFormat::File).await {
+            Ok(Some(a)) => a,
+            _ => return None,
+        };
+
+        if let Err(e) = Notify::write_image_to_file(avatar, &path) {
+            error!("could not write image: {}", e);
+        }
+
+        return Some(path);
+    }
+
+    async fn get_user_image(user: &RoomMember) -> Option<PathBuf> {
+        let path = Notify::get_cache_path(user.user_id().as_str());
+
+        if path.exists() {
+            return Some(path);
+        }
+
+        let avatar = match user.avatar(MediaFormat::File).await {
+            Ok(Some(a)) => a,
+            _ => return None,
+        };
+
+        if let Err(e) = Notify::write_image_to_file(avatar, &path) {
+            error!("could not write image: {}", e);
+        }
+
+        return Some(path);
+    }
+
+    async fn get_image(room: Room, user: RoomMember) -> Option<PathBuf> {
+        if let Some(path) = Notify::get_user_image(&user).await {
+            return Some(path);
+        }
+
+        Notify::get_room_image(&room).await
     }
 }

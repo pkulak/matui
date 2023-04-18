@@ -36,7 +36,6 @@ pub struct Message {
     pub sender: String,
     pub sender_id: String,
     pub reactions: Vec<Reaction>,
-    pub pretty_elapsed: OnceCell<String>,
 }
 
 impl Message {
@@ -102,19 +101,16 @@ impl Message {
         ret
     }
 
-    pub fn pretty_elapsed(&self) -> &str {
-        self.pretty_elapsed.get_or_init(|| {
-            let formatter = timeago::Formatter::new();
+    pub fn pretty_elapsed(&self) -> String {
+        let formatter = timeago::Formatter::new();
 
-            let now = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
-            let then: u64 = self.sent.as_secs().into();
-            let pretty_elapsed = formatter.convert(Duration::from_secs(now - then));
-            format!(" {}", pretty_elapsed)
-        })
+        let then: u64 = self.sent.as_secs().into();
+        formatter.convert(Duration::from_secs(now - then))
     }
 
     pub fn style(&self) -> Style {
@@ -162,7 +158,6 @@ impl Message {
                 sender: c.sender.to_string(),
                 sender_id: c.sender.to_string(),
                 reactions: Vec::new(),
-                pretty_elapsed: OnceCell::new(),
             });
         }
 
@@ -263,6 +258,7 @@ impl Message {
         // author
         let mut spans = vec![
             Span::styled(&self.sender, Style::default().fg(Color::Green)),
+            Span::from(" "),
             Span::styled(self.pretty_elapsed(), Style::default().fg(Color::DarkGray)),
         ];
 

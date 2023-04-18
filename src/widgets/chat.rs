@@ -12,7 +12,7 @@ use crate::widgets::{get_margin, EventResult};
 use crate::{pretty_list, truncate, KeyCombo};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
-use log::info;
+use log::{info, warn};
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::MessageType::Text;
@@ -346,6 +346,7 @@ impl Chat {
         }
 
         self.next_cursor = batch.cursor;
+        let empty = batch.events.is_empty();
 
         for event in batch.events {
             self.events.push(OrderedEvent::new(event));
@@ -363,7 +364,9 @@ impl Chat {
             self.list_state.set(state);
         }
 
-        self.try_fetch_previous();
+        if !empty {
+            self.try_fetch_previous();
+        }
     }
 
     pub fn room_members_event(&mut self, room: Joined, members: Vec<RoomMember>) {
@@ -615,7 +618,12 @@ fn make_message_list(
     // modifies an existing message
     for event in timeline.iter() {
         if let Some(message) = Message::try_from(event) {
-            messages.push(message);
+            // sanity check
+            if Some(&message.id) == messages.last().map(|m: &Message| &m.id) {
+                warn!("refusing to add the same event twice");
+            } else {
+                messages.push(message);
+            }
         } else {
             modifiers.push(event);
         }

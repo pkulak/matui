@@ -63,7 +63,7 @@ pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
         return Ok(None);
     }
 
-    Ok(Some(contents))
+    Ok(Some(contents.trim().to_string()))
 }
 
 pub fn view_file(handle: MediaFileHandle) -> anyhow::Result<()> {
