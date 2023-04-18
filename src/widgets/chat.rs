@@ -12,7 +12,7 @@ use crate::widgets::{get_margin, EventResult};
 use crate::{pretty_list, truncate, KeyCombo};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
-use log::{info, warn};
+use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::MessageType::Text;
@@ -336,6 +336,7 @@ impl Chat {
         }
 
         self.events.push(OrderedEvent::new(event));
+        self.dedupe_events();
         self.messages = make_message_list(&self.events, &self.members);
         self.set_fully_read();
     }
@@ -346,11 +347,13 @@ impl Chat {
         }
 
         self.next_cursor = batch.cursor;
-        let empty = batch.events.is_empty();
+        let previous_count = self.messages.len();
 
         for event in batch.events {
             self.events.push(OrderedEvent::new(event));
         }
+
+        self.dedupe_events();
 
         let reset = self.messages.is_empty();
 
@@ -364,8 +367,19 @@ impl Chat {
             self.list_state.set(state);
         }
 
-        if !empty {
+        if self.messages.len() > previous_count {
             self.try_fetch_previous();
+        } else {
+            info!("refusing to fetch more messages without making progress");
+        }
+    }
+
+    fn dedupe_events(&mut self) {
+        let prev = self.messages.len();
+        self.messages.dedup_by(|left, right| left.id == right.id);
+
+        if self.messages.len() < prev {
+            info!("found at least one duplicate event");
         }
     }
 
@@ -618,12 +632,7 @@ fn make_message_list(
     // modifies an existing message
     for event in timeline.iter() {
         if let Some(message) = Message::try_from(event) {
-            // sanity check
-            if Some(&message.id) == messages.last().map(|m: &Message| &m.id) {
-                warn!("refusing to add the same event twice");
-            } else {
-                messages.push(message);
-            }
+            messages.push(message);
         } else {
             modifiers.push(event);
         }
