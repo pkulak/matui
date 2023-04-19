@@ -1,3 +1,4 @@
+use crossterm::event::KeyEvent;
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::{Joined, Room};
 use once_cell::sync::OnceCell;
@@ -12,6 +13,7 @@ use crate::widgets::error::Error;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::signin::Signin;
+use crate::widgets::EventResult;
 use tui::backend::Backend;
 use tui::terminal::Frame;
 
@@ -26,11 +28,7 @@ pub struct App {
     pub timestamp: usize,
 
     /// Hold on to all our widgets
-    pub progress: Option<Progress>,
-    pub error: Option<Error>,
-    pub signin: Option<Signin>,
-    pub confirm: Option<Confirm>,
-    pub rooms: Option<Rooms>,
+    pub popup: Option<Popup>,
     pub chat: Option<Chat>,
 
     /// And our single Matrix client and channel
@@ -53,11 +51,7 @@ impl App {
         Self {
             running: true,
             timestamp: 0,
-            progress: None,
-            error: None,
-            signin: None,
-            confirm: None,
-            rooms: None,
+            popup: None,
             chat: None,
             matrix,
             sender: send,
@@ -76,8 +70,8 @@ impl App {
 
     pub fn select_room(&mut self, room: Joined) {
         // don't re-select the same room
-        if let Some(Chat { room: r, .. }) = &self.chat {
-            if r.room_id() == room.room_id() {
+        if let Some(c) = &self.chat {
+            if c.room().room_id() == room.room_id() {
                 return;
             }
         }
@@ -85,6 +79,14 @@ impl App {
         let chat = Chat::new(self.matrix.clone(), room.clone());
         self.chat = Some(chat);
         self.matrix.room_visit_event(Room::Joined(room));
+    }
+
+    pub fn set_popup(&mut self, popup: Popup) {
+        self.popup = Some(popup);
+    }
+
+    pub fn close_popup(&mut self) {
+        self.popup = None;
     }
 
     /// Handles the tick event of the terminal.
@@ -97,8 +99,8 @@ impl App {
         }
 
         // send out the ticks
-        if let Some(p) = self.progress.as_mut() {
-            p.tick(self.timestamp)
+        if let Some(w) = self.popup.as_mut() {
+            w.tick_event(self.timestamp)
         }
 
         self.timestamp += 1;
@@ -107,31 +109,52 @@ impl App {
     /// Renders the user interface widgets.
     pub fn render<B: Backend>(&mut self, frame: &mut Frame<'_, B>) {
         if let Some(c) = &self.chat {
-            frame.render_widget(c.widget(), frame.size())
-        }
-
-        if let Some(w) = &self.error {
-            frame.render_widget(w.widget(), frame.size());
-            return;
-        }
-
-        if let Some(w) = &self.progress {
-            frame.render_widget(w.widget(), frame.size());
-            return;
-        }
-
-        if let Some(w) = &self.signin {
-            frame.render_widget(w.widget(), frame.size());
-            return;
-        }
-
-        if let Some(c) = &self.confirm {
             frame.render_widget(c.widget(), frame.size());
-            return;
         }
 
-        if let Some(r) = &self.rooms {
-            frame.render_widget(r.widget(), frame.size())
+        if let Some(w) = &self.popup {
+            w.render(frame);
+            return;
+        }
+    }
+}
+
+// As far as I can tell, there's no way to use dynamic dispatch here, so
+// instead we'll use a giant enum. I tried for way too long and just have
+// to give up before I lose it. PRs welcome if there's a better way!
+pub enum Popup {
+    Confirm(Confirm),
+    Error(Error),
+    Progress(Progress),
+    Rooms(Rooms),
+    Signin(Signin),
+}
+
+impl Popup {
+    pub fn key_event(&mut self, event: &KeyEvent) -> EventResult {
+        match self {
+            Popup::Confirm(w) => w.key_event(event),
+            Popup::Error(w) => w.key_event(event),
+            Popup::Progress(_) => EventResult::Ignored,
+            Popup::Rooms(w) => w.key_event(event),
+            Popup::Signin(w) => w.key_event(event),
+        }
+    }
+
+    pub fn tick_event(&mut self, timestamp: usize) {
+        match self {
+            Popup::Progress(w) => w.tick_event(timestamp),
+            _ => {}
+        }
+    }
+
+    pub fn render<B: Backend>(&self, frame: &mut Frame<'_, B>) {
+        match self {
+            Popup::Confirm(w) => frame.render_widget(w.widget(), frame.size()),
+            Popup::Error(w) => frame.render_widget(w.widget(), frame.size()),
+            Popup::Progress(w) => frame.render_widget(w.widget(), frame.size()),
+            Popup::Rooms(w) => frame.render_widget(w.widget(), frame.size()),
+            Popup::Signin(w) => frame.render_widget(w.widget(), frame.size()),
         }
     }
 }

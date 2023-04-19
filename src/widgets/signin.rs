@@ -4,12 +4,11 @@ use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
 use tui::widgets::{Block, BorderType, Borders, Widget};
 
+use crate::consumed;
 use crate::widgets::button::Button;
 use crate::widgets::textinput::TextInput;
 use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{
-    focus_next, focus_prev, get_margin, send, EventResult, Focusable, KeyEventing,
-};
+use crate::widgets::{focus_next, focus_prev, get_margin, EventResult, Focusable};
 
 pub struct Signin {
     pub id: TextInput,
@@ -33,22 +32,6 @@ impl Default for Signin {
 }
 
 impl Signin {
-    pub fn widget(&self) -> SigninWidget {
-        SigninWidget { signin: self }
-    }
-
-    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
-        if let Consumed(e) = send(self.event_order(), input) {
-            return Consumed(e);
-        }
-
-        match input.code {
-            KeyCode::Enter | KeyCode::Tab | KeyCode::Down => focus_next(self.focus_order()),
-            KeyCode::BackTab | KeyCode::Up => focus_prev(self.focus_order()),
-            _ => Ignored,
-        }
-    }
-
     fn focus_order(&mut self) -> Vec<Box<dyn Focusable + '_>> {
         vec![
             Box::new(&mut self.id),
@@ -57,12 +40,34 @@ impl Signin {
         ]
     }
 
-    fn event_order(&mut self) -> Vec<Box<dyn KeyEventing + '_>> {
-        vec![
-            Box::new(&mut self.id),
-            Box::new(&mut self.password),
-            Box::new(&mut self.submit),
-        ]
+    pub fn widget(&self) -> SigninWidget {
+        SigninWidget { signin: self }
+    }
+
+    pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
+        if let Consumed(_) = self.id.key_event(input) {
+            return consumed!();
+        }
+
+        if let Consumed(_) = self.password.key_event(input) {
+            return consumed!();
+        }
+
+        if let Consumed(_) = self.submit.key_event(input) {
+            let id = self.id.value();
+            let password = self.password.value();
+
+            return EventResult::Consumed(Box::new(move |app| {
+                app.matrix.login(id.as_str(), password.as_str());
+                app.close_popup();
+            }));
+        }
+
+        match input.code {
+            KeyCode::Enter | KeyCode::Tab | KeyCode::Down => focus_next(self.focus_order()),
+            KeyCode::BackTab | KeyCode::Up => focus_prev(self.focus_order()),
+            _ => Ignored,
+        }
     }
 }
 

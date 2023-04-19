@@ -1,9 +1,5 @@
-use crate::widgets::Action::ChangeFocus;
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crossterm::event::KeyEvent;
-use matrix_sdk::room::Joined;
-
-use self::confirm::{Confirm, ConfirmResult};
+use crate::app::App;
+use crate::widgets::EventResult::Ignored;
 
 pub mod error;
 pub mod progress;
@@ -17,35 +13,29 @@ pub mod message;
 pub mod react;
 pub mod textinput;
 
+#[macro_export]
+macro_rules! consumed {
+    () => {
+        crate::widgets::EventResult::Consumed(Box::new(|_| ()))
+    };
+}
+
+#[macro_export]
+macro_rules! close {
+    () => {
+        crate::widgets::EventResult::Consumed(Box::new(|app| app.close_popup()))
+    };
+}
+
 pub enum EventResult {
-    Consumed(Action),
+    // The widget has chosen to "consume" the event, modifying its state
+    // as needed. The function is the widget's opportunity to modify
+    // the state of the App itself.
+    Consumed(Box<dyn FnOnce(&mut App) -> ()>),
+
+    /// The widget has chosen to "ignore" the event; it will be passed along
+    /// to any other subling widgets.
     Ignored,
-}
-
-pub enum Action {
-    ButtonYes,
-    ChangeFocus,
-    ConfirmResult(ConfirmResult),
-    Exit,
-    SelectRoom(Joined),
-    SelectReaction(String),
-    ShowConfirmation(Confirm),
-    RemoveReaction(String),
-    Typing,
-}
-
-pub trait KeyEventing {
-    fn input(&mut self, input: &KeyEvent) -> EventResult;
-}
-
-fn send(mut elements: Vec<Box<dyn KeyEventing + '_>>, event: &KeyEvent) -> EventResult {
-    for e in elements.iter_mut() {
-        if let Consumed(e) = e.input(event) {
-            return Consumed(e);
-        }
-    }
-
-    Ignored
 }
 
 pub trait Focusable {
@@ -65,7 +55,7 @@ fn focus_next(mut elements: Vec<Box<dyn Focusable + '_>>) -> EventResult {
     for e in elements.iter_mut() {
         if next {
             e.focus();
-            return Consumed(ChangeFocus);
+            return consumed!();
         }
 
         if e.focused() {
@@ -77,7 +67,7 @@ fn focus_next(mut elements: Vec<Box<dyn Focusable + '_>>) -> EventResult {
     // either nothing or the last element was focused
     elements[0].focus();
 
-    Consumed(ChangeFocus)
+    consumed!()
 }
 
 fn focus_prev<'a>(mut elements: Vec<Box<dyn Focusable + 'a>>) -> EventResult {

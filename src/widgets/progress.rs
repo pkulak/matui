@@ -31,7 +31,7 @@ impl Progress {
         ProgressWidget { progress: self }
     }
 
-    pub fn tick(&mut self, timestamp: usize) {
+    pub fn tick_event(&mut self, timestamp: usize) {
         self.tail = FRAMES[timestamp % FRAMES.len()].to_string();
     }
 }

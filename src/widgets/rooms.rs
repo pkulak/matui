@@ -1,5 +1,6 @@
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
+use crate::{close, consumed};
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::room::Joined;
 use std::cell::Cell;
@@ -9,11 +10,12 @@ use tui::style::{Color, Style};
 use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
+use crate::widgets::get_margin;
 use crate::widgets::rooms::Mode::{Insert, Normal};
 use crate::widgets::textinput::TextInput;
-use crate::widgets::Action::{Exit, Typing};
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{get_margin, Action, EventResult, KeyEventing};
+use crate::widgets::EventResult::Consumed;
+
+use super::EventResult;
 
 pub struct Rooms {
     pub textinput: TextInput,
@@ -50,6 +52,56 @@ impl Rooms {
         ret
     }
 
+    pub fn widget(&self) -> RoomsWidget {
+        RoomsWidget { rooms: self }
+    }
+
+    pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
+        match input.code {
+            KeyCode::Char('i') if self.mode() == Normal => {
+                self.set_mode(Insert);
+                consumed!()
+            }
+            KeyCode::Char('j') if self.mode() == Normal => {
+                self.next();
+                consumed!()
+            }
+            KeyCode::Char('k') if self.mode() == Normal => {
+                self.previous();
+                consumed!()
+            }
+            KeyCode::Esc if self.mode() == Insert => {
+                self.set_mode(Normal);
+                consumed!()
+            }
+            KeyCode::Esc | KeyCode::Char(' ') if self.mode() == Normal => close!(),
+            KeyCode::Down => {
+                self.next();
+                consumed!()
+            }
+            KeyCode::Up => {
+                self.previous();
+                consumed!()
+            }
+            KeyCode::Enter => {
+                let room = self.selected_room().inner();
+
+                Consumed(Box::new(|app| {
+                    app.select_room(room);
+                    app.close_popup();
+                }))
+            }
+            _ => {
+                if let Consumed(_) = self.textinput.key_event(input) {
+                    self.reset();
+                    consumed!()
+                } else {
+                    EventResult::Ignored
+                }
+            }
+        }
+    }
+
     fn mode(&self) -> Mode {
         if self.textinput.focused {
             return Insert;
@@ -59,49 +111,6 @@ impl Rooms {
 
     fn set_mode(&mut self, mode: Mode) {
         self.textinput.focused = mode == Insert;
-    }
-
-    pub fn widget(&self) -> RoomsWidget {
-        RoomsWidget { rooms: self }
-    }
-
-    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
-        match input.code {
-            KeyCode::Char('i') if self.mode() == Normal => {
-                self.set_mode(Insert);
-                Consumed(Typing)
-            }
-            KeyCode::Char('j') if self.mode() == Normal => {
-                self.next();
-                Consumed(Typing)
-            }
-            KeyCode::Char('k') if self.mode() == Normal => {
-                self.previous();
-                Consumed(Typing)
-            }
-            KeyCode::Esc if self.mode() == Insert => {
-                self.set_mode(Normal);
-                Consumed(Typing)
-            }
-            KeyCode::Esc | KeyCode::Char(' ') if self.mode() == Normal => Consumed(Exit),
-            KeyCode::Down => {
-                self.next();
-                Consumed(Typing)
-            }
-            KeyCode::Up => {
-                self.previous();
-                Consumed(Typing)
-            }
-            KeyCode::Enter => Consumed(Action::SelectRoom(self.selected_room().inner)),
-            _ => {
-                if let Consumed(_) = (&mut self.textinput).input(input) {
-                    self.reset();
-                    Consumed(Typing)
-                } else {
-                    Ignored
-                }
-            }
-        }
     }
 
     fn next(&mut self) {

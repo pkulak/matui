@@ -15,6 +15,7 @@ pub mod tui;
 pub mod handler;
 
 /// List of rooms we're in.
+#[macro_use]
 pub mod widgets;
 
 /// Matrix

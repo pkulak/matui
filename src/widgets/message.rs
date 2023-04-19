@@ -279,7 +279,7 @@ impl Message {
         // overflow warning
         if message_overlap || self.reactions.len() > 5 {
             lines.extend(Text::styled(
-                "* overflow: type \"O\" to view entire message",
+                "* overflow: type \"v\" to view entire message",
                 Style::default().fg(Color::Red),
             ))
         }

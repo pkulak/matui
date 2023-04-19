@@ -1,11 +1,13 @@
+use crossterm::event::KeyEvent;
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
 use tui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
+use crate::close;
 use crate::widgets::button::Button;
 
-use super::get_margin;
+use super::{get_margin, EventResult};
 
 pub struct Error {
     message: String,
@@ -22,6 +24,11 @@ impl Error {
 
     pub fn widget(&self) -> ErrorWidget {
         ErrorWidget { error: self }
+    }
+
+    pub fn key_event(&mut self, _: &KeyEvent) -> EventResult {
+        // no matter what, close
+        close!()
     }
 }
 

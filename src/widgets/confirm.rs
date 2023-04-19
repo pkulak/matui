@@ -1,4 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
+
 use matrix_sdk::room::Joined;
 use ruma::OwnedEventId;
 use tui::buffer::Buffer;
@@ -8,24 +9,22 @@ use tui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::widgets::button::Button;
 use crate::widgets::{focus_next, Focusable};
+use crate::{close, consumed};
 
-use super::{get_margin, Action, EventResult};
+use super::{get_margin, EventResult};
 
 #[derive(Clone)]
-pub enum ConfirmResult {
-    Cancel,
-    RedactEvent(Joined, OwnedEventId),
-    VerificationConfirm,
-    VerificationCancel,
+pub enum ConfirmBehavior {
+    Verification,
+    DeleteMessage(Joined, OwnedEventId),
 }
 
 pub struct Confirm {
     title: String,
     message: String,
     yes: Button,
-    yes_result: ConfirmResult,
     no: Button,
-    no_result: ConfirmResult,
+    behavior: ConfirmBehavior,
 }
 
 impl Confirm {
@@ -33,17 +32,15 @@ impl Confirm {
         title: String,
         message: String,
         yes: String,
-        yes_result: ConfirmResult,
         no: String,
-        no_result: ConfirmResult,
+        behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             title,
             message,
             yes: Button::new(yes, true),
-            yes_result,
             no: Button::new(no, false),
-            no_result,
+            behavior,
         }
     }
 
@@ -51,7 +48,7 @@ impl Confirm {
         ConfirmWidget { confirm: self }
     }
 
-    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
+    pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         match input.code {
             KeyCode::Tab
             | KeyCode::BackTab
@@ -64,24 +61,42 @@ impl Confirm {
             | KeyCode::Char('k')
             | KeyCode::Char('l') => {
                 focus_next(self.focus_order());
-                EventResult::Consumed(Action::Typing)
+                consumed!()
             }
-            KeyCode::Esc => EventResult::Consumed(Action::Exit),
-            KeyCode::Enter =>
-            {
-                #[allow(clippy::unnecessary_mut_passed)]
-                if (&mut self.yes).focused() {
-                    EventResult::Consumed(Action::ConfirmResult(self.yes_result.clone()))
-                } else {
-                    EventResult::Consumed(Action::ConfirmResult(self.no_result.clone()))
-                }
-            }
+            KeyCode::Esc => close!(),
+            KeyCode::Enter => self.make_result(),
             _ => EventResult::Ignored,
         }
     }
 
     fn focus_order(&mut self) -> Vec<Box<dyn Focusable + '_>> {
         vec![Box::new(&mut self.yes), Box::new(&mut self.no)]
+    }
+
+    fn make_result(&self) -> EventResult {
+        let focused = self.yes.focused();
+
+        match self.behavior.clone() {
+            ConfirmBehavior::Verification if focused => EventResult::Consumed(Box::new(|app| {
+                if let Some(s) = app.sas.clone() {
+                    app.matrix.confirm_verification(s);
+                    app.close_popup();
+                }
+            })),
+            ConfirmBehavior::Verification => EventResult::Consumed(Box::new(|app| {
+                if let Some(s) = app.sas.clone() {
+                    app.matrix.mismatched_verification(s);
+                    app.close_popup();
+                }
+            })),
+            ConfirmBehavior::DeleteMessage(room, id) if focused => {
+                EventResult::Consumed(Box::new(|app| {
+                    app.matrix.redact_event(room, id);
+                    app.close_popup();
+                }))
+            }
+            ConfirmBehavior::DeleteMessage(_, _) => close!(),
+        }
     }
 }
 

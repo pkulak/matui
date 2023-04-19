@@ -4,9 +4,10 @@ use tui::layout::{Constraint, Direction, Layout, Rect};
 use tui::style::{Color, Style};
 use tui::widgets::{Block, Borders, Paragraph, Widget};
 
-use crate::widgets::Action::ButtonYes;
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{get_margin, EventResult, Focusable, KeyEventing};
+use crate::consumed;
+use crate::widgets::{get_margin, Focusable};
+
+use super::EventResult;
 
 pub struct Button {
     label: String,
@@ -27,19 +28,21 @@ impl Focusable for &mut Button {
     }
 }
 
-impl KeyEventing for &mut Button {
-    fn input(&mut self, input: &KeyEvent) -> EventResult {
-        if self.focused && input.code == KeyCode::Enter {
-            Consumed(ButtonYes)
-        } else {
-            Ignored
-        }
-    }
-}
-
 impl Button {
     pub fn new(label: String, focused: bool) -> Button {
         Button { label, focused }
+    }
+
+    pub(crate) fn focused(&self) -> bool {
+        self.focused
+    }
+
+    pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
+        if self.focused && input.code == KeyCode::Enter {
+            consumed!()
+        } else {
+            EventResult::Ignored
+        }
     }
 
     pub fn widget(&self) -> ButtonWidget {

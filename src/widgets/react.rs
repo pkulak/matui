@@ -8,9 +8,15 @@ use tui::style::{Color, Style};
 use tui::text::Text;
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
-use crate::widgets::Action::{Exit, RemoveReaction, SelectReaction, Typing};
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{get_margin, EventResult};
+use crate::widgets::get_margin;
+
+pub enum ReactResult {
+    SelectReaction(String),
+    RemoveReaction(String),
+    Exit,
+    Consumed,
+    Ignored,
+}
 
 pub struct React {
     reactions: Vec<Reaction>,
@@ -71,29 +77,29 @@ impl React {
         ReactWidget { parent: self }
     }
 
-    pub fn input(&mut self, input: &KeyEvent) -> EventResult {
+    pub fn key_event(&mut self, input: &KeyEvent) -> ReactResult {
         match input.code {
             KeyCode::Char('k') | KeyCode::Up => {
                 self.previous();
-                Consumed(Typing)
+                ReactResult::Consumed
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.next();
-                Consumed(Typing)
+                ReactResult::Consumed
             }
-            KeyCode::Esc => Consumed(Exit),
+            KeyCode::Esc => ReactResult::Exit,
             KeyCode::Enter => {
                 if let Some(reaction) = self.selected_reaction() {
                     if self.existing.contains(&reaction) {
-                        Consumed(RemoveReaction(reaction))
+                        ReactResult::RemoveReaction(reaction)
                     } else {
-                        Consumed(SelectReaction(reaction))
+                        ReactResult::SelectReaction(reaction)
                     }
                 } else {
-                    Consumed(Exit)
+                    ReactResult::Exit
                 }
             }
-            _ => Ignored,
+            _ => ReactResult::Ignored,
         }
     }
 

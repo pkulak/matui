@@ -1,12 +1,11 @@
-use crate::app::App;
+use crate::app::{App, Popup};
 use crate::matrix::matrix::format_emojis;
-use crate::widgets::confirm::{Confirm, ConfirmResult};
+use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
-use crate::widgets::Action::{self, ButtonYes, Exit, SelectRoom};
-use crate::widgets::EventResult::Consumed;
+use crate::widgets::EventResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::event::EventHandler;
@@ -48,19 +47,16 @@ pub struct Batch {
 pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
     match event {
         MatuiEvent::Error(msg) => {
-            app.error = Some(Error::new(msg));
-            app.progress = None;
+            app.set_popup(Popup::Error(Error::new(msg)));
         }
         MatuiEvent::LoginRequired => {
-            app.signin = Some(Signin::default());
+            app.set_popup(Popup::Signin(Signin::default()));
         }
         MatuiEvent::LoginStarted => {
-            app.error = None;
-            app.progress = Some(Progress::new("Logging in"));
+            app.set_popup(Popup::Progress(Progress::new("Logging in")));
         }
         MatuiEvent::LoginComplete => {
-            app.error = None;
-            app.progress = None;
+            app.popup = None;
         }
 
         // Let the chat update when we learn about room membership
@@ -69,20 +65,19 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.room_members_event(room, members);
             }
         }
-        MatuiEvent::ProgressStarted(msg) => app.progress = Some(Progress::new(&msg)),
-        MatuiEvent::ProgressComplete => app.progress = None,
+        MatuiEvent::ProgressStarted(msg) => app.set_popup(Popup::Progress(Progress::new(&msg))),
+        MatuiEvent::ProgressComplete => app.popup = None,
         MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::SyncStarted(st) => {
-            app.error = None;
             match st {
-                SyncType::Initial => app.progress = Some(Progress::new("Performing initial sync.")),
-                SyncType::Latest => app.progress = Some(Progress::new("Syncing")),
+                SyncType::Initial => {
+                    app.set_popup(Popup::Progress(Progress::new("Performing initial sync.")))
+                }
+                SyncType::Latest => app.set_popup(Popup::Progress(Progress::new("Syncing"))),
             };
         }
         MatuiEvent::SyncComplete => {
-            app.error = None;
-            app.progress = None;
-            app.signin = None;
+            app.popup = None;
 
             // now we can sync forever
             app.matrix.sync();
@@ -111,20 +106,20 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
             app.sas = Some(sas);
-            app.confirm = Some(Confirm::new(
+
+            app.set_popup(Popup::Confirm(Confirm::new(
                 "Verify".to_string(),
                 format!(
                     "Do these emojis match your other session?\n\n{}",
                     format_emojis(emoji)
                 ),
                 "Yes".to_string(),
-                ConfirmResult::VerificationConfirm,
                 "No".to_string(),
-                ConfirmResult::VerificationCancel,
-            ));
+                ConfirmBehavior::Verification,
+            )));
         }
         MatuiEvent::VerificationCompleted => {
-            app.progress = None;
+            app.popup = None;
             app.sas = None;
         }
     }
@@ -144,93 +139,52 @@ pub fn handle_key_event(
     // consider any key event also a sign of "focus"
     handle_focus_event(app);
 
-    // hide an error message on any key event
-    if app.error.is_some() {
-        app.error = None;
+    // give the popup first crack at the event
+    let result = if let Some(w) = &mut app.popup {
+        w.key_event(&key_event)
+    } else {
+        EventResult::Ignored
+    };
+
+    if let EventResult::Consumed(f) = result {
+        f(app);
         return Ok(());
     }
 
-    if let Some(w) = &mut app.signin {
-        if let Consumed(ButtonYes) = w.input(&key_event) {
-            app.matrix
-                .login(w.id.value().as_str(), w.password.value().as_str());
+    // we own a few key events
+    match key_event.code {
+        KeyCode::Char(' ') => {
+            let current = app.chat.as_ref().map(|c| c.room());
+
+            app.set_popup(Popup::Rooms(Rooms::new(
+                app.matrix.clone(),
+                current.clone(),
+            )));
+
             return Ok(());
         }
-    }
-
-    if let Some(w) = &mut app.rooms {
-        match w.input(&key_event) {
-            Consumed(SelectRoom(joined)) => {
-                app.rooms = None;
-                app.select_room(joined);
-                return Ok(());
-            }
-            Consumed(Exit) => {
-                app.rooms = None;
-                return Ok(());
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(w) = &mut app.confirm {
-        match w.input(&key_event) {
-            Consumed(Action::ConfirmResult(ConfirmResult::Cancel)) | Consumed(Exit) => {
-                app.confirm = None;
-                return Ok(());
-            }
-            Consumed(Action::ConfirmResult(ConfirmResult::RedactEvent(room, id))) => {
-                app.confirm = None;
-                app.matrix.redact_event(room, id);
-                return Ok(());
-            }
-            Consumed(Action::ConfirmResult(ConfirmResult::VerificationConfirm))
-                if app.sas.is_some() =>
-            {
-                app.matrix.confirm_verification(app.sas.clone().unwrap());
-                app.confirm = None;
-                app.progress = Some(Progress::new("Waiting for your other device to confirm."));
-                return Ok(());
-            }
-            Consumed(Action::ConfirmResult(ConfirmResult::VerificationCancel))
-                if app.sas.is_some() =>
-            {
-                app.matrix.mismatched_verification(app.sas.clone().unwrap());
-                app.confirm = None;
-                return Ok(());
-            }
-            _ => {}
-        }
-    }
-
-    // there's probably a more elegant way to do this...
-    if app.signin.is_none() && app.rooms.is_none() && app.confirm.is_none() && app.error.is_none() {
-        if key_event.code == KeyCode::Char('q') {
+        KeyCode::Char('q') => {
             app.running = false;
             return Ok(());
         }
+        _ => {}
+    }
 
-        if app.progress.is_none() {
-            if let Some(chat) = &mut app.chat {
-                match chat.input(handler, &key_event) {
-                    Err(err) => {
-                        app.error = Some(Error::new(err.to_string()));
-                        return Ok(());
-                    }
-                    Ok(Consumed(Action::ShowConfirmation(confirm))) => {
-                        app.confirm = Some(confirm);
-                        return Ok(());
-                    }
-                    Ok(Consumed(_)) => return Ok(()),
-                    _ => {}
-                }
-            }
-
-            if let KeyCode::Char(' ') = key_event.code {
-                let current = &app.chat.as_ref().map(|c| c.room());
-                app.rooms = Some(Rooms::new(app.matrix.clone(), current.clone()));
+    // and now pass it on to the chat.
+    let result = if let Some(w) = &mut app.chat {
+        match w.key_event(&key_event, handler) {
+            Ok(r) => r,
+            Err(err) => {
+                app.set_popup(Popup::Error(Error::new(err.to_string())));
+                return Ok(());
             }
         }
+    } else {
+        EventResult::Ignored
+    };
+
+    if let EventResult::Consumed(f) = result {
+        f(app);
     }
 
     Ok(())

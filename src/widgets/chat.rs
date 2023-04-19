@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{App, Popup};
 use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
@@ -7,9 +7,10 @@ use crate::settings::is_muted;
 use crate::spawn::{get_file_path, get_text};
 use crate::widgets::message::{Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
+use crate::widgets::react::ReactResult;
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
-use crate::{pretty_list, truncate, KeyCombo};
+use crate::{consumed, pretty_list, truncate, KeyCombo};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
@@ -32,12 +33,11 @@ use tui::widgets::{
     Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
 };
 
-use super::confirm::{Confirm, ConfirmResult};
-use super::Action;
+use super::confirm::{Confirm, ConfirmBehavior};
 
 pub struct Chat {
     matrix: Matrix,
-    pub room: DecoratedRoom,
+    room: DecoratedRoom,
     events: SortedVec<OrderedEvent>,
     messages: Vec<Message>,
     read_to: Option<OwnedEventId>,
@@ -68,6 +68,259 @@ impl Chat {
             fetching: Cell::new(true),
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
+        }
+    }
+
+    pub fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.widget().render(area, buf);
+    }
+
+    pub fn widget(&self) -> ChatWidget {
+        ChatWidget { chat: self }
+    }
+
+    pub fn key_event(
+        &mut self,
+        input: &KeyEvent,
+        handler: &EventHandler,
+    ) -> anyhow::Result<EventResult> {
+        // give our reaction window first dibs
+        if let Some(react) = &mut self.react {
+            match react.key_event(input) {
+                ReactResult::Exit => {
+                    self.react = None;
+                    return Ok(consumed!());
+                }
+                ReactResult::SelectReaction(reaction) => {
+                    self.react = None;
+
+                    if let Some(message) = self.selected_message() {
+                        self.matrix
+                            .send_reaction(self.room(), message.id.clone(), reaction)
+                    }
+
+                    return Ok(consumed!());
+                }
+                ReactResult::RemoveReaction(reaction) => {
+                    self.react = None;
+
+                    if let Some(event) = self.my_selected_reaction_event(reaction) {
+                        self.matrix.redact_event(self.room(), event.id)
+                    }
+
+                    return Ok(consumed!());
+                }
+                ReactResult::Consumed => return Ok(consumed!()),
+                ReactResult::Ignored => {}
+            }
+        }
+
+        // then look for key combos
+        if let KeyCode::Char(c) = input.code {
+            if self.delete_combo.record(c) {
+                let message = match self.selected_message() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                let preview = truncate(message.display().to_string(), 16);
+                let warning = format!("Are you sure you want to delete \"{}\"", preview);
+
+                let confirm = Confirm::new(
+                    "Delete Message".to_string(),
+                    warning,
+                    "Yes".to_string(),
+                    "No".to_string(),
+                    ConfirmBehavior::DeleteMessage(self.room().clone(), message.id.clone()),
+                );
+
+                return Ok(Consumed(Box::new(|app| {
+                    app.set_popup(Popup::Confirm(confirm))
+                })));
+            }
+        }
+
+        match input.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.previous();
+                Ok(consumed!())
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.next();
+                self.try_fetch_previous();
+                Ok(consumed!())
+            }
+            KeyCode::Enter => {
+                if let Some(message) = &self.selected_message() {
+                    message.open(self.matrix.clone())
+                }
+                Ok(consumed!())
+            }
+            KeyCode::Char('c') => {
+                let message = match self.selected_message() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                if matches!(message.body, Text(_)) {
+                    handler.park();
+                    let result = get_text(Some(message.display()));
+                    handler.unpark();
+
+                    // make sure we redraw the whole app when we come back
+                    App::get_sender().send(Event::Redraw)?;
+
+                    if let Ok(edit) = result {
+                        if let Some(edit) = edit {
+                            self.matrix
+                                .replace_event(self.room(), message.id.clone(), edit);
+
+                            return Ok(consumed!());
+                        } else {
+                            bail!("Ignoring blank message.")
+                        }
+                    } else {
+                        bail!("Couldn't read from editor.")
+                    }
+                }
+
+                Ok(consumed!())
+            }
+            KeyCode::Char('i') => {
+                // start a thread to hammer out typing notifications
+                let matrix = self.matrix.clone();
+                let room = self.room();
+                let (send, recv) = channel();
+
+                thread::spawn(move || {
+                    while let Err(TryRecvError::Empty) = recv.try_recv() {
+                        matrix.typing_notification(room.clone(), true);
+                        thread::sleep(Duration::from_millis(1000));
+                    }
+                });
+
+                handler.park();
+                let result = get_text(None);
+                handler.unpark();
+
+                // stop typing
+                send.send(())?;
+                self.matrix.typing_notification(self.room(), false);
+
+                App::get_sender().send(Event::Redraw)?;
+
+                if let Ok(input) = result {
+                    if let Some(input) = input {
+                        self.matrix.send_text_message(self.room(), input);
+                        Ok(consumed!())
+                    } else {
+                        bail!("Ignoring blank message.")
+                    }
+                } else {
+                    bail!("Couldn't read from editor.")
+                }
+            }
+            KeyCode::Char('v') => {
+                let message = match self.selected_message() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                handler.park();
+                get_text(Some(&message.display_full()))?;
+                handler.unpark();
+
+                App::get_sender().send(Event::Redraw)?;
+                Ok(consumed!())
+            }
+            KeyCode::Char('V') => {
+                handler.park();
+                get_text(Some(&self.display_full()))?;
+                handler.unpark();
+
+                App::get_sender().send(Event::Redraw)?;
+                Ok(consumed!())
+            }
+            KeyCode::Char('r') => {
+                self.react = Some(React::new(
+                    self.selected_reactions()
+                        .into_iter()
+                        .map(|r| r.body)
+                        .collect(),
+                    self.my_selected_reactions()
+                        .into_iter()
+                        .map(|r| r.body)
+                        .collect(),
+                ));
+                Ok(consumed!())
+            }
+            KeyCode::Char('u') => {
+                let path = get_file_path()?;
+
+                App::get_sender().send(Event::Redraw)?;
+
+                if path.is_none() {
+                    return Ok(EventResult::Ignored);
+                }
+
+                self.matrix.send_attachement(self.room(), path.unwrap());
+
+                Ok(consumed!())
+            }
+            _ => Ok(EventResult::Ignored),
+        }
+    }
+
+    pub fn focus_event(&mut self) {
+        self.focus = true;
+        self.set_fully_read();
+    }
+
+    pub fn blur_event(&mut self) {
+        self.focus = false;
+    }
+
+    pub fn timeline_event(&mut self, event: AnyTimelineEvent) {
+        if event.room_id() != self.room.room_id() {
+            return;
+        }
+
+        self.events.push(OrderedEvent::new(event));
+        self.dedupe_events();
+        self.messages = make_message_list(&self.events, &self.members);
+        self.set_fully_read();
+    }
+
+    pub fn batch_event(&mut self, batch: Batch) {
+        if batch.room.room_id() != self.room.room_id() {
+            return;
+        }
+
+        self.next_cursor = batch.cursor;
+        let previous_count = self.messages.len();
+
+        for event in batch.events {
+            self.events.push(OrderedEvent::new(event));
+        }
+
+        self.dedupe_events();
+
+        let reset = self.messages.is_empty();
+
+        self.messages = make_message_list(&self.events, &self.members);
+        self.fetching.set(false);
+        self.set_fully_read();
+
+        if reset {
+            let mut state = self.list_state.take();
+            state.select(Some(0));
+            self.list_state.set(state);
+        }
+
+        if self.messages.len() > previous_count {
+            self.try_fetch_previous();
+        } else {
+            info!("refusing to fetch more messages without making progress");
         }
     }
 
@@ -131,247 +384,6 @@ impl Chat {
         names.dedup();
 
         pretty_list(names.into_iter().take(10).collect())
-    }
-
-    pub fn input(
-        &mut self,
-        handler: &EventHandler,
-        input: &KeyEvent,
-    ) -> anyhow::Result<EventResult> {
-        // give our reaction window first dibs
-        if let Some(react) = &mut self.react {
-            match react.input(input) {
-                Consumed(Action::Exit) => {
-                    self.react = None;
-                    return Ok(Consumed(Action::Typing));
-                }
-                Consumed(Action::SelectReaction(reaction)) => {
-                    self.react = None;
-
-                    if let Some(message) = self.selected_message() {
-                        self.matrix
-                            .send_reaction(self.room(), message.id.clone(), reaction)
-                    }
-                    return Ok(Consumed(Action::Typing));
-                }
-                Consumed(Action::RemoveReaction(reaction)) => {
-                    self.react = None;
-
-                    if let Some(event) = self.my_selected_reaction_event(reaction) {
-                        self.matrix.redact_event(self.room(), event.id)
-                    }
-                }
-                Consumed(_) => return Ok(Consumed(Action::Typing)),
-                _ => {}
-            }
-        }
-
-        // then look for key combos
-        if let KeyCode::Char(c) = input.code {
-            if self.delete_combo.record(c) {
-                let message = match self.selected_message() {
-                    Some(m) => m,
-                    None => return Ok(EventResult::Ignored),
-                };
-
-                let preview = truncate(message.display().to_string(), 16);
-                let warning = format!("Are you sure you want to delete \"{}\"", preview);
-
-                let confirm = Confirm::new(
-                    "Delete Message".to_string(),
-                    warning,
-                    "Yes".to_string(),
-                    ConfirmResult::RedactEvent(self.room(), message.id.clone()),
-                    "No".to_string(),
-                    ConfirmResult::Cancel,
-                );
-
-                return Ok(Consumed(Action::ShowConfirmation(confirm)));
-            }
-        }
-
-        match input.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.previous();
-                Ok(Consumed(Action::Typing))
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.next();
-                self.try_fetch_previous();
-                Ok(Consumed(Action::Typing))
-            }
-            KeyCode::Enter => {
-                if let Some(message) = &self.selected_message() {
-                    message.open(self.matrix.clone())
-                }
-                Ok(Consumed(Action::Typing))
-            }
-            KeyCode::Char('c') => {
-                let message = match self.selected_message() {
-                    Some(m) => m,
-                    None => return Ok(EventResult::Ignored),
-                };
-
-                if matches!(message.body, Text(_)) {
-                    handler.park();
-                    let result = get_text(Some(message.display()));
-                    handler.unpark();
-
-                    // make sure we redraw the whole app when we come back
-                    App::get_sender().send(Event::Redraw)?;
-
-                    if let Ok(edit) = result {
-                        if let Some(edit) = edit {
-                            self.matrix
-                                .replace_event(self.room(), message.id.clone(), edit);
-
-                            return Ok(Consumed(Action::Typing));
-                        } else {
-                            bail!("Ignoring blank message.")
-                        }
-                    } else {
-                        bail!("Couldn't read from editor.")
-                    }
-                }
-
-                Ok(Consumed(Action::Typing))
-            }
-            KeyCode::Char('i') => {
-                // start a thread to hammer out typing notifications
-                let matrix = self.matrix.clone();
-                let room = self.room();
-                let (send, recv) = channel();
-
-                thread::spawn(move || {
-                    while let Err(TryRecvError::Empty) = recv.try_recv() {
-                        matrix.typing_notification(room.clone(), true);
-                        thread::sleep(Duration::from_millis(1000));
-                    }
-                });
-
-                handler.park();
-                let result = get_text(None);
-                handler.unpark();
-
-                // stop typing
-                send.send(())?;
-                self.matrix.typing_notification(self.room(), false);
-
-                App::get_sender().send(Event::Redraw)?;
-
-                if let Ok(input) = result {
-                    if let Some(input) = input {
-                        self.matrix.send_text_message(self.room(), input);
-                        Ok(Consumed(Action::Typing))
-                    } else {
-                        bail!("Ignoring blank message.")
-                    }
-                } else {
-                    bail!("Couldn't read from editor.")
-                }
-            }
-            KeyCode::Char('v') => {
-                let message = match self.selected_message() {
-                    Some(m) => m,
-                    None => return Ok(EventResult::Ignored),
-                };
-
-                handler.park();
-                get_text(Some(&message.display_full()))?;
-                handler.unpark();
-
-                App::get_sender().send(Event::Redraw)?;
-                Ok(EventResult::Consumed(Action::Typing))
-            }
-            KeyCode::Char('V') => {
-                handler.park();
-                get_text(Some(&self.display_full()))?;
-                handler.unpark();
-
-                App::get_sender().send(Event::Redraw)?;
-                Ok(EventResult::Consumed(Action::Typing))
-            }
-            KeyCode::Char('r') => {
-                self.react = Some(React::new(
-                    self.selected_reactions()
-                        .into_iter()
-                        .map(|r| r.body)
-                        .collect(),
-                    self.my_selected_reactions()
-                        .into_iter()
-                        .map(|r| r.body)
-                        .collect(),
-                ));
-                Ok(Consumed(Action::Typing))
-            }
-            KeyCode::Char('u') => {
-                let path = get_file_path()?;
-
-                App::get_sender().send(Event::Redraw)?;
-
-                if path.is_none() {
-                    return Ok(EventResult::Ignored);
-                }
-
-                self.matrix.send_attachement(self.room(), path.unwrap());
-
-                Ok(Consumed(Action::Typing))
-            }
-            _ => Ok(EventResult::Ignored),
-        }
-    }
-
-    pub fn focus_event(&mut self) {
-        self.focus = true;
-        self.set_fully_read();
-    }
-
-    pub fn blur_event(&mut self) {
-        self.focus = false;
-    }
-
-    pub fn timeline_event(&mut self, event: AnyTimelineEvent) {
-        if event.room_id() != self.room.room_id() {
-            return;
-        }
-
-        self.events.push(OrderedEvent::new(event));
-        self.dedupe_events();
-        self.messages = make_message_list(&self.events, &self.members);
-        self.set_fully_read();
-    }
-
-    pub fn batch_event(&mut self, batch: Batch) {
-        if batch.room.room_id() != self.room.room_id() {
-            return;
-        }
-
-        self.next_cursor = batch.cursor;
-        let previous_count = self.messages.len();
-
-        for event in batch.events {
-            self.events.push(OrderedEvent::new(event));
-        }
-
-        self.dedupe_events();
-
-        let reset = self.messages.is_empty();
-
-        self.messages = make_message_list(&self.events, &self.members);
-        self.fetching.set(false);
-        self.set_fully_read();
-
-        if reset {
-            let mut state = self.list_state.take();
-            state.select(Some(0));
-            self.list_state.set(state);
-        }
-
-        if self.messages.len() > previous_count {
-            self.try_fetch_previous();
-        } else {
-            info!("refusing to fetch more messages without making progress");
-        }
     }
 
     fn dedupe_events(&mut self) {
@@ -500,10 +512,6 @@ impl Chat {
         }
 
         None
-    }
-
-    pub fn widget(&self) -> ChatWidget {
-        ChatWidget { chat: self }
     }
 }
 

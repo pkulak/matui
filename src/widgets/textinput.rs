@@ -1,6 +1,6 @@
-use crate::widgets::Action::Typing;
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{EventResult, Focusable, KeyEventing};
+use crate::consumed;
+use crate::widgets::EventResult::Ignored;
+use crate::widgets::{EventResult, Focusable};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::cell::Cell;
 use tui::buffer::Buffer;
@@ -33,38 +33,6 @@ impl Focusable for &mut TextInput {
     }
 }
 
-impl KeyEventing for &mut TextInput {
-    fn input(&mut self, input: &KeyEvent) -> EventResult {
-        if !self.focused {
-            return Ignored;
-        }
-
-        if input.modifiers != KeyModifiers::SHIFT && input.modifiers != KeyModifiers::NONE {
-            return Ignored;
-        }
-
-        match input.code {
-            KeyCode::Char(c) => {
-                self.append_char(c);
-                Consumed(Typing)
-            }
-            KeyCode::Backspace => {
-                self.backspace();
-                Consumed(Typing)
-            }
-            KeyCode::Left => {
-                self.move_left();
-                Consumed(Typing)
-            }
-            KeyCode::Right => {
-                self.move_right();
-                Consumed(Typing)
-            }
-            _ => Ignored,
-        }
-    }
-}
-
 impl TextInput {
     pub fn new(title: String, focused: bool, password: bool) -> TextInput {
         Self {
@@ -78,12 +46,38 @@ impl TextInput {
     }
 
     pub fn widget(&self) -> TextInputWidget {
-        TextInputWidget {
-            textinput: self,
-            left: &self.left,
-        }
+        TextInputWidget { textinput: self }
     }
 
+    pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
+        if !self.focused {
+            return Ignored;
+        }
+
+        if input.modifiers != KeyModifiers::SHIFT && input.modifiers != KeyModifiers::NONE {
+            return Ignored;
+        }
+
+        match input.code {
+            KeyCode::Char(c) => {
+                self.append_char(c);
+                consumed!()
+            }
+            KeyCode::Backspace => {
+                self.backspace();
+                consumed!()
+            }
+            KeyCode::Left => {
+                self.move_left();
+                consumed!()
+            }
+            KeyCode::Right => {
+                self.move_right();
+                consumed!()
+            }
+            _ => Ignored,
+        }
+    }
     pub fn value(&self) -> String {
         self.value.clone()
     }
@@ -152,16 +146,15 @@ impl TextInput {
 
 pub struct TextInputWidget<'a> {
     textinput: &'a TextInput,
-    left: &'a Cell<usize>,
 }
 
 impl TextInputWidget<'_> {
     fn set_left(&self, left: usize) {
-        self.left.replace(left);
+        self.textinput.left.replace(left);
     }
 
     fn adjust_window(&self, size: usize) {
-        let left = self.left.get();
+        let left = self.textinput.left.get();
 
         // we fit entirely
         if self.textinput.value.len() <= size {
@@ -182,7 +175,7 @@ impl TextInputWidget<'_> {
     }
 
     fn adjusted_value(&self) -> String {
-        let left = self.left.get();
+        let left = self.textinput.left.get();
         let value = self.textinput.display_value();
 
         if left == 0 {
@@ -229,30 +222,29 @@ mod tests {
     use tui::widgets::Widget;
 
     use crate::widgets::textinput::TextInput;
-    use crate::widgets::KeyEventing;
 
     #[test]
     fn it_accepts_input() {
-        let mut input = &mut TextInput::new("Test".to_string(), true, false);
+        let mut input = TextInput::new("Test".to_string(), true, false);
 
         // type out a string
         for c in "Hello World".chars() {
-            input.input(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
 
         assert_eq!(input.value(), "Hello World");
 
         // edit it
         for _ in 0..6 {
-            input.input(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+            input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         }
 
         for _ in 0..5 {
-            input.input(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+            input.key_event(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         }
 
         for c in "Goodbye".chars() {
-            input.input(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
 
         assert_eq!(input.value(), "Goodbye World");
@@ -263,7 +255,7 @@ mod tests {
         let area = Rect::new(0, 0, 10, 3);
         let mut buf = Buffer::empty(area);
 
-        let mut input = &mut TextInput::new("Test".to_string(), true, false);
+        let mut input = TextInput::new("Test".to_string(), true, false);
 
         // do an initial render
         input.widget().render(area, &mut buf);
@@ -272,7 +264,7 @@ mod tests {
 
         // type out a long string
         for c in "Hello, world, this is me typing some things.".chars() {
-            input.input(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
 
         input.widget().render(area, &mut buf);
@@ -280,7 +272,7 @@ mod tests {
 
         // arrow backwards a bit
         for _ in 0..3 {
-            input.input(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+            input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         }
 
         let mut buf = Buffer::empty(area);
@@ -288,7 +280,7 @@ mod tests {
         assert_eq!(get_line(&buf, 1), "│thin█s. │");
 
         // delete
-        input.input(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        input.key_event(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
 
         input.widget().render(area, &mut buf);
         assert_eq!(get_line(&buf, 1), "│ thi█s. │");
