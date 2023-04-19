@@ -189,6 +189,7 @@ impl Notify {
 
         if let Err(e) = Notify::write_image_to_file(avatar, &path) {
             error!("could not write image: {}", e);
+            return None;
         }
 
         return Some(path);
@@ -208,6 +209,7 @@ impl Notify {
 
         if let Err(e) = Notify::write_image_to_file(avatar, &path) {
             error!("could not write image: {}", e);
+            return None;
         }
 
         return Some(path);

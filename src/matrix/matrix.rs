@@ -257,13 +257,6 @@ impl Matrix {
         self.room_cache.get_rooms()
     }
 
-    pub fn refresh_room_cache(&self) {
-        let client = self.client();
-        let cache = self.room_cache.clone();
-
-        self.rt.spawn(async move { cache.populate(client).await });
-    }
-
     pub fn fetch_messages(&self, room: Joined, cursor: Option<String>) {
         self.rt.spawn(async move {
             // fetch the actual messages

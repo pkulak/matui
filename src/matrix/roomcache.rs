@@ -6,6 +6,7 @@ use matrix_sdk::{Client, DisplayName};
 use ruma::api::Direction;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::room::message::TextMessageEventContent;
+use ruma::events::AnyMessageLikeEvent::RoomEncrypted;
 use ruma::events::AnyMessageLikeEvent::RoomMessage;
 use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
@@ -136,8 +137,10 @@ impl DecoratedRoom {
                 bail!("no events for room")
             }
 
-            for event in messages {
-                if let Ok(MessageLike(RoomMessage(Original(c)))) = event.event.deserialize() {
+            for e in &messages {
+                let deserialized = e.event.deserialize();
+
+                if let Ok(MessageLike(RoomMessage(Original(c)))) = deserialized {
                     let body = match c.content.msgtype {
                         Text(TextMessageEventContent { body, .. }) => body,
                         _ => "".to_string(),
@@ -150,6 +153,19 @@ impl DecoratedRoom {
                         name,
                         visited: false,
                         last_message: Some(body),
+                        last_sender: Some(member.name().to_string()),
+                        last_ts: Some(c.origin_server_ts),
+                    });
+                }
+
+                if let Ok(MessageLike(RoomEncrypted(Original(c)))) = deserialized {
+                    let member = room.get_member(&c.sender).await?.context("not a member")?;
+
+                    return Ok(DecoratedRoom {
+                        inner: room,
+                        name,
+                        visited: false,
+                        last_message: Some("encrypted".to_string()),
                         last_sender: Some(member.name().to_string()),
                         last_ts: Some(c.origin_server_ts),
                     });
