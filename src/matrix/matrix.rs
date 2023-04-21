@@ -34,7 +34,7 @@ use ruma::events::room::message::MessageType::Image;
 use ruma::events::room::message::MessageType::Video;
 use ruma::events::room::message::RoomMessageEventContent;
 use ruma::events::{AnySyncTimelineEvent, AnyTimelineEvent};
-use ruma::{OwnedEventId, UInt};
+use ruma::{OwnedEventId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
@@ -288,12 +288,12 @@ impl Matrix {
         });
     }
 
-    pub fn fetch_room_members(&self, room: Joined) {
+    pub fn fetch_room_member(&self, room: Joined, id: OwnedUserId) {
         self.rt.spawn(async move {
-            match room.members().await {
-                Ok(members) => Matrix::send(MatuiEvent::RoomMembers(room, members)),
-                Err(err) => error!("could not fetch room members: {}", err.to_string()),
-            };
+            match room.get_member(&id).await {
+                Ok(Some(member)) => Matrix::send(MatuiEvent::RoomMember(room, member)),
+                _ => todo!(),
+            }
         });
     }
 

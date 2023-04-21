@@ -19,7 +19,7 @@ use ruma::events::AnyMessageLikeEvent::RoomRedaction;
 use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
 use ruma::events::MessageLikeEvent;
-use ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId};
+use ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId};
 use tui::style::{Color, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::ListItem;
@@ -227,6 +227,20 @@ impl Message {
             // then look at the messages
             messages.retain(|m| &m.id != id);
         }
+    }
+
+    pub fn get_sender(event: &AnyTimelineEvent) -> Option<&OwnedUserId> {
+        // reactions
+        if let MessageLike(Rctn(MessageLikeEvent::Original(c))) = event {
+            return Some(&c.sender);
+        }
+
+        // messages
+        if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
+            return Some(&c.sender);
+        }
+
+        None
     }
 
     pub fn update_senders(&mut self, members: &Vec<RoomMember>) {

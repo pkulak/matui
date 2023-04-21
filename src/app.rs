@@ -114,7 +114,6 @@ impl App {
 
         if let Some(w) = &self.popup {
             w.render(frame);
-            return;
         }
     }
 }
@@ -142,10 +141,9 @@ impl Popup {
     }
 
     pub fn tick_event(&mut self, timestamp: usize) {
-        match self {
-            Popup::Progress(w) => w.tick_event(timestamp),
-            _ => {}
-        }
+        if let Popup::Progress(w) = self {
+            w.tick_event(timestamp);
+        };
     }
 
     pub fn render<B: Backend>(&self, frame: &mut Frame<'_, B>) {

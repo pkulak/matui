@@ -156,7 +156,7 @@ impl Notify {
         let mut path = dirs::cache_dir().expect("no cache directory");
         path.push("matui");
         fs::create_dir_all(&path).unwrap();
-        path.push(&key);
+        path.push(key);
         path
     }
 
@@ -192,7 +192,7 @@ impl Notify {
             return None;
         }
 
-        return Some(path);
+        Some(path)
     }
 
     async fn get_user_image(user: &RoomMember) -> Option<PathBuf> {
@@ -212,7 +212,7 @@ impl Notify {
             return None;
         }
 
-        return Some(path);
+        Some(path)
     }
 
     async fn get_image(room: Room, user: RoomMember) -> Option<PathBuf> {

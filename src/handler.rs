@@ -21,7 +21,7 @@ pub enum MatuiEvent {
     LoginStarted,
     ProgressStarted(String),
     ProgressComplete,
-    RoomMembers(Joined, Vec<RoomMember>),
+    RoomMember(Joined, RoomMember),
     RoomSelected(Joined),
     SyncComplete,
     SyncStarted(SyncType),
@@ -60,9 +60,9 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
 
         // Let the chat update when we learn about room membership
-        MatuiEvent::RoomMembers(room, members) => {
+        MatuiEvent::RoomMember(room, member) => {
             if let Some(c) = &mut app.chat {
-                c.room_members_event(room, members);
+                c.room_member_event(room, member);
             }
         }
         MatuiEvent::ProgressStarted(msg) => app.set_popup(Popup::Progress(Progress::new(&msg))),
@@ -156,10 +156,7 @@ pub fn handle_key_event(
         KeyCode::Char(' ') => {
             let current = app.chat.as_ref().map(|c| c.room());
 
-            app.set_popup(Popup::Rooms(Rooms::new(
-                app.matrix.clone(),
-                current.clone(),
-            )));
+            app.set_popup(Popup::Rooms(Rooms::new(app.matrix.clone(), current)));
 
             return Ok(());
         }

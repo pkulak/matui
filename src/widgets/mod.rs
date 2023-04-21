@@ -16,14 +16,14 @@ pub mod textinput;
 #[macro_export]
 macro_rules! consumed {
     () => {
-        crate::widgets::EventResult::Consumed(Box::new(|_| ()))
+        $crate::widgets::EventResult::Consumed(Box::new(|_| ()))
     };
 }
 
 #[macro_export]
 macro_rules! close {
     () => {
-        crate::widgets::EventResult::Consumed(Box::new(|app| app.close_popup()))
+        $crate::widgets::EventResult::Consumed(Box::new(|app| app.close_popup()))
     };
 }
 
@@ -31,7 +31,7 @@ pub enum EventResult {
     // The widget has chosen to "consume" the event, modifying its state
     // as needed. The function is the widget's opportunity to modify
     // the state of the App itself.
-    Consumed(Box<dyn FnOnce(&mut App) -> ()>),
+    Consumed(Box<dyn FnOnce(&mut App)>),
 
     /// The widget has chosen to "ignore" the event; it will be passed along
     /// to any other subling widgets.

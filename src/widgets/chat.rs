@@ -18,7 +18,7 @@ use matrix_sdk::room::{Joined, RoomMember};
 use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::AnyTimelineEvent;
-use ruma::OwnedEventId;
+use ruma::{OwnedEventId, OwnedUserId};
 use sorted_vec::SortedVec;
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -41,19 +41,20 @@ pub struct Chat {
     events: SortedVec<OrderedEvent>,
     messages: Vec<Message>,
     read_to: Option<OwnedEventId>,
-    members: Vec<RoomMember>,
     react: Option<React>,
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
     fetching: Cell<bool>,
     focus: bool,
     delete_combo: KeyCombo,
+
+    members: Vec<RoomMember>,
+    in_flight: Vec<OwnedUserId>,
 }
 
 impl Chat {
     pub fn new(matrix: Matrix, room: Joined) -> Self {
         matrix.fetch_messages(room.clone(), None);
-        matrix.fetch_room_members(room.clone());
 
         Self {
             matrix: matrix.clone(),
@@ -61,13 +62,14 @@ impl Chat {
             events: SortedVec::new(),
             messages: vec![],
             read_to: None,
-            members: vec![],
             react: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
             fetching: Cell::new(true),
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
+            members: vec![],
+            in_flight: vec![],
         }
     }
 
@@ -131,7 +133,7 @@ impl Chat {
                     warning,
                     "Yes".to_string(),
                     "No".to_string(),
-                    ConfirmBehavior::DeleteMessage(self.room().clone(), message.id.clone()),
+                    ConfirmBehavior::DeleteMessage(self.room(), message.id.clone()),
                 );
 
                 return Ok(Consumed(Box::new(|app| {
@@ -285,6 +287,7 @@ impl Chat {
             return;
         }
 
+        self.check_sender(&event);
         self.events.push(OrderedEvent::new(event));
         self.dedupe_events();
         self.messages = make_message_list(&self.events, &self.members);
@@ -300,6 +303,7 @@ impl Chat {
         let previous_count = self.messages.len();
 
         for event in batch.events {
+            self.check_sender(&event);
             self.events.push(OrderedEvent::new(event));
         }
 
@@ -321,6 +325,26 @@ impl Chat {
             self.try_fetch_previous();
         } else {
             info!("refusing to fetch more messages without making progress");
+        }
+    }
+
+    fn check_sender(&mut self, event: &AnyTimelineEvent) {
+        if let Some(user_id) = Message::get_sender(event) {
+            // if we already know about them
+            if self.members.iter().any(|m| m.user_id() == user_id) {
+                return;
+            }
+
+            // or the request is in flight
+            if self.in_flight.iter().any(|i| i == user_id) {
+                return;
+            }
+
+            // otherwise, record them as in flight and fetch
+            self.in_flight.push(user_id.clone());
+            self.matrix.fetch_room_member(self.room(), user_id.clone());
+
+            info!("fetching {}", user_id);
         }
     }
 
@@ -395,12 +419,13 @@ impl Chat {
         }
     }
 
-    pub fn room_members_event(&mut self, room: Joined, members: Vec<RoomMember>) {
+    pub fn room_member_event(&mut self, room: Joined, member: RoomMember) {
         if self.room.room_id() != room.room_id() {
             return;
         }
 
-        self.members = members;
+        self.in_flight.retain(|id| id != member.user_id());
+        self.members.push(member);
         self.messages = make_message_list(&self.events, &self.members);
     }
 
@@ -565,6 +590,7 @@ impl Widget for ChatWidget<'_> {
             return;
         }
 
+        buf.merge(&Buffer::empty(area));
         buf.set_style(area, Style::default().bg(Color::Black));
 
         let area = Layout::default()
