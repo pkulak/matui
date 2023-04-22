@@ -46,6 +46,7 @@ pub struct Chat {
     next_cursor: Option<String>,
     fetching: Cell<bool>,
     width: Cell<usize>,
+    total_list_items: Cell<usize>,
     focus: bool,
     delete_combo: KeyCombo,
 
@@ -68,6 +69,7 @@ impl Chat {
             next_cursor: None,
             fetching: Cell::new(true),
             width: Cell::new(80),
+            total_list_items: Cell::new(0),
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
             members: vec![],
@@ -437,10 +439,10 @@ impl Chat {
         }
 
         let state = self.list_state.take();
-        let buffer = self.messages.len() - state.selected().unwrap_or_default();
+        let buffer = self.total_list_items.get() - state.selected().unwrap_or_default();
         self.list_state.set(state);
 
-        if buffer < 25 {
+        if buffer < 100 {
             self.matrix
                 .fetch_messages(self.room(), self.next_cursor.clone());
             self.fetching.set(true);
@@ -453,8 +455,8 @@ impl Chat {
 
         let i = match state.selected() {
             Some(i) => {
-                if i >= &self.messages.len() - 1 {
-                    &self.messages.len() - 1
+                if i >= &self.total_list_items.get() - 1 {
+                    &self.total_list_items.get() - 1
                 } else {
                     i + 1
                 }
@@ -651,8 +653,9 @@ impl Widget for ChatWidget<'_> {
             .flat_map(|m| m.to_list_items((area.width - 2) as usize))
             .collect();
 
-        // make sure we save our last render width
+        // make sure we save our last render width and total items
         self.chat.width.set((area.width - 2).into());
+        self.chat.total_list_items.set(items.len());
 
         let mut list_state = self.chat.list_state.take();
 

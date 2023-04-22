@@ -6,9 +6,18 @@ possible and there's no mouse support (yet, at least).
 
 ![Matui](https://github.com/pkulak/matui/blob/main/screenshot.png?raw=true "The main chat window.")
 
+# Who should use this client?
+
+Anyone who wants a very simple terminal Matrix client, but runs another client
+somewhere else for the missing features. There are some very basic actions
+that aren't supported at the moment, like joining rooms and moderation. Also,
+many events are still not suported, like replies and threads (which are still
+shown, but not formatted very well). Also, this project is very early, so you
+need to be tolerant of some bugs.
+
 # Keybindings
 
-Modal UIs can be a bit overwhelming, but thankfully chat isn't terribly
+Modal UIs can be a bit overwhelming, but thankfully chat, isn't terribly
 complicated. Especially if you don't implement too many features.
 
 ## Chat Window
@@ -16,8 +25,8 @@ complicated. Especially if you don't implement too many features.
 | Key   | Description                                            |
 |-------|--------------------------------------------------------|
 | Space | Show the room switcher.                                |
-| j*    | Select one message down.                               | 
-| k*    | Select one message up.                                 | 
+| j*    | Select one line down.                                  | 
+| k*    | Select one line up.                                    | 
 | i     | Create a new message using the external editor.        | 
 | Enter | Open the selected message (images, videos, urls, etc). | 
 | c     | Edit the selected message in the external editor.      | 
@@ -26,14 +35,16 @@ complicated. Especially if you don't implement too many features.
 | V     | View the current room in the external editor.          | 
 | u     | Upload a file.                                         | 
 
-\* arrow keys are fine too
-
 ## Rooms Window
 
 | Key | Description                                     |
 |-----|-------------------------------------------------|
+| j*  | Select one room down.                           | 
+| k*  | Select one room up.                             | 
 | i   | Search for a room.                              | 
-| esc | Leave search mode.                              | 
+| esc | Leave search mode, or close the popup.          | 
+
+\* arrow keys are fine too
 
 # External Applications
 

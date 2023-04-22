@@ -259,6 +259,8 @@ impl Matrix {
 
     pub fn fetch_messages(&self, room: Joined, cursor: Option<String>) {
         self.rt.spawn(async move {
+            Matrix::send(ProgressStarted("Fetching more messages.".to_string(), 1000));
+
             // fetch the actual messages
             let mut options = MessagesOptions::new(Direction::Backward);
             options.limit = UInt::from(25_u16);
@@ -284,6 +286,7 @@ impl Matrix {
                 cursor: messages.end,
             };
 
+            Matrix::send(MatuiEvent::ProgressComplete);
             Matrix::send(MatuiEvent::TimelineBatch(batch));
         });
     }
