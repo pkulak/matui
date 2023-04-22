@@ -1,8 +1,9 @@
-use std::fs;
+use std::{fs, thread};
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{channel, Sender, TryRecvError};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
@@ -32,8 +33,11 @@ use ruma::events::reaction::ReactionEventContent;
 use ruma::events::relation::Annotation;
 use ruma::events::room::message::MessageType::Image;
 use ruma::events::room::message::MessageType::Video;
-use ruma::events::room::message::RoomMessageEventContent;
-use ruma::events::{AnySyncTimelineEvent, AnyTimelineEvent};
+use ruma::events::room::message::{ForwardThread, RoomMessageEventContent};
+use ruma::events::{
+    AnyMessageLikeEvent, AnySyncTimelineEvent, AnyTimelineEvent, MessageLikeEvent,
+    OriginalMessageLikeEvent,
+};
 use ruma::{OwnedEventId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
@@ -361,6 +365,29 @@ impl Matrix {
         });
     }
 
+    pub fn send_reply(&self, room: Joined, message: String, in_reply_to: OwnedEventId) {
+        self.rt.spawn(async move {
+            Matrix::send(ProgressStarted("Sending message.".to_string(), 500));
+
+            let in_reply_to = match Matrix::get_room_event(&room, &in_reply_to).await {
+                Some(e) => e,
+                None => {
+                    Matrix::send(Error("Could not find reply event.".to_string()));
+                    return;
+                }
+            };
+
+            let reply = RoomMessageEventContent::text_plain(message)
+                .make_reply_to(&in_reply_to, ForwardThread::Yes);
+
+            if let Err(err) = room.send(reply, None).await {
+                Matrix::send(Error(err.to_string()));
+            }
+
+            Matrix::send(ProgressComplete);
+        });
+    }
+
     pub fn send_attachements(&self, room: Joined, paths: Vec<PathBuf>) {
         let total = paths.len();
 
@@ -430,13 +457,45 @@ impl Matrix {
         });
     }
 
-    pub fn replace_event(&self, room: Joined, id: OwnedEventId, message: String) {
+    async fn get_room_event(
+        room: &Joined,
+        id: &OwnedEventId,
+    ) -> Option<OriginalMessageLikeEvent<RoomMessageEventContent>> {
+        match room.event(id).await {
+            Ok(event) => match event.event.deserialize().unwrap() {
+                AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomMessage(
+                    MessageLikeEvent::Original(c),
+                )) => Some(c),
+                _ => None,
+            },
+            Err(err) => {
+                error!("could not get in_reply_to event: {}", err);
+                None
+            }
+        }
+    }
+
+    pub fn replace_event(
+        &self,
+        room: Joined,
+        id: OwnedEventId,
+        message: String,
+        in_reply_to: Option<OwnedEventId>,
+    ) {
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Editing message.".to_string(), 500));
 
+            let reply_event = match in_reply_to {
+                Some(id) => Matrix::get_room_event(&room, &id).await,
+                None => None,
+            };
+
+            info!("reply event: {:?}", reply_event);
+
             if let Err(err) = room
                 .send(
-                    RoomMessageEventContent::text_plain(message).make_replacement(id, None),
+                    RoomMessageEventContent::text_plain(message)
+                        .make_replacement(id, reply_event.as_ref()),
                     None,
                 )
                 .await
@@ -498,6 +557,25 @@ impl Matrix {
                 error!("could not send typing notice: {}", e);
             }
         });
+    }
+
+    pub fn begin_typing(&self, room: Joined) -> Sender<()> {
+        let (send, recv) = channel();
+        let matrix = self.clone();
+
+        thread::spawn(move || {
+            while let Err(TryRecvError::Empty) = recv.try_recv() {
+                matrix.typing_notification(room.clone(), true);
+                thread::sleep(Duration::from_millis(1000));
+            }
+        });
+
+        send
+    }
+
+    pub fn end_typing(&self, room: Joined, send: Sender<()>) {
+        send.send(()).expect("could not stop thread");
+        self.typing_notification(room, false);
     }
 }
 

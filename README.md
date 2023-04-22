@@ -11,9 +11,9 @@ possible and there's no mouse support (yet, at least).
 Anyone who wants a very simple terminal Matrix client, but runs another client
 somewhere else for the missing features. There are some very basic actions
 that aren't supported at the moment, like joining rooms and moderation. Also,
-many events are still not suported, like replies and threads (which are still
-shown, but not formatted very well). Also, this project is very early, so you
-need to be tolerant of some bugs.
+many events are still not suported, like threads (which are still shown, but
+not formatted very well). Also, this project is very early, so you need to
+be tolerant of some bugs.
 
 # Installation
 
@@ -42,6 +42,7 @@ complicated. Especially if you don't implement too many features.
 | Enter | Open the selected message (images, videos, urls, etc). | 
 | c     | Edit the selected message in the external editor.      | 
 | r     | React to the selected message.                         | 
+| R     | Reply to the selected message.                         | 
 | v     | View the selected message in the external editor.      | 
 | V     | View the current room in the external editor.          | 
 | u     | Upload a file.                                         | 

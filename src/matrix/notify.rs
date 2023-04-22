@@ -48,7 +48,7 @@ impl Notify {
         client: Client,
         event: AnyTimelineEvent,
     ) -> anyhow::Result<()> {
-        if let Some(message) = Message::try_from(&event) {
+        if let Some(message) = Message::try_from(&event, false) {
             // don't send notifications for our own messages
             if message.sender == *client.user_id().unwrap() {
                 return Ok(());

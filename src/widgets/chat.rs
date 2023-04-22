@@ -23,9 +23,7 @@ use sorted_vec::SortedVec;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::ops::Deref;
-use std::sync::mpsc::{channel, TryRecvError};
-use std::thread;
-use std::time::Duration;
+
 use tui::buffer::Buffer;
 use tui::layout::{Alignment, Constraint, Corner, Direction, Layout, Rect};
 use tui::style::{Color, Style};
@@ -34,6 +32,7 @@ use tui::widgets::{
 };
 
 use super::confirm::{Confirm, ConfirmBehavior};
+use super::message::MergeResult;
 
 pub struct Chat {
     matrix: Matrix,
@@ -55,12 +54,17 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub fn new(matrix: Matrix, room: Joined) -> Self {
-        matrix.fetch_messages(room.clone(), None);
+    pub fn try_new(matrix: Matrix, room: Joined) -> Option<Self> {
+        let decorated_room = match matrix.wrap_room(&room) {
+            Some(r) => r,
+            None => return None,
+        };
 
-        Self {
-            matrix: matrix.clone(),
-            room: matrix.wrap_room(&room).unwrap(),
+        matrix.fetch_messages(room, None);
+
+        Some(Self {
+            matrix,
+            room: decorated_room,
             events: SortedVec::new(),
             messages: vec![],
             read_to: None,
@@ -74,7 +78,7 @@ impl Chat {
             delete_combo: KeyCombo::new(vec!['d', 'd']),
             members: vec![],
             in_flight: vec![],
-        }
+        })
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -100,7 +104,7 @@ impl Chat {
                 ReactResult::SelectReaction(reaction) => {
                     self.react = None;
 
-                    if let Some(message) = self.selected_message() {
+                    if let Some(message) = self.selected_reply() {
                         self.matrix
                             .send_reaction(self.room(), message.id.clone(), reaction)
                     }
@@ -124,7 +128,7 @@ impl Chat {
         // then look for key combos
         if let KeyCode::Char(c) = input.code {
             if self.delete_combo.record(c) {
-                let message = match self.selected_message() {
+                let message = match self.selected_reply() {
                     Some(m) => m,
                     None => return Ok(EventResult::Ignored),
                 };
@@ -157,20 +161,28 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Enter => {
-                if let Some(message) = &self.selected_message() {
+                if let Some(message) = &self.selected_reply() {
                     message.open(self.matrix.clone())
                 }
                 Ok(consumed!())
             }
             KeyCode::Char('c') => {
-                let message = match self.selected_message() {
+                let message = match self.selected_reply() {
                     Some(m) => m,
                     None => return Ok(EventResult::Ignored),
                 };
 
                 if matches!(message.body, Text(_)) {
                     handler.park();
-                    let result = get_text(Some(message.display()));
+
+                    let result = get_text(
+                        Some(message.display()),
+                        Some(&format!(
+                            "<!-- Edit your message above to change it in {}. -->",
+                            self.room.name
+                        )),
+                    );
+
                     handler.unpark();
 
                     // make sure we redraw the whole app when we come back
@@ -178,8 +190,12 @@ impl Chat {
 
                     if let Ok(edit) = result {
                         if let Some(edit) = edit {
-                            self.matrix
-                                .replace_event(self.room(), message.id.clone(), edit);
+                            self.matrix.replace_event(
+                                self.room(),
+                                message.id.clone(),
+                                edit,
+                                message.in_reply_to.clone(),
+                            );
 
                             return Ok(consumed!());
                         } else {
@@ -193,26 +209,19 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('i') => {
-                // start a thread to hammer out typing notifications
-                let matrix = self.matrix.clone();
-                let room = self.room();
-                let (send, recv) = channel();
-
-                thread::spawn(move || {
-                    while let Err(TryRecvError::Empty) = recv.try_recv() {
-                        matrix.typing_notification(room.clone(), true);
-                        thread::sleep(Duration::from_millis(1000));
-                    }
-                });
+                let send = self.matrix.begin_typing(self.room());
 
                 handler.park();
-                let result = get_text(None);
+                let result = get_text(
+                    None,
+                    Some(&format!(
+                        "<!-- Type a new message above to send to {}. -->",
+                        self.room.name
+                    )),
+                );
                 handler.unpark();
 
-                // stop typing
-                send.send(())?;
-                self.matrix.typing_notification(self.room(), false);
-
+                self.matrix.end_typing(self.room(), send);
                 App::get_sender().send(Event::Redraw)?;
 
                 if let Ok(input) = result {
@@ -226,14 +235,47 @@ impl Chat {
                     bail!("Couldn't read from editor.")
                 }
             }
+            KeyCode::Char('R') => {
+                let message = match self.selected_reply() {
+                    Some(m) => m,
+                    None => return Ok(consumed!()),
+                };
+
+                let wrap_options = textwrap::Options::new(60)
+                    .initial_indent("  ")
+                    .subsequent_indent("  ");
+
+                let body = textwrap::wrap(message.display(), &wrap_options).join("\n");
+
+                let send = self.matrix.begin_typing(self.room());
+
+                handler.park();
+                let result = get_text(None, Some(&REPLY_TEMPLATE.replace("{}", &body)));
+                handler.unpark();
+
+                self.matrix.end_typing(self.room(), send);
+                App::get_sender().send(Event::Redraw)?;
+
+                if let Ok(input) = result {
+                    if let Some(input) = input {
+                        self.matrix
+                            .send_reply(self.room(), input, message.id.clone());
+                        Ok(consumed!())
+                    } else {
+                        bail!("Ignoring blank message.")
+                    }
+                } else {
+                    bail!("Couldn't read from editor.")
+                }
+            }
             KeyCode::Char('v') => {
-                let message = match self.selected_message() {
+                let message = match self.selected_reply() {
                     Some(m) => m,
                     None => return Ok(EventResult::Ignored),
                 };
 
                 handler.park();
-                get_text(Some(&message.display_full()))?;
+                get_text(Some(&message.display_full()), None)?;
                 handler.unpark();
 
                 App::get_sender().send(Event::Redraw)?;
@@ -241,7 +283,7 @@ impl Chat {
             }
             KeyCode::Char('V') => {
                 handler.park();
-                get_text(Some(&self.display_full()))?;
+                get_text(Some(&self.display_full()), None)?;
                 handler.unpark();
 
                 App::get_sender().send(Event::Redraw)?;
@@ -453,7 +495,7 @@ impl Chat {
     fn next(&self) {
         let mut state = self.list_state.take();
 
-        let i = match state.selected() {
+        let mut i = match state.selected() {
             Some(i) => {
                 if i >= &self.total_list_items.get() - 1 {
                     &self.total_list_items.get() - 1
@@ -464,6 +506,10 @@ impl Chat {
             None => 0,
         };
 
+        if self.invalid_selection(i) {
+            i += 1;
+        }
+
         state.select(Some(i));
         self.list_state.set(state);
     }
@@ -471,7 +517,7 @@ impl Chat {
     fn previous(&self) {
         let mut state = self.list_state.take();
 
-        let i = match state.selected() {
+        let mut i = match state.selected() {
             Some(i) => {
                 if i == 0 {
                     0
@@ -482,12 +528,16 @@ impl Chat {
             None => 0,
         };
 
+        if self.invalid_selection(i) {
+            i -= 1;
+        }
+
         state.select(Some(i));
         self.list_state.set(state);
     }
 
-    // the message currently selected by the UI
-    fn selected_message(&self) -> Option<&Message> {
+    // the message (or reply) currently selected by the UI
+    fn selected_reply(&self) -> Option<&Message> {
         if self.messages.is_empty() {
             return None;
         }
@@ -496,23 +546,51 @@ impl Chat {
         let selected = state.selected().unwrap_or_default();
         self.list_state.set(state);
 
-        // create messages until we overrun the counter
+        // count message heights until we overrun the counter
         let mut counter = 0;
 
         for m in &self.messages {
-            counter += m.to_list_items(self.width.get()).len();
+            let flattened = m.flatten();
 
-            if counter > selected {
-                return Some(m);
+            for (index, message) in flattened.iter().rev().enumerate() {
+                counter += message.height(self.width.get(), index < flattened.len() - 1);
+
+                if counter > selected {
+                    return Some(message);
+                }
             }
         }
 
-        return self.messages.last();
+        // otherwise, return the last reply on the last message
+        if let Some(last) = self.messages.last() {
+            return last.flatten().last().copied();
+        }
+
+        None
+    }
+
+    // is the given selection in the middle of two messages?
+    fn invalid_selection(&self, selected: usize) -> bool {
+        let mut counter = 0;
+
+        for m in &self.messages {
+            let flattened = m.flatten();
+
+            for (index, message) in flattened.iter().rev().enumerate() {
+                counter += message.height(self.width.get(), index < flattened.len() - 1);
+
+                if counter > selected {
+                    return counter == selected + 1;
+                }
+            }
+        }
+
+        false
     }
 
     // the reactions on the currently selected message
     fn selected_reactions(&self) -> Vec<Reaction> {
-        match self.selected_message() {
+        match self.selected_reply() {
             Some(message) => message.reactions.clone(),
             None => vec![],
         }
@@ -615,6 +693,7 @@ impl Widget for ChatWidget<'_> {
 
         let splits = Layout::default()
             .direction(Direction::Vertical)
+            .vertical_margin(1)
             .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
             .split(area);
 
@@ -677,22 +756,21 @@ fn make_message_list(
     timeline: &SortedVec<OrderedEvent>,
     members: &Vec<RoomMember>,
 ) -> Vec<Message> {
+    // TODO: don't split these out
     let mut messages = vec![];
-    let mut modifiers = vec![];
 
     // split everything into either a starting message, or something that
     // modifies an existing message
     for event in timeline.iter() {
-        if let Some(message) = Message::try_from(event) {
+        if let Some(message) = Message::try_from(event, false) {
             messages.push(message);
-        } else {
-            modifiers.push(event);
+        } else if Message::merge_into_message_list(&mut messages, event, 0) == MergeResult::Missed {
+            // the event needed to be merge, but couldn't for some reason;
+            // force it into place, if possible
+            if let Some(message) = Message::try_from(event, true) {
+                messages.push(message);
+            }
         }
-    }
-
-    // now apply all the modifiers to the message list
-    for event in modifiers {
-        Message::merge_into_message_list(&mut messages, event)
     }
 
     // update senders to friendly names
@@ -709,3 +787,9 @@ fn make_message_list(
 
     messages
 }
+
+const REPLY_TEMPLATE: &str = "<!--
+  Replying to:
+
+{}
+-->";

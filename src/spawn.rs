@@ -21,12 +21,22 @@ pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
     Ok(path)
 }
 
-pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
+pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<Option<String>> {
     let editor = &var("EDITOR").unwrap_or("/usr/bin/vi".to_string());
     let mut tmpfile = Builder::new().suffix(".md").tempfile()?;
 
+    let mut to_write = "".to_string();
+
     if let Some(str) = existing {
-        std::fs::write(&tmpfile, str)?;
+        to_write = str.to_string();
+    }
+
+    if let Some(str) = suffix {
+        to_write = format!("{}\n\n{}\n", to_write, str);
+    }
+
+    if !to_write.trim().is_empty() {
+        std::fs::write(&tmpfile, to_write)?;
     }
 
     let mut command = Command::new(editor);
@@ -58,6 +68,10 @@ pub fn get_text(existing: Option<&str>) -> anyhow::Result<Option<String>> {
 
     let mut contents = String::new();
     tmpfile.read_to_string(&mut contents)?;
+
+    if let Some(str) = suffix {
+        contents = contents.replace(str, "");
+    }
 
     if contents.trim().is_empty() {
         return Ok(None);

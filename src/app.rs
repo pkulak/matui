@@ -1,4 +1,5 @@
 use crossterm::event::KeyEvent;
+use log::warn;
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::{Joined, Room};
 use once_cell::sync::OnceCell;
@@ -76,8 +77,15 @@ impl App {
             }
         }
 
-        let chat = Chat::new(self.matrix.clone(), room.clone());
-        self.chat = Some(chat);
+        let chat = Chat::try_new(self.matrix.clone(), room.clone());
+
+        if chat.is_none() {
+            // TODO: listen to room join events
+            warn!("could not switch to room");
+            return;
+        }
+
+        self.chat = Some(chat.unwrap());
         self.matrix.room_visit_event(Room::Joined(room));
     }
 
