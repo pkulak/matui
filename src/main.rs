@@ -9,8 +9,10 @@ use tui::backend::CrosstermBackend;
 use tui::Terminal;
 
 fn main() -> anyhow::Result<()> {
-    simple_logging::log_to_file("test.log", LevelFilter::Info)?;
-    log_panics::init();
+    if cfg!(debug_assertions) {
+        simple_logging::log_to_file("test.log", LevelFilter::Info)?;
+        log_panics::init();
+    }
 
     watch_settings_forever();
 
