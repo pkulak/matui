@@ -39,7 +39,7 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn display_body(body: &MessageType) -> &str {
+    fn display_body(body: &MessageType) -> &str {
         match body {
             Text(TextMessageEventContent { body, .. }) => body,
             Image(ImageMessageEventContent { body, .. }) => body,
@@ -49,7 +49,7 @@ impl Message {
     }
 
     pub fn display(&self) -> &str {
-        Message::display_body(&self.body)
+        Message::display_body(&self.body).trim()
     }
 
     pub fn display_full(&self) -> String {
@@ -266,8 +266,10 @@ impl Message {
         }
     }
 
-    pub fn to_list_item(&self, width: usize) -> ListItem {
+    pub fn to_list_items(&self, width: usize) -> Vec<ListItem> {
         use tui::text::Text;
+
+        let mut lines = vec![];
 
         // author
         let mut spans = vec![
@@ -280,19 +282,18 @@ impl Message {
             spans.push(Span::styled(" (edited)", Style::default().fg(Color::Red)))
         }
 
-        // message
-        let mut lines = Text::from(Spans::from(spans));
+        lines.push(Text::from(Spans::from(spans)));
 
         let wrapped = textwrap::wrap(self.display(), width);
         let message_overlap = wrapped.len() > 10;
 
         for l in wrapped.into_iter().take(10) {
-            lines.extend(Text::styled(l, self.style()))
+            lines.push(Text::styled(l.trim().to_string(), self.style()))
         }
 
         // overflow warning
         if message_overlap || self.reactions.len() > 5 {
-            lines.extend(Text::styled(
+            lines.push(Text::styled(
                 "* overflow: type \"v\" to view entire message",
                 Style::default().fg(Color::Red),
             ))
@@ -300,15 +301,20 @@ impl Message {
 
         // reactions
         for r in self.reactions.iter().take(5) {
-            lines.extend(Text::styled(
+            lines.push(Text::styled(
                 r.list_view(),
                 Style::default().fg(Color::DarkGray),
             ))
         }
 
-        lines.extend(Text::from(" ".to_string()));
+        lines
+            .last_mut()
+            .unwrap()
+            .extend(Text::from(" ".to_string()));
 
-        ListItem::new(lines)
+        let mut mapped: Vec<ListItem> = lines.into_iter().map(ListItem::new).collect();
+        mapped.reverse();
+        mapped
     }
 }
 

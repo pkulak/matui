@@ -45,6 +45,7 @@ pub struct Chat {
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
     fetching: Cell<bool>,
+    width: Cell<usize>,
     focus: bool,
     delete_combo: KeyCombo,
 
@@ -66,6 +67,7 @@ impl Chat {
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
             fetching: Cell::new(true),
+            width: Cell::new(80),
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
             members: vec![],
@@ -492,7 +494,18 @@ impl Chat {
         let selected = state.selected().unwrap_or_default();
         self.list_state.set(state);
 
-        self.messages.get(selected)
+        // create messages until we overrun the counter
+        let mut counter = 0;
+
+        for m in &self.messages {
+            counter += m.to_list_items(self.width.get()).len();
+
+            if counter > selected {
+                return Some(m);
+            }
+        }
+
+        return self.messages.last();
     }
 
     // the reactions on the currently selected message
@@ -590,7 +603,6 @@ impl Widget for ChatWidget<'_> {
             return;
         }
 
-        buf.merge(&Buffer::empty(area));
         buf.set_style(area, Style::default().bg(Color::Black));
 
         let area = Layout::default()
@@ -636,8 +648,11 @@ impl Widget for ChatWidget<'_> {
             .chat
             .messages
             .iter()
-            .map(|m| m.to_list_item((area.width - 2) as usize))
+            .flat_map(|m| m.to_list_items((area.width - 2) as usize))
             .collect();
+
+        // make sure we save our last render width
+        self.chat.width.set((area.width - 2).into());
 
         let mut list_state = self.chat.list_state.take();
 
