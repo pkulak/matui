@@ -15,6 +15,17 @@ many events are still not suported, like replies and threads (which are still
 shown, but not formatted very well). Also, this project is very early, so you
 need to be tolerant of some bugs.
 
+# Installation
+
+## Releases
+
+You can download the latest release, unpack it, and move `matui` to `/usr/bin`
+(or anywhere else you like).
+
+## Arch Linux
+
+Matui is packaged for the AUR: `paru -S matui`.
+
 # Keybindings
 
 Modal UIs can be a bit overwhelming, but thankfully chat, isn't terribly
