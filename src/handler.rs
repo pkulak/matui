@@ -19,7 +19,7 @@ pub enum MatuiEvent {
     LoginComplete,
     LoginRequired,
     LoginStarted,
-    ProgressStarted(String),
+    ProgressStarted(String, u64),
     ProgressComplete,
     RoomMember(Joined, RoomMember),
     RoomSelected(Joined),
@@ -53,7 +53,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.set_popup(Popup::Signin(Signin::default()));
         }
         MatuiEvent::LoginStarted => {
-            app.set_popup(Popup::Progress(Progress::new("Logging in")));
+            app.set_popup(Popup::Progress(Progress::new("Logging in", 0)));
         }
         MatuiEvent::LoginComplete => {
             app.popup = None;
@@ -65,15 +65,18 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.room_member_event(room, member);
             }
         }
-        MatuiEvent::ProgressStarted(msg) => app.set_popup(Popup::Progress(Progress::new(&msg))),
+        MatuiEvent::ProgressStarted(msg, delay) => {
+            app.set_popup(Popup::Progress(Progress::new(&msg, delay)))
+        }
         MatuiEvent::ProgressComplete => app.popup = None,
         MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::SyncStarted(st) => {
             match st {
-                SyncType::Initial => {
-                    app.set_popup(Popup::Progress(Progress::new("Performing initial sync.")))
-                }
-                SyncType::Latest => app.set_popup(Popup::Progress(Progress::new("Syncing"))),
+                SyncType::Initial => app.set_popup(Popup::Progress(Progress::new(
+                    "Performing initial sync.",
+                    0,
+                ))),
+                SyncType::Latest => app.set_popup(Popup::Progress(Progress::new("Syncing", 0))),
             };
         }
         MatuiEvent::SyncComplete => {

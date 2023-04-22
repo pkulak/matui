@@ -301,7 +301,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Downloading file.".to_string()));
+            Matrix::send(ProgressStarted("Downloading file.".to_string(), 250));
 
             let (content_type, request) = match message {
                 Image(content) => (
@@ -345,7 +345,7 @@ impl Matrix {
 
     pub fn send_text_message(&self, room: Joined, message: String) {
         self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Sending message.".to_string()));
+            Matrix::send(ProgressStarted("Sending message.".to_string(), 500));
 
             if let Err(err) = room
                 .send(RoomMessageEventContent::text_plain(message), None)
@@ -358,41 +358,48 @@ impl Matrix {
         });
     }
 
-    pub fn send_attachement(&self, room: Joined, path: PathBuf) {
-        let content_type = mime_from_path(&path);
-
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default()
-            .to_string();
+    pub fn send_attachements(&self, room: Joined, paths: Vec<PathBuf>) {
+        let total = paths.len();
 
         self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Uploading".to_string()));
+            for (i, path) in paths.into_iter().enumerate() {
+                Matrix::send(ProgressStarted(
+                    format!("Uploading {} of {}.", i + 1, total),
+                    0,
+                ));
 
-            let data = match fs::read(path.to_str().unwrap()) {
-                Ok(d) => d,
-                Err(err) => {
+                let content_type = mime_from_path(&path);
+
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    .to_string();
+
+                let data = match fs::read(path.to_str().unwrap()) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        Matrix::send(Error(err.to_string()));
+                        return;
+                    }
+                };
+
+                if let Err(err) = room
+                    .send_attachment(&name, &content_type, data, AttachmentConfig::new())
+                    .await
+                {
                     Matrix::send(Error(err.to_string()));
-                    return;
                 }
-            };
 
-            if let Err(err) = room
-                .send_attachment(&name, &content_type, data, AttachmentConfig::new())
-                .await
-            {
-                Matrix::send(Error(err.to_string()));
+                Matrix::send(ProgressComplete);
             }
-
-            Matrix::send(ProgressComplete);
         });
     }
 
     pub fn send_reaction(&self, room: Joined, event_id: OwnedEventId, key: String) {
         self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Sending reaction.".to_string()));
+            Matrix::send(ProgressStarted("Sending reaction.".to_string(), 500));
 
             if let Err(err) = room
                 .send(
@@ -410,7 +417,7 @@ impl Matrix {
 
     pub fn redact_event(&self, room: Joined, event_id: OwnedEventId) {
         self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Removing.".to_string()));
+            Matrix::send(ProgressStarted("Removing.".to_string(), 500));
 
             if let Err(err) = room.redact(&event_id, None, None).await {
                 Matrix::send(Error(err.to_string()));
@@ -422,7 +429,7 @@ impl Matrix {
 
     pub fn replace_event(&self, room: Joined, id: OwnedEventId, message: String) {
         self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Editing message.".to_string()));
+            Matrix::send(ProgressStarted("Editing message.".to_string(), 500));
 
             if let Err(err) = room
                 .send(

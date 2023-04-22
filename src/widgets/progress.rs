@@ -16,14 +16,16 @@ pub struct Progress {
     text: String,
     tail: String,
     created: Instant,
+    delay: u64,
 }
 
 impl Progress {
-    pub fn new(text: &str) -> Progress {
+    pub fn new(text: &str, delay: u64) -> Progress {
         Progress {
             text: text.to_string(),
             tail: "".to_string(),
             created: Instant::now(),
+            delay,
         }
     }
 
@@ -42,8 +44,8 @@ pub struct ProgressWidget<'a> {
 
 impl Widget for ProgressWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // don't even render until it's been half a second
-        if self.progress.created.elapsed() < Duration::from_millis(500) {
+        // don't render until it's been past the delay
+        if self.progress.created.elapsed() < Duration::from_millis(self.progress.delay) {
             return;
         }
 

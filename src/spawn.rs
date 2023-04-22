@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tempfile::Builder;
 
-pub fn get_file_path() -> anyhow::Result<Option<PathBuf>> {
+pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
     let home = dirs::home_dir().context("no home directory")?;
 
     let path = FileDialog::new()
         .set_location(home.as_path())
-        .show_open_single_file()?;
+        .show_open_multiple_file()?;
 
     Ok(path)
 }
