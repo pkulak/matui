@@ -28,7 +28,7 @@ Matui is packaged for the AUR: `paru -S matui`.
 
 # Keybindings
 
-Modal UIs can be a bit overwhelming, but thankfully chat, isn't terribly
+Modal UIs can be a bit overwhelming, but thankfully chat isn't terribly
 complicated. Especially if you don't implement too many features.
 
 ## Chat Window
