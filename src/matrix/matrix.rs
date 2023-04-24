@@ -673,11 +673,17 @@ fn add_default_handlers(client: Client) {
 fn add_verification_handlers(client: Client) {
     client.add_event_handler(
         |ev: ToDeviceKeyVerificationRequestEvent, client: Client| async move {
-            let request = client
+            let request = match client
                 .encryption()
                 .get_verification_request(&ev.sender, &ev.content.transaction_id)
                 .await
-                .expect("Request object wasn't created");
+            {
+                Some(req) => req,
+                None => {
+                    error!("could not create request");
+                    return;
+                }
+            };
 
             request
                 .accept()
@@ -701,11 +707,17 @@ fn add_verification_handlers(client: Client) {
     client.add_event_handler(
         |ev: OriginalSyncRoomMessageEvent, client: Client| async move {
             if let MessageType::VerificationRequest(_) = &ev.content.msgtype {
-                let request = client
+                let request = match client
                     .encryption()
                     .get_verification_request(&ev.sender, &ev.event_id)
                     .await
-                    .expect("Request object wasn't created");
+                {
+                    Some(req) => req,
+                    None => {
+                        error!("could not create request");
+                        return;
+                    }
+                };
 
                 request
                     .accept()
