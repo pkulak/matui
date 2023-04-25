@@ -6,6 +6,7 @@ use mime::{Mime, APPLICATION_OCTET_STREAM};
 /// everything else can be an octet stream
 pub static MIME_TYPES: &[(&str, &str)] = &[
     ("avif", "image/avif"),
+    ("gif", "image/gif"),
     ("jpeg", "image/jpeg"),
     ("jpg", "image/jpeg"),
     ("jxl", "image/jxl"),
