@@ -55,9 +55,9 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
             command.arg("imap <C-M> <esc>:wq<enter>");
         }
 
-        // but always turn on word wrap
+        // but always turn on word wrap and spellcheck
         command.arg("-c");
-        command.arg("set wrap linebreak nolist");
+        command.arg("set wrap linebreak nolist spell");
     }
 
     let status = command.arg(tmpfile.path()).status()?;
