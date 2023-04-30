@@ -86,6 +86,9 @@ impl RoomCache {
                 return;
             }
         }
+
+        info!("A wild room has appeared! {}", decorated.name);
+        rooms.insert(0, decorated);
     }
 }
 
