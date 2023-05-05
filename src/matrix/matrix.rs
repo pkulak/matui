@@ -35,8 +35,8 @@ use ruma::events::room::message::MessageType::Image;
 use ruma::events::room::message::MessageType::Video;
 use ruma::events::room::message::{ForwardThread, RoomMessageEventContent};
 use ruma::events::{
-    AnyMessageLikeEvent, AnySyncTimelineEvent, AnyTimelineEvent, MessageLikeEvent,
-    OriginalMessageLikeEvent,
+    AnyMessageLikeEvent, AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, AnyTimelineEvent,
+    MessageLikeEvent, OriginalMessageLikeEvent, SyncEphemeralRoomEvent,
 };
 use ruma::{OwnedEventId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
@@ -742,9 +742,24 @@ fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::Result
 
 fn add_default_handlers(client: Client) {
     client.add_event_handler(|event: AnySyncTimelineEvent, room: Room| async move {
-        App::get_sender().send(Matui(MatuiEvent::Timeline(
-            event.into_full_event(room.room_id().into()),
-        )))
+        App::get_sender()
+            .send(Matui(MatuiEvent::Timeline(
+                event.into_full_event(room.room_id().into()),
+            )))
+            .expect("could not send timeline event");
+    });
+
+    client.add_event_handler(|event: AnySyncEphemeralRoomEvent, room: Room| async move {
+        let joined = match room {
+            Room::Joined(j) => j,
+            _ => return,
+        };
+
+        if let AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent { content: c }) = event {
+            App::get_sender()
+                .send(Matui(MatuiEvent::Typing(joined, c.user_ids)))
+                .expect("could not send typing event");
+        };
     });
 }
 

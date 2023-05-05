@@ -7,6 +7,7 @@ use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ruma::OwnedUserId;
 
 use crate::event::EventHandler;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
@@ -27,6 +28,7 @@ pub enum MatuiEvent {
     SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
     TimelineBatch(Batch),
+    Typing(Joined, Vec<OwnedUserId>),
     VerificationStarted(SasVerification, [Emoji; 7]),
     VerificationCompleted,
 }
@@ -105,6 +107,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::TimelineBatch(batch) => {
             if let Some(c) = &mut app.chat {
                 c.batch_event(batch);
+            }
+        }
+        MatuiEvent::Typing(joined, ids) => {
+            if let Some(c) = &mut app.chat {
+                c.typing_event(joined, ids);
             }
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {

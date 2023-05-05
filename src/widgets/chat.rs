@@ -15,6 +15,7 @@ use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
+use once_cell::sync::OnceCell;
 use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::AnyTimelineEvent;
@@ -41,6 +42,7 @@ pub struct Chat {
     messages: Vec<Message>,
     read_to: Option<OwnedEventId>,
     react: Option<React>,
+    typing: Option<String>,
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
     fetching: Cell<bool>,
@@ -50,6 +52,7 @@ pub struct Chat {
     delete_combo: KeyCombo,
 
     members: Vec<RoomMember>,
+    pretty_members: OnceCell<String>,
     in_flight: Vec<OwnedUserId>,
 }
 
@@ -69,6 +72,7 @@ impl Chat {
             messages: vec![],
             read_to: None,
             react: None,
+            typing: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
             fetching: Cell::new(true),
@@ -77,6 +81,7 @@ impl Chat {
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
             members: vec![],
+            pretty_members: OnceCell::new(),
             in_flight: vec![],
         })
     }
@@ -340,6 +345,32 @@ impl Chat {
         self.set_fully_read();
     }
 
+    pub fn typing_event(&mut self, joined: Joined, ids: Vec<OwnedUserId>) {
+        if joined.room_id() != self.room.room_id() {
+            return;
+        }
+
+        let typing: Vec<&str> = self
+            .members
+            .iter()
+            .filter(|m| ids.iter().any(|id| m.user_id() == id))
+            .filter_map(|m| m.display_name())
+            .collect();
+
+        if typing.is_empty() {
+            self.typing = None;
+            return;
+        }
+
+        let suffix = if typing.len() > 1 {
+            " are typing."
+        } else {
+            " is typing."
+        };
+
+        self.typing = Some(format!("{}{}", pretty_list(typing), suffix));
+    }
+
     pub fn batch_event(&mut self, batch: Batch) {
         if batch.room.room_id() != self.room.room_id() {
             return;
@@ -435,25 +466,27 @@ impl Chat {
         self.room.inner()
     }
 
-    fn pretty_members(&self) -> String {
-        let mut names: Vec<&str> = self
-            .members
-            .iter()
-            .filter(|m| m.membership() == &MembershipState::Join)
-            .map(|m| {
-                m.display_name()
-                    .or_else(|| Some(m.user_id().localpart()))
-                    .unwrap()
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or_default()
-            })
-            .collect();
+    fn pretty_members(&self) -> &str {
+        self.pretty_members.get_or_init(|| {
+            let mut names: Vec<&str> = self
+                .members
+                .iter()
+                .filter(|m| m.membership() == &MembershipState::Join)
+                .map(|m| {
+                    m.display_name()
+                        .or_else(|| Some(m.user_id().localpart()))
+                        .unwrap()
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                })
+                .collect();
 
-        names.sort();
-        names.dedup();
+            names.sort();
+            names.dedup();
 
-        pretty_list(names.into_iter().take(10).collect())
+            pretty_list(names.into_iter().take(10).collect())
+        })
     }
 
     fn dedupe_events(&mut self) {
@@ -472,6 +505,7 @@ impl Chat {
 
         self.in_flight.retain(|id| id != member.user_id());
         self.members.push(member);
+        self.pretty_members = OnceCell::new();
         self.messages = make_message_list(&self.events, &self.members);
     }
 
@@ -720,8 +754,14 @@ impl Widget for ChatWidget<'_> {
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(splits[0])[0];
 
-        Paragraph::new(self.chat.pretty_members())
-            .style(Style::default().fg(Color::Magenta))
+        let (p_content, p_color) = if self.chat.typing.is_some() {
+            (self.chat.typing.as_ref().unwrap().as_str(), Color::Yellow)
+        } else {
+            (self.chat.pretty_members(), Color::Magenta)
+        };
+
+        Paragraph::new(p_content)
+            .style(Style::default().fg(p_color))
             .render(p_area, buf);
 
         // chat messages
