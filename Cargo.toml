@@ -45,3 +45,13 @@ features = [
 git = "https://github.com/ruma/ruma.git"
 rev = "8eea3e05490fa9a318f9ed66c3a75272e6ef0ee5"
 
+[profile.release]
+lto = true
+opt-level = 'z'  # Optimize for size.
+codegen-units = 1
+
+# make debug build as fast as release 
+# usage of utf8 encoding inside tui 
+# makes their debug profile slow
+[profile.dev.package."matui"]
+opt-level = 3
