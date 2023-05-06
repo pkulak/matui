@@ -375,13 +375,13 @@ impl Chat {
         self.typing = Some(format!("{}{}", pretty_list(typing), suffix));
     }
 
-    pub fn receipt_event(&mut self, joined: Joined, content: ReceiptEventContent) {
+    pub fn receipt_event(&mut self, joined: &Joined, content: &ReceiptEventContent) {
         if joined.room_id() == self.room.room_id() {
-            self.receipts.apply_event(&content);
+            self.receipts.apply_event(content);
             self.messages = make_message_list(&self.events, &self.members, &self.receipts);
 
             // make sure we fetch any users we don't know about
-            for id in Receipts::get_senders(&content) {
+            for id in Receipts::get_senders(content) {
                 self.check_sender(id);
             }
         }

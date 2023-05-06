@@ -3,6 +3,7 @@ use log::warn;
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::{Joined, Room};
 use once_cell::sync::OnceCell;
+use ruma::events::receipt::ReceiptEventContent;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
@@ -38,6 +39,9 @@ pub struct App {
 
     /// We'll hold on to any in-progress verifications here
     pub sas: Option<SasVerification>,
+
+    /// Keep old read receipts around
+    pub receipts: Vec<(Joined, ReceiptEventContent)>,
 }
 
 impl App {
@@ -57,6 +61,7 @@ impl App {
             matrix,
             sender: send,
             sas: None,
+            receipts: vec![],
         }
     }
 
@@ -77,15 +82,19 @@ impl App {
             }
         }
 
-        let chat = Chat::try_new(self.matrix.clone(), room.clone());
+        let mut chat = Chat::try_new(self.matrix.clone(), room.clone());
 
         if chat.is_none() {
-            // TODO: listen to room join events
             warn!("could not switch to room");
             return;
         }
 
-        self.chat = Some(chat.unwrap());
+        // feed all the cached read receipts back in
+        for (joined, content) in &self.receipts {
+            chat.as_mut().unwrap().receipt_event(joined, content);
+        }
+
+        self.chat = chat;
         self.matrix.room_visit_event(Room::Joined(room));
     }
 

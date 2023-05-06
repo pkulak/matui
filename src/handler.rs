@@ -118,7 +118,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::Receipt(joined, content) => {
             if let Some(c) = &mut app.chat {
-                c.receipt_event(joined, content);
+                c.receipt_event(&joined, &content);
+            }
+
+            app.receipts.push((joined, content));
+
+            if app.receipts.len() > 250 {
+                app.receipts.remove(0);
             }
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
