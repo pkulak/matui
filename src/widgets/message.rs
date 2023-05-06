@@ -3,6 +3,7 @@ use std::cell::Cell;
 use std::time::{Duration, SystemTime};
 
 use crate::matrix::matrix::{pad_emoji, Matrix};
+use crate::matrix::username::Username;
 use crate::pretty_list;
 use crate::spawn::view_text;
 use chrono::offset::Local;
@@ -35,8 +36,7 @@ pub struct Message {
     pub sent: MilliSecondsSinceUnixEpoch,
     pub body: MessageType,
     pub history: Vec<MessageType>,
-    pub sender: String,
-    pub sender_id: String,
+    pub sender: Username,
     pub reactions: Vec<Reaction>,
     pub replies: Vec<Message>,
 
@@ -87,7 +87,7 @@ impl Message {
             "Sent {} by {} ({})\n\n",
             date.format("%Y-%m-%d at %I:%M:%S %p"),
             self.sender,
-            self.sender_id
+            self.sender.id
         );
 
         ret.push_str(self.display());
@@ -99,13 +99,7 @@ impl Message {
             for r in &self.reactions {
                 for re in &r.events {
                     ret.push_str(
-                        format!(
-                            "* {} by {} ({})\n",
-                            r.display(),
-                            re.sender_name,
-                            re.sender_id
-                        )
-                        .as_str(),
+                        format!("* {} by {} ({})\n", r.display(), re.sender, re.sender.id).as_str(),
                     );
                 }
             }
@@ -198,8 +192,7 @@ impl Message {
                 sent: c.origin_server_ts,
                 body,
                 history: vec![],
-                sender: c.sender.to_string(),
-                sender_id: c.sender.to_string(),
+                sender: Username::new(c.sender),
                 reactions: Vec::new(),
                 replies: Vec::new(),
                 last_height: Cell::new(LastHeight::default()),
@@ -279,13 +272,13 @@ impl Message {
         if let MessageLike(Rctn(MessageLikeEvent::Original(c))) = event {
             let relates = c.content.relates_to.clone();
 
-            let sender = c.sender.to_string();
             let body = relates.key;
             let relates_id = relates.event_id;
 
             for message in messages.iter_mut() {
                 if message.id == relates_id {
-                    let reaction_event = ReactionEvent::new(event.event_id().into(), sender);
+                    let reaction_event =
+                        ReactionEvent::new(event.event_id().into(), c.sender.clone());
 
                     message.reactions.push(Reaction {
                         body,
@@ -346,23 +339,13 @@ impl Message {
     }
 
     pub fn update_senders(&mut self, members: &Vec<RoomMember>) {
-        fn set_name(old: &mut String, new: &RoomMember) {
-            *old = new.display_name().unwrap_or(old).to_string();
-        }
-
         // maybe we use a map, or sorted list at some point to avoid looping
         for member in members {
-            let user_id: String = member.user_id().into();
-
-            if self.sender == user_id {
-                set_name(&mut self.sender, member);
-            }
+            self.sender.update(member);
 
             for reaction in self.reactions.iter_mut() {
                 for event in reaction.events.iter_mut() {
-                    if event.sender_id == user_id {
-                        set_name(&mut event.sender_name, member);
-                    }
+                    event.sender.update(member)
                 }
             }
 
@@ -446,7 +429,7 @@ impl Message {
 
         // author
         let mut spans = vec![
-            Span::styled(&self.sender, Style::default().fg(Color::Green)),
+            Span::styled(self.sender.as_str(), Style::default().fg(Color::Green)),
             Span::from(" "),
             Span::styled(self.pretty_elapsed(), Style::default().fg(Color::DarkGray)),
         ];
@@ -541,7 +524,13 @@ impl Reaction {
         let all: Vec<&str> = self
             .events
             .iter()
-            .map(|s| s.sender_name.split_whitespace().next().unwrap_or_default())
+            .map(|s| {
+                s.sender
+                    .as_str()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+            })
             .collect();
 
         pretty_list(all)
@@ -557,16 +546,14 @@ impl Reaction {
 #[derive(Clone)]
 pub struct ReactionEvent {
     pub id: OwnedEventId,
-    pub sender_name: String,
-    pub sender_id: String,
+    pub sender: Username,
 }
 
 impl ReactionEvent {
-    pub fn new(id: OwnedEventId, sender_id: String) -> ReactionEvent {
+    pub fn new(id: OwnedEventId, sender_id: OwnedUserId) -> ReactionEvent {
         ReactionEvent {
             id,
-            sender_name: sender_id.clone(),
-            sender_id,
+            sender: Username::new(sender_id),
         }
     }
 }

@@ -637,7 +637,7 @@ impl Chat {
 
         ret.retain(|r| {
             for e in &r.events {
-                if e.sender_id == me {
+                if e.sender.id == me {
                     return true;
                 }
             }
@@ -657,7 +657,7 @@ impl Chat {
             }
 
             for event in reaction.events {
-                if event.sender_id == me {
+                if event.sender.id == me {
                     return Some(event);
                 }
             }
