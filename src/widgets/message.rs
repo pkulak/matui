@@ -1,5 +1,6 @@
 use chrono::TimeZone;
 use std::cell::Cell;
+use std::iter;
 use std::time::{Duration, SystemTime};
 
 use crate::matrix::matrix::{pad_emoji, Matrix};
@@ -26,6 +27,8 @@ use tui::style::{Color, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::ListItem;
 
+use super::receipts::Receipts;
+
 // A Message is a line in the chat window; what a user would generally
 // consider a "message". It has reactions, edits, and is generally in a state
 // of constant mutation, as opposed to "events", which come in, in order.
@@ -39,6 +42,7 @@ pub struct Message {
     pub sender: Username,
     pub reactions: Vec<Reaction>,
     pub replies: Vec<Message>,
+    pub receipts: Vec<Username>,
 
     last_height: Cell<LastHeight>,
 }
@@ -195,6 +199,7 @@ impl Message {
                 sender: Username::new(c.sender),
                 reactions: Vec::new(),
                 replies: Vec::new(),
+                receipts: Vec::new(),
                 last_height: Cell::new(LastHeight::default()),
             });
         }
@@ -204,7 +209,7 @@ impl Message {
 
     // if not, we should send the event here, to possibly act on existing
     // events
-    pub fn merge_into_message_list(
+    pub fn apply_timeline_event(
         messages: &mut Vec<Message>,
         event: &AnyTimelineEvent,
         depth: usize,
@@ -312,8 +317,7 @@ impl Message {
         // and finally, continue down the tree, propogating a "missed" result
         for message in messages.iter_mut() {
             if !message.replies.is_empty() {
-                let result =
-                    Message::merge_into_message_list(&mut message.replies, event, depth + 1);
+                let result = Message::apply_timeline_event(&mut message.replies, event, depth + 1);
 
                 if result != MergeResult::Missed {
                     reply_result = result;
@@ -322,6 +326,14 @@ impl Message {
         }
 
         reply_result
+    }
+
+    pub fn apply_receipts(messages: &mut [Message], receipts: &Receipts) {
+        for message in messages.iter_mut() {
+            if let Some(usernames) = receipts.get(&message.id) {
+                message.receipts = usernames.clone()
+            }
+        }
     }
 
     pub fn get_sender(event: &AnyTimelineEvent) -> Option<&OwnedUserId> {
@@ -349,9 +361,13 @@ impl Message {
                 }
             }
 
-            for reply in self.replies.iter_mut() {
-                reply.update_senders(members);
+            for username in self.receipts.iter_mut() {
+                username.update(member);
             }
+        }
+
+        for reply in self.replies.iter_mut() {
+            reply.update_senders(members);
         }
     }
 
@@ -453,6 +469,27 @@ impl Message {
             lines.push(vec![Span::styled(
                 "* overflow: type \"v\" to view entire message",
                 Style::default().fg(Color::Red),
+            )])
+        }
+
+        // receipts
+        if !self.receipts.is_empty() {
+            let iter = self
+                .receipts
+                .iter()
+                .map(Username::as_str)
+                .map(|n| n.split_whitespace().next().unwrap());
+
+            // but only show the first 4
+            let receipts: Vec<&str> = if self.receipts.len() > 4 {
+                iter.take(4).chain(iter::once("others")).collect()
+            } else {
+                iter.collect()
+            };
+
+            lines.push(vec![Span::styled(
+                format!("Seen by {}.", pretty_list(receipts)),
+                Style::default().fg(Color::DarkGray),
             )])
         }
 

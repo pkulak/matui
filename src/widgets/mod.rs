@@ -11,6 +11,7 @@ pub mod chat;
 pub mod confirm;
 pub mod message;
 pub mod react;
+pub mod receipts;
 pub mod textinput;
 
 #[macro_export]

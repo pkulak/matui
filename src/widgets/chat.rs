@@ -16,6 +16,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use once_cell::sync::OnceCell;
+use ruma::events::receipt::ReceiptEventContent;
 use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::AnyTimelineEvent;
@@ -34,11 +35,13 @@ use tui::widgets::{
 
 use super::confirm::{Confirm, ConfirmBehavior};
 use super::message::MergeResult;
+use super::receipts::Receipts;
 
 pub struct Chat {
     matrix: Matrix,
     room: DecoratedRoom,
     events: SortedVec<OrderedEvent>,
+    receipts: Receipts,
     messages: Vec<Message>,
     read_to: Option<OwnedEventId>,
     react: Option<React>,
@@ -66,9 +69,10 @@ impl Chat {
         matrix.fetch_messages(room, None);
 
         Some(Self {
-            matrix,
+            matrix: matrix.clone(),
             room: decorated_room,
             events: SortedVec::new(),
+            receipts: Receipts::new(matrix.me()),
             messages: vec![],
             read_to: None,
             react: None,
@@ -338,10 +342,10 @@ impl Chat {
             return;
         }
 
-        self.check_sender(&event);
+        self.check_event_sender(&event);
         self.events.push(OrderedEvent::new(event));
         self.dedupe_events();
-        self.messages = make_message_list(&self.events, &self.members);
+        self.messages = make_message_list(&self.events, &self.members, &self.receipts);
         self.set_fully_read();
     }
 
@@ -371,6 +375,18 @@ impl Chat {
         self.typing = Some(format!("{}{}", pretty_list(typing), suffix));
     }
 
+    pub fn receipt_event(&mut self, joined: Joined, content: ReceiptEventContent) {
+        if joined.room_id() == self.room.room_id() {
+            self.receipts.apply_event(&content);
+            self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+
+            // make sure we fetch any users we don't know about
+            for id in Receipts::get_senders(&content) {
+                self.check_sender(id);
+            }
+        }
+    }
+
     pub fn batch_event(&mut self, batch: Batch) {
         if batch.room.room_id() != self.room.room_id() {
             return;
@@ -380,7 +396,7 @@ impl Chat {
         let previous_count = self.messages.len();
 
         for event in batch.events {
-            self.check_sender(&event);
+            self.check_event_sender(&event);
             self.events.push(OrderedEvent::new(event));
         }
 
@@ -388,7 +404,7 @@ impl Chat {
 
         let reset = self.messages.is_empty();
 
-        self.messages = make_message_list(&self.events, &self.members);
+        self.messages = make_message_list(&self.events, &self.members, &self.receipts);
         self.fetching.set(false);
         self.set_fully_read();
 
@@ -405,24 +421,28 @@ impl Chat {
         }
     }
 
-    fn check_sender(&mut self, event: &AnyTimelineEvent) {
+    fn check_event_sender(&mut self, event: &AnyTimelineEvent) {
         if let Some(user_id) = Message::get_sender(event) {
-            // if we already know about them
-            if self.members.iter().any(|m| m.user_id() == user_id) {
-                return;
-            }
-
-            // or the request is in flight
-            if self.in_flight.iter().any(|i| i == user_id) {
-                return;
-            }
-
-            // otherwise, record them as in flight and fetch
-            self.in_flight.push(user_id.clone());
-            self.matrix.fetch_room_member(self.room(), user_id.clone());
-
-            info!("fetching {}", user_id);
+            self.check_sender(user_id)
         }
+    }
+
+    fn check_sender(&mut self, user_id: &OwnedUserId) {
+        // if we already know about them
+        if self.members.iter().any(|m| m.user_id() == user_id) {
+            return;
+        }
+
+        // or the request is in flight
+        if self.in_flight.iter().any(|i| i == user_id) {
+            return;
+        }
+
+        // otherwise, record them as in flight and fetch
+        self.in_flight.push(user_id.clone());
+        self.matrix.fetch_room_member(self.room(), user_id.clone());
+
+        info!("fetching {}", user_id);
     }
 
     fn muted(&self) -> bool {
@@ -506,7 +526,7 @@ impl Chat {
         self.in_flight.retain(|id| id != member.user_id());
         self.members.push(member);
         self.pretty_members = OnceCell::new();
-        self.messages = make_message_list(&self.events, &self.members);
+        self.messages = make_message_list(&self.events, &self.members, &self.receipts);
     }
 
     fn try_fetch_previous(&self) {
@@ -795,6 +815,7 @@ impl Widget for ChatWidget<'_> {
 fn make_message_list(
     timeline: &SortedVec<OrderedEvent>,
     members: &Vec<RoomMember>,
+    receipts: &Receipts,
 ) -> Vec<Message> {
     // TODO: don't split these out
     let mut messages = vec![];
@@ -804,7 +825,7 @@ fn make_message_list(
     for event in timeline.iter() {
         if let Some(message) = Message::try_from(event, false) {
             messages.push(message);
-        } else if Message::merge_into_message_list(&mut messages, event, 0) == MergeResult::Missed {
+        } else if Message::apply_timeline_event(&mut messages, event, 0) == MergeResult::Missed {
             // the event needed to be merge, but couldn't for some reason;
             // force it into place, if possible
             if let Some(message) = Message::try_from(event, true) {
@@ -812,6 +833,9 @@ fn make_message_list(
             }
         }
     }
+
+    // apply our read receipts
+    Message::apply_receipts(&mut messages, receipts);
 
     // update senders to friendly names
     messages.iter_mut().for_each(|m| m.update_senders(members));

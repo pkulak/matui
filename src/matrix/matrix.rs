@@ -30,6 +30,7 @@ use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
 use ruma::events::key::verification::VerificationMethod;
 use ruma::events::reaction::ReactionEventContent;
+
 use ruma::events::relation::Annotation;
 use ruma::events::room::message::MessageType::Image;
 use ruma::events::room::message::MessageType::Video;
@@ -507,8 +508,8 @@ impl Matrix {
         });
     }
 
-    pub fn me(&self) -> String {
-        self.client().user_id().unwrap().into()
+    pub fn me(&self) -> OwnedUserId {
+        self.client().user_id().unwrap().to_owned()
     }
 
     pub fn timeline_event(&self, event: AnyTimelineEvent) {
@@ -755,10 +756,18 @@ fn add_default_handlers(client: Client) {
             _ => return,
         };
 
-        if let AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent { content: c }) = event {
-            App::get_sender()
-                .send(Matui(MatuiEvent::Typing(joined, c.user_ids)))
-                .expect("could not send typing event");
+        match event {
+            AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent { content: c }) => {
+                App::get_sender()
+                    .send(Matui(MatuiEvent::Typing(joined, c.user_ids)))
+                    .expect("could not send typing event");
+            }
+            AnySyncEphemeralRoomEvent::Receipt(SyncEphemeralRoomEvent { content: c }) => {
+                App::get_sender()
+                    .send(Matui(MatuiEvent::Receipt(joined, c)))
+                    .expect("could not send typing event");
+            }
+            _ => {}
         };
     });
 }

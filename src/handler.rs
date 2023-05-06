@@ -7,6 +7,7 @@ use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ruma::events::receipt::ReceiptEventContent;
 use ruma::OwnedUserId;
 
 use crate::event::EventHandler;
@@ -22,6 +23,7 @@ pub enum MatuiEvent {
     LoginStarted,
     ProgressStarted(String, u64),
     ProgressComplete,
+    Receipt(Joined, ReceiptEventContent),
     RoomMember(Joined, RoomMember),
     RoomSelected(Joined),
     SyncComplete,
@@ -112,6 +114,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::Typing(joined, ids) => {
             if let Some(c) = &mut app.chat {
                 c.typing_event(joined, ids);
+            }
+        }
+        MatuiEvent::Receipt(joined, content) => {
+            if let Some(c) = &mut app.chat {
+                c.receipt_event(joined, content);
             }
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
