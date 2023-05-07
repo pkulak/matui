@@ -4,6 +4,7 @@ use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::{Joined, Room};
 use once_cell::sync::OnceCell;
 use ruma::events::receipt::ReceiptEventContent;
+use std::collections::VecDeque;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
 
@@ -41,7 +42,7 @@ pub struct App {
     pub sas: Option<SasVerification>,
 
     /// Keep old read receipts around
-    pub receipts: Vec<(Joined, ReceiptEventContent)>,
+    pub receipts: VecDeque<(Joined, ReceiptEventContent)>,
 }
 
 impl App {
@@ -61,7 +62,7 @@ impl App {
             matrix,
             sender: send,
             sas: None,
-            receipts: vec![],
+            receipts: VecDeque::new(),
         }
     }
 

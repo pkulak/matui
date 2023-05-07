@@ -21,9 +21,9 @@ use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::AnyTimelineEvent;
 use ruma::{OwnedEventId, OwnedUserId};
-use sorted_vec::SortedVec;
 use std::cell::Cell;
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::ops::Deref;
 
 use tui::buffer::Buffer;
@@ -40,7 +40,7 @@ use super::receipts::Receipts;
 pub struct Chat {
     matrix: Matrix,
     room: DecoratedRoom,
-    events: SortedVec<OrderedEvent>,
+    events: BTreeSet<OrderedEvent>,
     receipts: Receipts,
     messages: Vec<Message>,
     read_to: Option<OwnedEventId>,
@@ -71,7 +71,7 @@ impl Chat {
         Some(Self {
             matrix: matrix.clone(),
             room: decorated_room,
-            events: SortedVec::new(),
+            events: BTreeSet::new(),
             receipts: Receipts::new(matrix.me()),
             messages: vec![],
             read_to: None,
@@ -343,8 +343,7 @@ impl Chat {
         }
 
         self.check_event_sender(&event);
-        self.events.push(OrderedEvent::new(event));
-        self.dedupe_events();
+        self.events.insert(OrderedEvent::new(event));
         self.messages = make_message_list(&self.events, &self.members, &self.receipts);
         self.set_fully_read();
     }
@@ -397,10 +396,8 @@ impl Chat {
 
         for event in batch.events {
             self.check_event_sender(&event);
-            self.events.push(OrderedEvent::new(event));
+            self.events.insert(OrderedEvent::new(event));
         }
-
-        self.dedupe_events();
 
         let reset = self.messages.is_empty();
 
@@ -507,15 +504,6 @@ impl Chat {
 
             pretty_list(names.into_iter().take(10).collect())
         })
-    }
-
-    fn dedupe_events(&mut self) {
-        let prev = self.messages.len();
-        self.messages.dedup_by(|left, right| left.id == right.id);
-
-        if self.messages.len() < prev {
-            info!("found at least one duplicate event");
-        }
     }
 
     pub fn room_member_event(&mut self, room: Joined, member: RoomMember) {
@@ -708,14 +696,24 @@ impl Deref for OrderedEvent {
 
 impl Ord for OrderedEvent {
     fn cmp(&self, other: &Self) -> Ordering {
+        // equal IDs are always equal
+        if self.event_id() == other.event_id() {
+            return Ordering::Equal;
+        }
+
+        // if the timestamps are the same, use the id
+        if self.origin_server_ts() == other.origin_server_ts() {
+            return self.event_id().cmp(other.event_id());
+        }
+
+        // otherwise, us the timestamp
         self.origin_server_ts().cmp(&other.origin_server_ts())
     }
 }
 
 impl PartialOrd for OrderedEvent {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.origin_server_ts()
-            .partial_cmp(&other.origin_server_ts())
+        Some(self.cmp(other))
     }
 }
 
@@ -813,7 +811,7 @@ impl Widget for ChatWidget<'_> {
 }
 
 fn make_message_list(
-    timeline: &SortedVec<OrderedEvent>,
+    timeline: &BTreeSet<OrderedEvent>,
     members: &Vec<RoomMember>,
     receipts: &Receipts,
 ) -> Vec<Message> {

@@ -46,14 +46,11 @@ impl Receipts {
             usernames.retain(|u| &u.id != user_id)
         }
 
-        let username = Username::new(user_id.clone());
-
         // add our receipt
-        if let Some(usernames) = self.events.get_mut(event_id) {
-            usernames.push(username);
-        } else {
-            self.events.insert(event_id.clone(), vec![username]);
-        }
+        self.events
+            .entry(event_id.clone())
+            .or_insert_with(|| Vec::with_capacity(1))
+            .push(Username::new(user_id.clone()));
 
         // and clean up any now-empty vectors
         self.events.retain(|_, value| !value.is_empty());

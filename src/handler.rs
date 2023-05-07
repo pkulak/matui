@@ -121,10 +121,10 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.receipt_event(&joined, &content);
             }
 
-            app.receipts.push((joined, content));
+            app.receipts.push_back((joined, content));
 
-            if app.receipts.len() > 250 {
-                app.receipts.remove(0);
+            if app.receipts.len() > 500 {
+                app.receipts.pop_front();
             }
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
