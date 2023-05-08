@@ -76,7 +76,7 @@ impl Receipts {
     }
 }
 
-#[derive(Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Debug, Clone)]
 pub struct Receipt<'a> {
     pub timestamp: &'a MilliSecondsSinceUnixEpoch,
     pub user_id: &'a OwnedUserId,

@@ -1,5 +1,4 @@
 use chrono::TimeZone;
-use log::info;
 use std::cell::Cell;
 use std::collections::BinaryHeap;
 use std::iter;
@@ -332,25 +331,26 @@ impl Message {
 
     /// Given a binary heap (priority queue) of Receipts, run through the
     /// the messages, popping off receipts and attaching them. This way we
-    /// only show a single receipt per user, on the latest message they have
-    /// read.
+    /// only show a single receipt per user (per reply chain), on the latest
+    /// message they have read.
     pub fn apply_receipts(messages: &mut [Message], heap: &mut BinaryHeap<Receipt>) {
+        // hold on to a fresh copy of the heap to clone into each reply chain
+        let og_heap = heap.clone();
+
         for message in messages.iter_mut().rev() {
-            Message::apply_receipts(&mut message.replies, heap);
+            if !message.replies.is_empty() {
+                Message::apply_receipts(&mut message.replies, &mut og_heap.clone());
+            }
 
-            loop {
-                if let Some(candidate) = heap.peek() {
-                    if candidate.timestamp > &message.sent {
-                        message
-                            .receipts
-                            .push(Username::new(candidate.user_id.clone()));
+            while let Some(candidate) = heap.peek() {
+                if candidate.timestamp > &message.sent {
+                    message
+                        .receipts
+                        .push(Username::new(candidate.user_id.clone()));
 
-                        heap.pop();
-                    } else {
-                        break;
-                    }
+                    heap.pop();
                 } else {
-                    return;
+                    break;
                 }
             }
         }
@@ -421,6 +421,11 @@ impl Message {
         };
 
         height += 2;
+
+        if !self.receipts.is_empty() {
+            height += 1;
+        }
+
         height += self.reactions.len();
         self.last_height.set(LastHeight { width, height });
         height
