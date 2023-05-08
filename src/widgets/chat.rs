@@ -833,7 +833,7 @@ fn make_message_list(
     }
 
     // apply our read receipts
-    Message::apply_receipts(&mut messages, receipts);
+    Message::apply_receipts(&mut messages, &mut receipts.get_all());
 
     // update senders to friendly names
     messages.iter_mut().for_each(|m| m.update_senders(members));

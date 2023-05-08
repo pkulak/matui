@@ -1,5 +1,7 @@
 use chrono::TimeZone;
+use log::info;
 use std::cell::Cell;
+use std::collections::BinaryHeap;
 use std::iter;
 use std::time::{Duration, SystemTime};
 
@@ -27,7 +29,7 @@ use tui::style::{Color, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::ListItem;
 
-use super::receipts::Receipts;
+use super::receipts::Receipt;
 
 // A Message is a line in the chat window; what a user would generally
 // consider a "message". It has reactions, edits, and is generally in a state
@@ -328,10 +330,28 @@ impl Message {
         reply_result
     }
 
-    pub fn apply_receipts(messages: &mut [Message], receipts: &Receipts) {
-        for message in messages.iter_mut() {
-            if let Some(usernames) = receipts.get(&message.id) {
-                message.receipts = usernames.clone()
+    /// Given a binary heap (priority queue) of Receipts, run through the
+    /// the messages, popping off receipts and attaching them. This way we
+    /// only show a single receipt per user, on the latest message they have
+    /// read.
+    pub fn apply_receipts(messages: &mut [Message], heap: &mut BinaryHeap<Receipt>) {
+        for message in messages.iter_mut().rev() {
+            Message::apply_receipts(&mut message.replies, heap);
+
+            loop {
+                if let Some(candidate) = heap.peek() {
+                    if candidate.timestamp > &message.sent {
+                        message
+                            .receipts
+                            .push(Username::new(candidate.user_id.clone()));
+
+                        heap.pop();
+                    } else {
+                        break;
+                    }
+                } else {
+                    return;
+                }
             }
         }
     }

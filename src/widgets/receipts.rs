@@ -1,59 +1,64 @@
-use ruma::OwnedUserId;
-use std::collections::HashMap;
+use ruma::{MilliSecondsSinceUnixEpoch, OwnedUserId};
+use std::collections::{btree_map::Entry, BTreeMap, BinaryHeap};
 
-use ruma::{
-    events::receipt::{ReceiptEventContent, ReceiptType},
-    OwnedEventId,
-};
-
-use crate::matrix::username::Username;
+use ruma::events::receipt::{ReceiptEventContent, ReceiptType};
 
 /// A place to put and update read receipts.
 pub struct Receipts {
-    events: HashMap<OwnedEventId, Vec<Username>>,
+    markers: BTreeMap<OwnedUserId, MilliSecondsSinceUnixEpoch>,
     ignore: OwnedUserId,
 }
 
 impl Receipts {
     pub fn new(ignore: OwnedUserId) -> Self {
         Receipts {
-            events: HashMap::default(),
+            markers: BTreeMap::default(),
             ignore,
         }
     }
 
-    pub fn get(&self, event_id: &OwnedEventId) -> Option<&Vec<Username>> {
-        self.events.get(event_id)
-    }
-
     pub fn apply_event(&mut self, event: &ReceiptEventContent) {
-        for (event_id, types) in event.iter() {
+        for types in event.values() {
             if let Some(user_ids) = types.get(&ReceiptType::Read) {
-                for user_id in user_ids.keys() {
-                    self.apply_event_and_user(event_id, user_id);
+                for (user_id, receipt) in user_ids.iter() {
+                    if let Some(ts) = &receipt.ts {
+                        self.apply_timestamp_and_user(ts, user_id);
+                    }
                 }
             }
         }
     }
 
-    fn apply_event_and_user(&mut self, event_id: &OwnedEventId, user_id: &OwnedUserId) {
+    pub fn get_all(&self) -> BinaryHeap<Receipt> {
+        let mut heap = BinaryHeap::with_capacity(self.markers.len());
+
+        heap.extend(self.markers.iter().map(|(k, v)| Receipt {
+            timestamp: v,
+            user_id: k,
+        }));
+
+        heap
+    }
+
+    fn apply_timestamp_and_user(
+        &mut self,
+        timestamp: &MilliSecondsSinceUnixEpoch,
+        user_id: &OwnedUserId,
+    ) {
         if user_id == &self.ignore {
             return;
         }
 
-        // wipe out any previous receipts for this user
-        for (_, usernames) in self.events.iter_mut() {
-            usernames.retain(|u| &u.id != user_id)
-        }
-
-        // add our receipt
-        self.events
-            .entry(event_id.clone())
-            .or_insert_with(|| Vec::with_capacity(1))
-            .push(Username::new(user_id.clone()));
-
-        // and clean up any now-empty vectors
-        self.events.retain(|_, value| !value.is_empty());
+        match self.markers.entry(user_id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(*timestamp);
+            }
+            Entry::Occupied(mut entry) => {
+                if timestamp > entry.get() {
+                    *entry.get_mut() = *timestamp
+                }
+            }
+        };
     }
 
     pub fn get_senders(event: &ReceiptEventContent) -> Vec<&OwnedUserId> {
@@ -69,4 +74,10 @@ impl Receipts {
 
         ids
     }
+}
+
+#[derive(Eq, PartialEq, Ord, PartialOrd, Debug)]
+pub struct Receipt<'a> {
+    pub timestamp: &'a MilliSecondsSinceUnixEpoch,
+    pub user_id: &'a OwnedUserId,
 }
