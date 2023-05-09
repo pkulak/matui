@@ -1,5 +1,4 @@
 use core::fmt;
-use std::fmt::Debug;
 
 use matrix_sdk::room::RoomMember;
 use ruma::OwnedUserId;
@@ -42,8 +41,8 @@ impl Username {
 
 impl fmt::Display for Username {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.display_name.is_some() {
-            self.display_name.fmt(f)
+        if let Some(dn) = &self.display_name {
+            fmt::Display::fmt(&dn, f)
         } else {
             fmt::Display::fmt(&self.id, f)
         }

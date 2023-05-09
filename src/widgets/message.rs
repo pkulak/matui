@@ -1,13 +1,12 @@
 use chrono::TimeZone;
 use std::cell::Cell;
 use std::collections::BinaryHeap;
-use std::iter;
 use std::time::{Duration, SystemTime};
 
 use crate::matrix::matrix::{pad_emoji, Matrix};
 use crate::matrix::username::Username;
-use crate::pretty_list;
 use crate::spawn::view_text;
+use crate::{limit_list, pretty_list};
 use chrono::offset::Local;
 use matrix_sdk::room::RoomMember;
 use once_cell::unsync::OnceCell;
@@ -502,18 +501,14 @@ impl Message {
             let iter = self
                 .receipts
                 .iter()
-                .map(Username::as_str)
-                .map(|n| n.split_whitespace().next().unwrap());
-
-            // but only show the first 4
-            let receipts: Vec<&str> = if self.receipts.len() > 4 {
-                iter.take(4).chain(iter::once("others")).collect()
-            } else {
-                iter.collect()
-            };
+                .map(Username::to_string)
+                .map(|n| n.split_whitespace().next().unwrap().to_string());
 
             lines.push(vec![Span::styled(
-                format!("Seen by {}.", pretty_list(receipts)),
+                format!(
+                    "Seen by {}.",
+                    pretty_list(limit_list(iter, 4, self.receipts.len(), None))
+                ),
                 Style::default().fg(Color::DarkGray),
             )])
         }
@@ -583,19 +578,16 @@ impl Reaction {
     }
 
     pub fn pretty_senders(&self) -> String {
-        let all: Vec<&str> = self
-            .events
-            .iter()
-            .map(|s| {
-                s.sender
-                    .as_str()
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or_default()
-            })
-            .collect();
+        let iter = self.events.iter().map(|s| {
+            s.sender
+                .as_str()
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        });
 
-        pretty_list(all)
+        pretty_list(limit_list(iter, 5, self.events.len(), None))
     }
 
     // cached to keep allocations out of the render loop

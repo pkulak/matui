@@ -10,7 +10,7 @@ use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
-use crate::{consumed, pretty_list, truncate, KeyCombo};
+use crate::{consumed, limit_list, pretty_list, truncate, KeyCombo};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
@@ -353,11 +353,10 @@ impl Chat {
             return;
         }
 
-        let typing: Vec<&str> = self
+        let typing: Vec<&RoomMember> = self
             .members
             .iter()
             .filter(|m| ids.iter().any(|id| m.user_id() == id))
-            .filter_map(|m| m.display_name())
             .collect();
 
         if typing.is_empty() {
@@ -371,7 +370,18 @@ impl Chat {
             " is typing."
         };
 
-        self.typing = Some(format!("{}{}", pretty_list(typing), suffix));
+        let total = typing.len();
+
+        let iter = typing
+            .into_iter()
+            .map(|m| m.display_name().unwrap_or(m.user_id().as_str()))
+            .map(|n| n.to_string());
+
+        self.typing = Some(format!(
+            "{}{}",
+            pretty_list(limit_list(iter, 3, total, None)),
+            suffix
+        ));
     }
 
     pub fn receipt_event(&mut self, joined: &Joined, content: &ReceiptEventContent) {
@@ -502,7 +512,10 @@ impl Chat {
             names.sort();
             names.dedup();
 
-            pretty_list(names.into_iter().take(10).collect())
+            let total = names.len();
+            let iter = names.into_iter().map(|n| n.to_string());
+
+            pretty_list(limit_list(iter, 5, total, Some("at least")))
         })
     }
 
