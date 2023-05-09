@@ -40,6 +40,7 @@ complicated. Especially if you don't implement too many features.
 | k*    | Select one line up.                                    | 
 | i     | Create a new message using the external editor.        | 
 | Enter | Open the selected message (images, videos, urls, etc). | 
+| s     | Save the selected message (images and videos).         | 
 | c     | Edit the selected message in the external editor.      | 
 | r     | React to the selected message.                         | 
 | R     | Reply to the selected message.                         | 

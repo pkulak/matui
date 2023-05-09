@@ -10,6 +10,7 @@ use crate::widgets::button::Button;
 use super::{get_margin, EventResult};
 
 pub struct Error {
+    heading: String,
     message: String,
     button: Button,
 }
@@ -17,6 +18,15 @@ pub struct Error {
 impl Error {
     pub fn new(message: String) -> Self {
         Self {
+            heading: "Error".to_string(),
+            message,
+            button: Button::new("OK".to_string(), true),
+        }
+    }
+
+    pub fn with_heading(heading: String, message: String) -> Self {
+        Self {
+            heading,
             message,
             button: Button::new("OK".to_string(), true),
         }
@@ -61,7 +71,7 @@ impl Widget for ErrorWidget<'_> {
             .split(area);
 
         let block = Block::default()
-            .title("Error")
+            .title(&*self.error.heading)
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)

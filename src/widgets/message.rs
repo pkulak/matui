@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::collections::BinaryHeap;
 use std::time::{Duration, SystemTime};
 
-use crate::matrix::matrix::{pad_emoji, Matrix};
+use crate::matrix::matrix::{pad_emoji, AfterDownload, Matrix};
 use crate::matrix::username::Username;
 use crate::spawn::view_text;
 use crate::{limit_list, pretty_list};
@@ -148,9 +148,17 @@ impl Message {
 
     pub fn open(&self, matrix: Matrix) {
         match &self.body {
-            Image(_) => matrix.open_content(self.body.clone()),
-            Video(_) => matrix.open_content(self.body.clone()),
+            Image(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
+            Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Text(_) => view_text(self.display()),
+            _ => {}
+        }
+    }
+
+    pub fn save(&self, matrix: Matrix) {
+        match &self.body {
+            Image(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
+            Video(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             _ => {}
         }
     }
@@ -353,20 +361,6 @@ impl Message {
                 }
             }
         }
-    }
-
-    pub fn get_sender(event: &AnyTimelineEvent) -> Option<&OwnedUserId> {
-        // reactions
-        if let MessageLike(Rctn(MessageLikeEvent::Original(c))) = event {
-            return Some(&c.sender);
-        }
-
-        // messages
-        if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
-            return Some(&c.sender);
-        }
-
-        None
     }
 
     pub fn update_senders(&mut self, members: &Vec<RoomMember>) {

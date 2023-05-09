@@ -17,7 +17,6 @@ use log::info;
 use matrix_sdk::room::{Joined, RoomMember};
 use once_cell::sync::OnceCell;
 use ruma::events::receipt::ReceiptEventContent;
-use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::MessageType::Text;
 use ruma::events::AnyTimelineEvent;
 use ruma::{OwnedEventId, OwnedUserId};
@@ -172,6 +171,12 @@ impl Chat {
             KeyCode::Enter => {
                 if let Some(message) = &self.selected_reply() {
                     message.open(self.matrix.clone())
+                }
+                Ok(consumed!())
+            }
+            KeyCode::Char('s') => {
+                if let Some(message) = &self.selected_reply() {
+                    message.save(self.matrix.clone())
                 }
                 Ok(consumed!())
             }
@@ -345,6 +350,7 @@ impl Chat {
         self.check_event_sender(&event);
         self.events.insert(OrderedEvent::new(event));
         self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+        self.pretty_members = OnceCell::new();
         self.set_fully_read();
     }
 
@@ -388,6 +394,7 @@ impl Chat {
         if joined.room_id() == self.room.room_id() {
             self.receipts.apply_event(content);
             self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+            self.pretty_members = OnceCell::new();
 
             // make sure we fetch any users we don't know about
             for id in Receipts::get_senders(content) {
@@ -429,9 +436,7 @@ impl Chat {
     }
 
     fn check_event_sender(&mut self, event: &AnyTimelineEvent) {
-        if let Some(user_id) = Message::get_sender(event) {
-            self.check_sender(user_id)
-        }
+        self.check_sender(&event.sender().to_owned());
     }
 
     fn check_sender(&mut self, user_id: &OwnedUserId) {
@@ -495,27 +500,46 @@ impl Chat {
 
     fn pretty_members(&self) -> &str {
         self.pretty_members.get_or_init(|| {
-            let mut names: Vec<&str> = self
-                .members
+            let mut members: Vec<&RoomMember> = vec![];
+
+            // first grab folks who have sent read receipts
+            let mut receipts = self.receipts.get_all();
+
+            while let Some(receipt) = receipts.pop() {
+                if let Some(member) = self.members.iter().find(|m| m.user_id() == receipt.user_id) {
+                    members.push(member);
+                }
+            }
+
+            // then walk all the events backwards, until we have a decent number
+            for event in self.events.iter().rev() {
+                if members.iter().any(|m| m.user_id() == event.sender()) {
+                    continue;
+                }
+
+                if let Some(member) = self.members.iter().find(|m| m.user_id() == event.sender()) {
+                    members.push(member);
+                }
+
+                if members.len() > 5 {
+                    break;
+                }
+            }
+
+            let names: Vec<&str> = members
                 .iter()
-                .filter(|m| m.membership() == &MembershipState::Join)
                 .map(|m| {
                     m.display_name()
-                        .or_else(|| Some(m.user_id().localpart()))
-                        .unwrap()
+                        .unwrap_or_else(|| m.user_id().localpart())
                         .split_whitespace()
                         .next()
                         .unwrap_or_default()
                 })
                 .collect();
 
-            names.sort();
-            names.dedup();
-
-            let total = names.len();
             let iter = names.into_iter().map(|n| n.to_string());
 
-            pretty_list(limit_list(iter, 5, total, Some("at least")))
+            pretty_list(limit_list(iter, 5, self.members.len(), Some("at least")))
         })
     }
 

@@ -51,7 +51,7 @@ use crate::handler::MatuiEvent::{
 };
 use crate::handler::{Batch, MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
-use crate::spawn::view_file;
+use crate::spawn::{save_file, view_file};
 
 use super::mime::mime_from_path;
 use super::notify::Notify;
@@ -63,6 +63,12 @@ pub struct Matrix {
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
+}
+
+/// What should we do with the file after we download it?
+pub enum AfterDownload {
+    View,
+    Save,
 }
 
 impl Default for Matrix {
@@ -305,19 +311,20 @@ impl Matrix {
         });
     }
 
-    pub fn open_content(&self, message: MessageType) {
+    pub fn download_content(&self, message: MessageType, after: AfterDownload) {
         let matrix = self.clone();
 
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Downloading file.".to_string(), 250));
 
-            let (content_type, request) = match message {
+            let (content_type, request, file_name) = match message {
                 Image(content) => (
                     content.info.unwrap().mimetype.unwrap(),
                     MediaRequest {
                         source: content.source,
                         format: MediaFormat::File,
                     },
+                    content.body,
                 ),
                 Video(content) => (
                     content.info.unwrap().mimetype.unwrap(),
@@ -325,6 +332,7 @@ impl Matrix {
                         source: content.source,
                         format: MediaFormat::File,
                     },
+                    content.body,
                 ),
                 _ => {
                     Matrix::send(Error("Unknown file type.".to_string()));
@@ -347,7 +355,18 @@ impl Matrix {
 
             Matrix::send(ProgressComplete);
 
-            tokio::task::spawn_blocking(move || view_file(handle));
+            match after {
+                AfterDownload::View => {
+                    tokio::task::spawn_blocking(move || view_file(handle));
+                }
+                AfterDownload::Save => match save_file(handle, &file_name) {
+                    Err(err) => Matrix::send(Error(err.to_string())),
+                    Ok(path) => Matrix::send(MatuiEvent::Confirm(
+                        "Download Complete".to_string(),
+                        format!("Saved to {}", path.to_str().unwrap()),
+                    )),
+                },
+            };
         });
     }
 

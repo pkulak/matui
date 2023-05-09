@@ -17,6 +17,7 @@ use ruma::events::AnyTimelineEvent;
 
 #[derive(Clone, Debug)]
 pub enum MatuiEvent {
+    Confirm(String, String),
     Error(String),
     LoginComplete,
     LoginRequired,
@@ -50,6 +51,9 @@ pub struct Batch {
 
 pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
     match event {
+        MatuiEvent::Confirm(header, msg) => {
+            app.set_popup(Popup::Error(Error::with_heading(header, msg)));
+        }
         MatuiEvent::Error(msg) => {
             app.set_popup(Popup::Error(Error::new(msg)));
         }
@@ -62,6 +66,10 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::LoginComplete => {
             app.popup = None;
         }
+        MatuiEvent::ProgressStarted(msg, delay) => {
+            app.set_popup(Popup::Progress(Progress::new(&msg, delay)))
+        }
+        MatuiEvent::ProgressComplete => app.popup = None,
 
         // Let the chat update when we learn about room membership
         MatuiEvent::RoomMember(room, member) => {
@@ -69,10 +77,6 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.room_member_event(room, member);
             }
         }
-        MatuiEvent::ProgressStarted(msg, delay) => {
-            app.set_popup(Popup::Progress(Progress::new(&msg, delay)))
-        }
-        MatuiEvent::ProgressComplete => app.popup = None,
         MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::SyncStarted(st) => {
             match st {

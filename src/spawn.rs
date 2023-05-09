@@ -1,15 +1,22 @@
 use anyhow::{bail, Context};
 use image::imageops::FilterType;
+use lazy_static::lazy_static;
 use linkify::LinkFinder;
 use log::error;
 use matrix_sdk::media::MediaFileHandle;
 use native_dialog::FileDialog;
 use notify_rust::Hint;
+use regex::Regex;
 use std::env::var;
+use std::fs;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tempfile::Builder;
+
+lazy_static! {
+    static ref FILE_RE: Regex = Regex::new(r"-([0-9]+)(\.|$)").unwrap();
+}
 
 pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
     let home = dirs::home_dir().context("no home directory")?;
@@ -93,6 +100,46 @@ pub fn view_file(handle: MediaFileHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn save_file(handle: MediaFileHandle, file_name: &str) -> anyhow::Result<PathBuf> {
+    let mut destination = dirs::download_dir().context("no download directory")?;
+    destination.push(file_name);
+    let destination = make_unique(destination);
+    fs::copy(handle.path(), &destination)?;
+    Ok(destination)
+}
+
+pub fn make_unique(mut path: PathBuf) -> PathBuf {
+    loop {
+        if !path.exists() {
+            return path;
+        }
+
+        path.set_file_name(next_file_name(
+            path.file_name().expect("no file name").to_str().unwrap(),
+        ));
+    }
+}
+
+fn next_file_name(og: &str) -> String {
+    // if there's already a version, increment
+    if let Some(cap) = FILE_RE.captures_iter(og).next() {
+        if let Ok(version) = cap[1].parse::<usize>() {
+            let replacement = format!("-{}$2", version + 1);
+            return FILE_RE.replace(og, replacement).to_string();
+        }
+    }
+
+    // if there's an extension, start a new version just before
+    if og.contains('.') {
+        let reversed: String = og.chars().rev().collect();
+        let replaced = reversed.replacen('.', ".1-", 1);
+        return replaced.chars().rev().collect();
+    }
+
+    // otherwise, just throw it on the end
+    format!("{}-1", og)
+}
+
 pub fn view_text(text: &str) {
     let finder = LinkFinder::new();
 
@@ -126,4 +173,30 @@ pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> a
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_next_file_first() {
+        assert_eq!(next_file_name("image.jpg"), "image-1.jpg");
+    }
+
+    #[test]
+    fn test_next_file_second() {
+        assert_eq!(next_file_name("image-1.jpg"), "image-2.jpg");
+    }
+
+    #[test]
+    fn test_next_file_too_many() {
+        assert_eq!(next_file_name("image-375.jpg"), "image-376.jpg");
+    }
+
+    #[test]
+    fn test_next_no_ext() {
+        assert_eq!(next_file_name("image"), "image-1");
+        assert_eq!(next_file_name("image-42"), "image-43");
+    }
 }
