@@ -1,15 +1,15 @@
 [package]
 name = "matui"
-version = "0.1.1"
+version = "0.3.0"
 authors = ["Phil Kulak"]
 edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
 chrono = "0.4"
-crossterm = "0.26"
+crossterm = "0.25"
 config = { version = "0.13", features = ["toml"] }
-dirs = "5.0"
+dirs = "4.0"
 emojis = "0.5"
 futures = "0.3.24"
 image = "0.24"
