@@ -14,7 +14,7 @@ use crate::{consumed, limit_list, pretty_list, truncate, KeyCombo};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
-use matrix_sdk::room::{Joined, RoomMember};
+use matrix_sdk::room::{Joined, Room, RoomMember};
 use once_cell::sync::OnceCell;
 use ruma::events::receipt::ReceiptEventContent;
 use ruma::events::room::message::MessageType::Text;
@@ -395,10 +395,17 @@ impl Chat {
             self.receipts.apply_event(content);
             self.messages = make_message_list(&self.events, &self.members, &self.receipts);
             self.pretty_members = OnceCell::new();
+            let me = self.matrix.me();
 
             // make sure we fetch any users we don't know about
             for id in Receipts::get_senders(content) {
                 self.check_sender(id);
+
+                // if it's us, that's essentially a room visit (clear notifications)
+                if id == &me {
+                    self.matrix.room_visit_event(Room::Joined(joined.clone()));
+                    info!("room viewed based on receipt");
+                }
             }
         }
     }
