@@ -528,23 +528,19 @@ impl Chat {
                     members.push(member);
                 }
 
-                if members.len() > 5 {
+                if members.len() > 5 || members.len() == self.members.len() {
                     break;
                 }
             }
 
-            let names: Vec<&str> = members
-                .iter()
-                .map(|m| {
-                    m.display_name()
-                        .unwrap_or_else(|| m.user_id().localpart())
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or_default()
-                })
-                .collect();
-
-            let iter = names.into_iter().map(|n| n.to_string());
+            let iter = members.iter().map(|m| {
+                m.display_name()
+                    .unwrap_or_else(|| m.user_id().localpart())
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            });
 
             pretty_list(limit_list(iter, 5, self.members.len(), Some("at least")))
         })
