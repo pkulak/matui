@@ -65,6 +65,21 @@ The only requirement is an editor, and the $EDITOR environmental variable should
 be set. Vim is highly recommended, as Matui is optimized for it. When using Vim,
 the editor is started in insert mode for new messages and Enter sends them.
 
+## Text Entry
+
+Having Enter send a message is nice for messaging, but it then begs to have
+Shift+Enter insert a new line. Unfortunately, that's not possible without
+modifying your terminal config to send the key bindings that Neovim expects.
+In Alacritty, it would be this:
+
+```
+key_bindings:
+  - { key: Return, mods: Shift, chars: "\x1b[13;2u" }
+```
+
+Once that is setup, Matui will open Neovim (if that's your default editor)
+with keys mapped such that Shift+Enter inserts a new line.
+
 ## File Viewing
 
 You will probably want to view attachements and should make sure xdg-open works

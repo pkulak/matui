@@ -55,9 +55,15 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
 
     // set up vim just right, if that's what we're using
     if editor.ends_with("vim") || editor.ends_with("vi") {
-        // if the file is empty, open in insert, and map enter to save and quit
         if existing.is_none() {
+            // open in insert mode
             command.arg("+star");
+
+            // map Shift+Enter to insert a new line (needs terminal keybindings)
+            command.arg("-c");
+            command.arg("imap <S-CR> <esc>o");
+
+            // map Enter to save and quit (works with no keybindings)
             command.arg("-c");
             command.arg("imap <C-M> <esc>:wq<enter>");
         }
