@@ -11,7 +11,6 @@ use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
 use crate::widgets::get_margin;
-use crate::widgets::rooms::Mode::{Insert, Normal};
 use crate::widgets::textinput::TextInput;
 use crate::widgets::EventResult::Consumed;
 
@@ -21,12 +20,6 @@ pub struct Rooms {
     pub textinput: TextInput,
     pub joined: Vec<DecoratedRoom>,
     pub list_state: Cell<ListState>,
-}
-
-#[derive(Eq, PartialEq)]
-enum Mode {
-    Normal,
-    Insert,
 }
 
 impl Rooms {
@@ -43,7 +36,7 @@ impl Rooms {
         }
 
         let mut ret = Self {
-            textinput: TextInput::new("Search".to_string(), false, false),
+            textinput: TextInput::new("Search".to_string(), true, false),
             joined: rooms,
             list_state: Cell::new(ListState::default()),
         };
@@ -58,23 +51,7 @@ impl Rooms {
 
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         match input.code {
-            KeyCode::Char('i') if self.mode() == Normal => {
-                self.set_mode(Insert);
-                consumed!()
-            }
-            KeyCode::Char('j') if self.mode() == Normal => {
-                self.next();
-                consumed!()
-            }
-            KeyCode::Char('k') if self.mode() == Normal => {
-                self.previous();
-                consumed!()
-            }
-            KeyCode::Esc if self.mode() == Insert => {
-                self.set_mode(Normal);
-                consumed!()
-            }
-            KeyCode::Esc | KeyCode::Char(' ') if self.mode() == Normal => close!(),
+            KeyCode::Esc => close!(),
             KeyCode::Down => {
                 self.next();
                 consumed!()
@@ -100,17 +77,6 @@ impl Rooms {
                 }
             }
         }
-    }
-
-    fn mode(&self) -> Mode {
-        if self.textinput.focused {
-            return Insert;
-        }
-        Normal
-    }
-
-    fn set_mode(&mut self, mode: Mode) {
-        self.textinput.focused = mode == Insert;
     }
 
     fn next(&mut self) {
