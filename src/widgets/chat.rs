@@ -426,6 +426,7 @@ impl Chat {
         let reset = self.messages.is_empty();
 
         self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+        self.pretty_members = OnceCell::new();
         self.fetching.set(false);
         self.set_fully_read();
 
