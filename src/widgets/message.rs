@@ -1,3 +1,4 @@
+use crate::widgets::message::MessageType::File;
 use chrono::TimeZone;
 use std::cell::Cell;
 use std::collections::BinaryHeap;
@@ -13,7 +14,8 @@ use once_cell::unsync::OnceCell;
 use ruma::events::relation::{InReplyTo, Replacement};
 use ruma::events::room::message::MessageType::{self, Image, Text, Video};
 use ruma::events::room::message::{
-    ImageMessageEventContent, Relation, TextMessageEventContent, VideoMessageEventContent,
+    FileMessageEventContent, ImageMessageEventContent, Relation, TextMessageEventContent,
+    VideoMessageEventContent,
 };
 use ruma::events::room::redaction::RoomRedactionEvent;
 use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
@@ -76,6 +78,7 @@ impl Message {
             Text(TextMessageEventContent { body, .. }) => body,
             Image(ImageMessageEventContent { body, .. }) => body,
             Video(VideoMessageEventContent { body, .. }) => body,
+            File(FileMessageEventContent { body, .. }) => body,
             _ => "unknown",
         }
     }
@@ -150,6 +153,7 @@ impl Message {
         match &self.body {
             Image(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
+            File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             Text(_) => view_text(self.display()),
             _ => {}
         }
@@ -159,6 +163,7 @@ impl Message {
         match &self.body {
             Image(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
+            File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             _ => {}
         }
     }
@@ -174,7 +179,7 @@ impl Message {
             let c = c.clone();
 
             let body = match c.content.msgtype {
-                Text(_) | Image(_) | Video(_) => c.content.msgtype,
+                Text(_) | Image(_) | Video(_) | File(_) => c.content.msgtype,
                 _ => return None,
             };
 

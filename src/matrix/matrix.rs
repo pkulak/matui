@@ -1,3 +1,4 @@
+use crate::matrix::matrix::MessageType::File;
 use std::{fs, thread};
 
 use std::path::{Path, PathBuf};
@@ -327,6 +328,14 @@ impl Matrix {
                     content.body,
                 ),
                 Video(content) => (
+                    content.info.unwrap().mimetype.unwrap(),
+                    MediaRequest {
+                        source: content.source,
+                        format: MediaFormat::File,
+                    },
+                    content.body,
+                ),
+                File(content) => (
                     content.info.unwrap().mimetype.unwrap(),
                     MediaRequest {
                         source: content.source,
