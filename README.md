@@ -31,8 +31,6 @@ Matui is packaged for the AUR: `paru -S matui`.
 Modal UIs can be a bit overwhelming, but thankfully chat isn't terribly
 complicated. Especially if you don't implement too many features.
 
-## Chat Window
-
 | Key   | Description                                            |
 |-------|--------------------------------------------------------|
 | Space | Show the room switcher.                                |
@@ -47,15 +45,6 @@ complicated. Especially if you don't implement too many features.
 | v     | View the selected message in the external editor.      | 
 | V     | View the current room in the external editor.          | 
 | u     | Upload a file.                                         | 
-
-## Rooms Window
-
-| Key | Description                                     |
-|-----|-------------------------------------------------|
-| j*  | Select one room down.                           | 
-| k*  | Select one room up.                             | 
-| i   | Search for a room.                              | 
-| esc | Leave search mode, or close the popup.          | 
 
 \* arrow keys are fine too
 
