@@ -25,10 +25,10 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::Deref;
 
-use tui::buffer::Buffer;
-use tui::layout::{Alignment, Constraint, Corner, Direction, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::widgets::{
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Alignment, Constraint, Corner, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{
     Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
 };
 

@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
 
 use crate::widgets::get_margin;
-use tui::buffer::Buffer;
-use tui::layout::Direction::Vertical;
-use tui::layout::{Constraint, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Direction::Vertical;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 const FRAMES: &[&str] = &[
     "⠁", "⠂", "⠄", "⡀", "⡈", "⡐", "⡠", "⣀", "⣁", "⣂", "⣄", "⣌", "⣔", "⣤", "⣥", "⣦", "⣮", "⣶", "⣷",

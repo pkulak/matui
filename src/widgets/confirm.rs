@@ -2,10 +2,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use matrix_sdk::room::Joined;
 use ruma::OwnedEventId;
-use tui::buffer::Buffer;
-use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::widgets::button::Button;
 use crate::widgets::{focus_next, Focusable};

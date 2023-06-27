@@ -11,6 +11,9 @@ use crate::{limit_list, pretty_list};
 use chrono::offset::Local;
 use matrix_sdk::room::RoomMember;
 use once_cell::unsync::OnceCell;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::ListItem;
 use ruma::events::relation::{InReplyTo, Replacement};
 use ruma::events::room::message::MessageType::{self, Image, Text, Video};
 use ruma::events::room::message::{
@@ -25,9 +28,6 @@ use ruma::events::AnyTimelineEvent;
 use ruma::events::AnyTimelineEvent::MessageLike;
 use ruma::events::MessageLikeEvent;
 use ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId};
-use tui::style::{Color, Style};
-use tui::text::{Span, Spans};
-use tui::widgets::ListItem;
 
 use super::receipts::Receipt;
 
@@ -451,10 +451,10 @@ impl Message {
     }
 
     pub fn to_list_items(&self, width: usize) -> Vec<ListItem> {
-        let items: Vec<tui::text::Text> = self
+        let items: Vec<ratatui::text::Text> = self
             .to_list_items_internal(self.display(), width)
             .into_iter()
-            .map(|spans| tui::text::Text::from(Spans::from(spans)))
+            .map(|spans| ratatui::text::Text::from(Line::from(spans)))
             .collect();
 
         items.into_iter().rev().map(ListItem::new).collect()
