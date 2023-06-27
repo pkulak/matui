@@ -4,9 +4,9 @@ use matui::event::{Event, EventHandler};
 use matui::handler::{handle_app_event, handle_blur_event, handle_focus_event, handle_key_event};
 use matui::settings::watch_settings_forever;
 use matui::tui::Tui;
+use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
 use std::io;
-use tui::backend::CrosstermBackend;
-use tui::Terminal;
 
 fn main() -> anyhow::Result<()> {
     if cfg!(debug_assertions) {

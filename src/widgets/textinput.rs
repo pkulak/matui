@@ -2,11 +2,11 @@ use crate::consumed;
 use crate::widgets::EventResult::Ignored;
 use crate::widgets::{EventResult, Focusable};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use std::cell::Cell;
-use tui::buffer::Buffer;
-use tui::layout::{Constraint, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::widgets::{Block, Borders, Paragraph, Widget};
 
 pub struct TextInput {
     title: String,
@@ -217,9 +217,9 @@ impl Widget for TextInputWidget<'_> {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use tui::buffer::Buffer;
-    use tui::layout::Rect;
-    use tui::widgets::Widget;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::widgets::Widget;
 
     use crate::widgets::textinput::TextInput;
 

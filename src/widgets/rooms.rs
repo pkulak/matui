@@ -4,11 +4,11 @@ use crate::{close, consumed};
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::room::Joined;
 use std::cell::Cell;
-use tui::buffer::Buffer;
-use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::text::{Span, Spans, Text};
-use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
 use crate::widgets::get_margin;
 use crate::widgets::textinput::TextInput;
@@ -212,7 +212,7 @@ fn make_list_item(joined: &DecoratedRoom) -> ListItem {
         ));
     }
 
-    let mut lines = Text::from(Spans::from(spans));
+    let mut lines = Text::from(Line::from(spans));
 
     let spans = vec![Span::styled(
         format!(
@@ -223,7 +223,7 @@ fn make_list_item(joined: &DecoratedRoom) -> ListItem {
         Style::default().fg(Color::DarkGray),
     )];
 
-    lines.extend(Text::from(Spans::from(spans)));
+    lines.extend(Text::from(Line::from(spans)));
 
     ListItem::new(lines)
 }

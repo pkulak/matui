@@ -17,8 +17,8 @@ use crate::widgets::progress::Progress;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
-use tui::backend::Backend;
-use tui::terminal::Frame;
+use ratatui::backend::Backend;
+use ratatui::terminal::Frame;
 
 static SENDER: OnceCell<Mutex<Sender<Event>>> = OnceCell::new();
 

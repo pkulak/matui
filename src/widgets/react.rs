@@ -2,11 +2,11 @@ use crate::matrix::matrix::center_emoji;
 use crate::settings::get_settings;
 use crossterm::event::{KeyCode, KeyEvent};
 use std::cell::Cell;
-use tui::buffer::Buffer;
-use tui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::text::Text;
-use tui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::text::Text;
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
 
 use crate::widgets::get_margin;
 

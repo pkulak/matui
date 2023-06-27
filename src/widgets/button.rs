@@ -1,8 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use tui::buffer::Buffer;
-use tui::layout::{Constraint, Direction, Layout, Rect};
-use tui::style::{Color, Style};
-use tui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::consumed;
 use crate::widgets::{get_margin, Focusable};
