@@ -61,12 +61,15 @@ impl Rooms {
                 consumed!()
             }
             KeyCode::Enter => {
-                let room = self.selected_room().inner();
-
-                Consumed(Box::new(|app| {
-                    app.select_room(room);
-                    app.close_popup();
-                }))
+                if let Some(selected_room) = self.selected_room() {
+                    let room = selected_room.inner();
+                    Consumed(Box::new(|app| {
+                        app.select_room(room);
+                        app.close_popup();
+                    }))
+                } else {
+                    EventResult::Ignored
+                }
             }
             _ => {
                 if let Consumed(_) = self.textinput.key_event(input) {
@@ -130,10 +133,16 @@ impl Rooms {
             .collect()
     }
 
-    fn selected_room(&self) -> DecoratedRoom {
+    fn selected_room(&self) -> Option<DecoratedRoom> {
+        let filtered_rooms = self.filtered_rooms();
+
+        if filtered_rooms.is_empty() {
+            return None;
+        }
+
         match self.list_state.take().selected() {
-            Some(i) => self.filtered_rooms()[i].clone(),
-            None => self.filtered_rooms()[0].clone(),
+            Some(i) => Some(filtered_rooms[i].clone()),
+            None => Some(filtered_rooms[0].clone()),
         }
     }
 }
