@@ -38,6 +38,10 @@ pub fn is_muted(room: &RoomId) -> bool {
     muted.contains(&room.to_string())
 }
 
+pub fn clean_vim() -> bool {
+    get_settings().get("clean_vim").unwrap_or_default()
+}
+
 fn watch_internal() {
     let (tx, rx) = channel();
 

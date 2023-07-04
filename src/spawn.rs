@@ -14,6 +14,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tempfile::Builder;
 
+use crate::settings::clean_vim;
+
 lazy_static! {
     static ref FILE_RE: Regex = Regex::new(r"-([0-9]+)(\.|$)").unwrap();
 }
@@ -55,6 +57,10 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
 
     // set up vim just right, if that's what we're using
     if editor.ends_with("vim") || editor.ends_with("vi") {
+        if clean_vim() {
+            command.arg("--clean");
+        }
+
         if existing.is_none() {
             // open in insert mode
             command.arg("+star");

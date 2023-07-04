@@ -87,6 +87,9 @@ reactions = [ "❤️", "👍", "👎", "😂", "‼️", "❓️"]
 
 # Muted rooms.
 muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
+
+# Useful if your custom config is interfering with Enter key bindings
+clear_vim = true
 ```
 
 The config file is hot reloaded and can generally be found at
