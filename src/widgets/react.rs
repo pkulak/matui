@@ -46,7 +46,7 @@ impl React {
 
         let reactions = additions
             .into_iter()
-            .chain(reactions.into_iter())
+            .chain(reactions)
             .map(|emoji| {
                 let description = if let Some(e) = emojis::get(&emoji) {
                     format!(

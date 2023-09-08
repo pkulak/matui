@@ -402,7 +402,7 @@ impl Message {
             }
         }
 
-        &body[marker..body.len()]
+        &body[std::cmp::min(marker, body.len())..body.len()]
     }
 
     pub fn height(&self, width: usize, reply: bool) -> usize {
@@ -608,5 +608,28 @@ impl ReactionEvent {
             id,
             sender: Username::new(sender_id),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::widgets::message::Message;
+
+    #[test]
+    fn remove_matrix_headers() {
+        let msg = Message::remove_reply_header("> this is a header\n\nAnd this is a message.");
+        assert_eq!(msg, "And this is a message.");
+
+        let msg = Message::remove_reply_header("> this is a header\n\n");
+        assert_eq!(msg, "");
+
+        let msg = Message::remove_reply_header("> this is a header\n");
+        assert_eq!(msg, "");
+
+        let msg = Message::remove_reply_header("> this is a header");
+        assert_eq!(msg, "");
+
+        let msg = Message::remove_reply_header("message");
+        assert_eq!(msg, "message");
     }
 }
