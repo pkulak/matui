@@ -26,6 +26,47 @@ You can download the latest release, unpack it, and move `matui` to `/usr/bin`
 
 Matui is packaged for the AUR: `paru -S matui`.
 
+## Nix
+
+There is a `flake.nix` that can be used run temporarily locally, or to install on NixOS or a `home-manager` system.
+
+### Shell
+
+`nix run 'https://github.com/pkulak/matui.git'`
+
+### OS
+
+```nix
+{
+  inputs = {
+    matui.url = "github:pkulak/matui";
+  };
+  outputs =
+    inputs@{ self
+    , nixpkgs-unstable
+    , ...
+    }:
+    let
+      overlays = {
+        unstable = _: prev: {
+          unstable = import nixpkgs-unstable
+            {
+              inherit (prev.stdenv) system;
+            } // {
+            matui = inputs.matui.packages.${prev.stdenv.system}.matui;
+          };
+        };
+      };
+    in
+    {
+      <snip>;
+      packages = with pkgs; [
+        unstable.matui
+      ];
+    }
+}
+```
+
 # Keybindings
 
 Modal UIs can be a bit overwhelming, but thankfully chat isn't terribly
@@ -34,17 +75,17 @@ complicated. Especially if you don't implement too many features.
 | Key   | Description                                            |
 |-------|--------------------------------------------------------|
 | Space | Show the room switcher.                                |
-| j*    | Select one line down.                                  | 
-| k*    | Select one line up.                                    | 
-| i     | Create a new message using the external editor.        | 
-| Enter | Open the selected message (images, videos, urls, etc). | 
-| s     | Save the selected message (images and videos).         | 
-| c     | Edit the selected message in the external editor.      | 
-| r     | React to the selected message.                         | 
-| R     | Reply to the selected message.                         | 
-| v     | View the selected message in the external editor.      | 
-| V     | View the current room in the external editor.          | 
-| u     | Upload a file.                                         | 
+| j*    | Select one line down.                                  |
+| k*    | Select one line up.                                    |
+| i     | Create a new message using the external editor.        |
+| Enter | Open the selected message (images, videos, urls, etc). |
+| s     | Save the selected message (images and videos).         |
+| c     | Edit the selected message in the external editor.      |
+| r     | React to the selected message.                         |
+| R     | Reply to the selected message.                         |
+| v     | View the selected message in the external editor.      |
+| V     | View the current room in the external editor.          |
+| u     | Upload a file.                                         |
 
 \* arrow keys are fine too
 
