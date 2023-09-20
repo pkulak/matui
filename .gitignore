@@ -10,4 +10,5 @@ target/
 *.pdb
 
 .idea
+.vscode
 test.log

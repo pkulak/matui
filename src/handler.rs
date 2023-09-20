@@ -2,6 +2,7 @@ use crate::app::{App, Popup};
 use crate::matrix::matrix::format_emojis;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
+use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
@@ -189,6 +190,10 @@ pub fn handle_key_event(
         }
         KeyCode::Char('q') => {
             app.running = false;
+            return Ok(());
+        }
+        KeyCode::Char('?') => {
+            app.set_popup(Popup::Help(Help));
             return Ok(());
         }
         _ => {}
