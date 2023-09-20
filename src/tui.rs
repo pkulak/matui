@@ -1,5 +1,5 @@
 use crate::app::App;
-use crossterm::event::{DisableMouseCapture, EnableFocusChange};
+use crossterm::event::{DisableMouseCapture, EnableFocusChange, DisableFocusChange};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
@@ -51,7 +51,7 @@ impl<B: Backend> Tui<B> {
     /// It disables the raw mode and reverts back the terminal properties.
     pub fn exit(&mut self) -> anyhow::Result<()> {
         terminal::disable_raw_mode()?;
-        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableMouseCapture)?;
+        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableMouseCapture, DisableFocusChange)?;
         self.terminal.show_cursor()?;
         Ok(())
     }
