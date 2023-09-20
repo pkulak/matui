@@ -384,7 +384,7 @@ impl Matrix {
             Matrix::send(ProgressStarted("Sending message.".to_string(), 500));
 
             if let Err(err) = room
-                .send(RoomMessageEventContent::text_plain(message), None)
+                .send(RoomMessageEventContent::text_markdown(message), None)
                 .await
             {
                 Matrix::send(Error(err.to_string()));
@@ -406,7 +406,7 @@ impl Matrix {
                 }
             };
 
-            let reply = RoomMessageEventContent::text_plain(message)
+            let reply = RoomMessageEventContent::text_markdown(message)
                 .make_reply_to(&in_reply_to, ForwardThread::Yes);
 
             if let Err(err) = room.send(reply, None).await {
@@ -523,7 +523,7 @@ impl Matrix {
 
             if let Err(err) = room
                 .send(
-                    RoomMessageEventContent::text_plain(message)
+                    RoomMessageEventContent::text_markdown(message)
                         .make_replacement(id, reply_event.as_ref()),
                     None,
                 )
