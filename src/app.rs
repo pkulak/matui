@@ -13,6 +13,7 @@ use crate::matrix::matrix::Matrix;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;
+use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::signin::Signin;
@@ -145,6 +146,7 @@ pub enum Popup {
     Progress(Progress),
     Rooms(Rooms),
     Signin(Signin),
+    Help(Help)
 }
 
 impl Popup {
@@ -155,6 +157,7 @@ impl Popup {
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Rooms(w) => w.key_event(event),
             Popup::Signin(w) => w.key_event(event),
+            Popup::Help(w) => w.key_event(event)
         }
     }
 
@@ -171,6 +174,7 @@ impl Popup {
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.size()),
             Popup::Rooms(w) => frame.render_widget(w.widget(), frame.size()),
             Popup::Signin(w) => frame.render_widget(w.widget(), frame.size()),
+            Popup::Help(w) => frame.render_widget(w.widget(), frame.size()),
         }
     }
 }

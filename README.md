@@ -86,6 +86,7 @@ complicated. Especially if you don't implement too many features.
 | v     | View the selected message in the external editor.      |
 | V     | View the current room in the external editor.          |
 | u     | Upload a file.                                         |
+| ?     | Show this helper.                                      |
 
 \* arrow keys are fine too
 
