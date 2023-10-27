@@ -77,7 +77,6 @@ impl Widget for HelpWidget {
               Row::new(vec!["?", "Show this helper."]),
               Row::new(vec!["", "* arrow keys are fine too."]),
           ])
-          .style(Style::default().fg(Color::White))
           .header(
               Row::new(vec!["Key", "Description"])
                   .style(Style::default().fg(Color::Green))
