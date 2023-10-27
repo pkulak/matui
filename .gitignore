@@ -12,3 +12,6 @@ target/
 .idea
 .vscode
 test.log
+
+# generated direnv files
+.direnv
