@@ -25,6 +25,7 @@ pub mod settings;
 
 /// Using external apps to do our bidding
 pub mod spawn;
+pub mod video;
 
 pub fn limit_list<T>(iter: T, limit: usize, total: usize, prefix: Option<&str>) -> Vec<String>
 where

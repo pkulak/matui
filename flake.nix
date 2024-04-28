@@ -7,7 +7,7 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -37,8 +37,8 @@
             # won't be found by `openssl-sys` if it's in `nativeBuildInputs`
             buildInputs = with pkgs;
               [ openssl ];
-            nativeBuildInputs = with pkgs;
-              sharedDeps ++ [ ];
+            nativeBuildInputs = with pkgs; 
+              sharedDeps ++ [ ffmpeg ];
           };
           default = packages.matui;
         };

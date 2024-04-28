@@ -1,4 +1,5 @@
 use crate::matrix::matrix::MessageType::File;
+use crate::video::get_video_thumbnail;
 use std::{fs, thread};
 
 use std::path::{Path, PathBuf};
@@ -9,7 +10,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info};
-use matrix_sdk::attachment::AttachmentConfig;
+use matrix_sdk::attachment::{AttachmentConfig, Thumbnail};
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
 use matrix_sdk::media::{MediaFormat, MediaRequest};
@@ -26,6 +27,7 @@ use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessa
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::UserId;
 use matrix_sdk::{Client, LoopCtrl, ServerName, Session};
+use mime::IMAGE_JPEG;
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
@@ -444,8 +446,26 @@ impl Matrix {
                     }
                 };
 
+                // try to grab a thumbnail if it's a video
+                let config = if content_type.type_() == "video" {
+                    match get_video_thumbnail(&path) {
+                        Ok(data) => {
+                            let thumb = Thumbnail {
+                                data,
+                                content_type: IMAGE_JPEG,
+                                info: None,
+                            };
+
+                            AttachmentConfig::with_thumbnail(thumb)
+                        }
+                        _ => AttachmentConfig::new(),
+                    }
+                } else {
+                    AttachmentConfig::new()
+                };
+
                 if let Err(err) = room
-                    .send_attachment(&name, &content_type, data, AttachmentConfig::new())
+                    .send_attachment(&name, &content_type, data, config)
                     .await
                 {
                     Matrix::send(Error(err.to_string()));

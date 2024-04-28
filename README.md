@@ -111,6 +111,8 @@ key_bindings:
 Once that is setup, Matui will open Neovim (if that's your default editor)
 with keys mapped such that Shift+Enter inserts a new line.
 
+Another nice option is to map `jx` to `<Esc>:x<CR>` in insert mode.
+
 ## File Viewing
 
 You will probably want to view attachements and should make sure xdg-open works
@@ -119,7 +121,8 @@ with all the files you care about. I recommend [mpv](https://mpv.io/) and
 
 ## File Uploading
 
-KDialog and/or Zenity is required to show the file picker.
+KDialog and/or Zenity is required to show the file picker. FFMpeg is also
+required to create thumbnails if you upload videos.
 
 # Configuration Example
 
