@@ -1,5 +1,6 @@
 use crate::widgets::message::MessageType::File;
 use chrono::TimeZone;
+use human_bytes::human_bytes;
 use std::cell::Cell;
 use std::collections::BinaryHeap;
 use std::time::{Duration, SystemTime};
@@ -73,18 +74,48 @@ impl Message {
         }
     }
 
-    fn display_body(body: &MessageType) -> &str {
+    fn display_body(body: &MessageType) -> String {
         match body {
-            Text(TextMessageEventContent { body, .. }) => body,
-            Image(ImageMessageEventContent { body, .. }) => body,
-            Video(VideoMessageEventContent { body, .. }) => body,
-            File(FileMessageEventContent { body, .. }) => body,
-            _ => "unknown",
+            Text(TextMessageEventContent { body, .. }) => body.to_string(),
+            Image(ImageMessageEventContent { body, info, .. }) => {
+                if let Some(info) = info {
+                    if let Some(size) = info.size {
+                        format!("Image: {} ({})", body, human_bytes(size))
+                    } else {
+                        body.to_string()
+                    }
+                } else {
+                    body.to_string()
+                }
+            }
+            Video(VideoMessageEventContent { body, info, .. }) => {
+                if let Some(info) = info {
+                    if let Some(size) = info.size {
+                        format!("Video: {} ({})", body, human_bytes(size))
+                    } else {
+                        body.to_string()
+                    }
+                } else {
+                    body.to_string()
+                }
+            }
+            File(FileMessageEventContent { body, info, .. }) => {
+                if let Some(info) = info {
+                    if let Some(size) = info.size {
+                        format!("File: {} ({})", body, human_bytes(size))
+                    } else {
+                        body.to_string()
+                    }
+                } else {
+                    body.to_string()
+                }
+            }
+            _ => "unknown".to_string(),
         }
     }
 
-    pub fn display(&self) -> &str {
-        Message::display_body(&self.body).trim()
+    pub fn display(&self) -> String {
+        Message::display_body(&self.body).trim().to_string()
     }
 
     pub fn display_full(&self) -> String {
@@ -97,7 +128,7 @@ impl Message {
             self.sender.id
         );
 
-        ret.push_str(self.display());
+        ret.push_str(&self.display());
         ret.push_str("\n\n");
 
         if !self.reactions.is_empty() {
@@ -122,7 +153,7 @@ impl Message {
 
             for h in reversed_history.into_iter() {
                 ret.push_str("* ");
-                ret.push_str(Message::display_body(&h));
+                ret.push_str(&Message::display_body(&h));
                 ret.push('\n');
             }
         }
@@ -154,7 +185,7 @@ impl Message {
             Image(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
-            Text(_) => view_text(self.display()),
+            Text(_) => view_text(&self.display()),
             _ => {}
         }
     }
@@ -413,9 +444,9 @@ impl Message {
         }
 
         let mut height = if reply {
-            textwrap::wrap(Message::remove_reply_header(self.display()), width).len()
+            textwrap::wrap(Message::remove_reply_header(&self.display()), width).len()
         } else {
-            textwrap::wrap(self.display(), width).len()
+            textwrap::wrap(&self.display(), width).len()
         };
 
         height += 2;
@@ -452,7 +483,7 @@ impl Message {
 
     pub fn to_list_items(&self, width: usize) -> Vec<ListItem> {
         let items: Vec<ratatui::text::Text> = self
-            .to_list_items_internal(self.display(), width)
+            .to_list_items_internal(&self.display(), width)
             .into_iter()
             .map(|spans| ratatui::text::Text::from(Line::from(spans)))
             .collect();
@@ -522,7 +553,8 @@ impl Message {
 
         // replies
         for (i, r) in self.replies.iter().enumerate() {
-            let body = Message::remove_reply_header(r.display());
+            let reply = r.display();
+            let body = Message::remove_reply_header(&reply);
             let mut reply_lines = r.to_list_items_internal(body, width - 2);
             Message::indent(&mut reply_lines, i == 0);
             lines.append(&mut reply_lines);

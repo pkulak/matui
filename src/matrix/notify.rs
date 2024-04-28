@@ -80,7 +80,7 @@ impl Notify {
             let avatar = Notify::get_image(room.clone(), user.clone()).await;
             let body = message.display();
 
-            self.send_notification(user.name(), body, room, avatar)?;
+            self.send_notification(user.name(), &body, room, avatar)?;
         }
 
         Ok(())

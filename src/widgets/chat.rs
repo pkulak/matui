@@ -190,7 +190,7 @@ impl Chat {
                     handler.park();
 
                     let result = get_text(
-                        Some(message.display()),
+                        Some(&message.display()),
                         Some(&format!(
                             "<!-- Edit your message above to change it in {}. -->",
                             self.room.name
@@ -259,7 +259,7 @@ impl Chat {
                     .initial_indent("  ")
                     .subsequent_indent("  ");
 
-                let body = textwrap::wrap(message.display(), &wrap_options).join("\n");
+                let body = textwrap::wrap(&message.display(), &wrap_options).join("\n");
 
                 let send = self.matrix.begin_typing(self.room());
 

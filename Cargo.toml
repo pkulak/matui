@@ -12,6 +12,7 @@ config = { version = "0.13", features = ["toml"] }
 dirs = "4.0"
 emojis = "0.5"
 futures = "0.3.24"
+human_bytes = "0.4.3"
 image = "0.24"
 linkify = "0.9"
 lazy_static = "1.4"
