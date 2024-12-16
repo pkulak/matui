@@ -2,13 +2,15 @@ use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::{close, consumed};
 use crossterm::event::{KeyCode, KeyEvent};
-use matrix_sdk::room::Joined;
-use std::cell::Cell;
+use matrix_sdk::room::Room;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget};
+use ratatui::widgets::{
+    Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget,
+};
+use std::cell::Cell;
 
 use crate::widgets::get_margin;
 use crate::widgets::textinput::TextInput;
@@ -18,12 +20,12 @@ use super::EventResult;
 
 pub struct Rooms {
     pub textinput: TextInput,
-    pub joined: Vec<DecoratedRoom>,
+    pub room: Vec<DecoratedRoom>,
     pub list_state: Cell<ListState>,
 }
 
 impl Rooms {
-    pub fn new(matrix: Matrix, current: Option<Joined>) -> Self {
+    pub fn new(matrix: Matrix, current: Option<Room>) -> Self {
         let mut rooms = matrix.fetch_rooms();
         sort_rooms(&mut rooms);
 
@@ -37,7 +39,7 @@ impl Rooms {
 
         let mut ret = Self {
             textinput: TextInput::new("Search".to_string(), true, false),
-            joined: rooms,
+            room: rooms,
             list_state: Cell::new(ListState::default()),
         };
 
@@ -127,7 +129,7 @@ impl Rooms {
     fn filtered_rooms(&self) -> Vec<&DecoratedRoom> {
         let pattern = self.textinput.value.to_lowercase();
 
-        self.joined
+        self.room
             .iter()
             .filter(|j| j.name.to_string().to_lowercase().contains(pattern.as_str()))
             .collect()
@@ -200,10 +202,10 @@ impl Widget for RoomsWidget<'_> {
     }
 }
 
-fn make_list_item(joined: &DecoratedRoom) -> ListItem {
-    let name = joined.name.to_string();
-    let unread = joined.unread_count();
-    let highlights = joined.highlight_count();
+fn make_list_item(room: &DecoratedRoom) -> ListItem {
+    let name = room.name.to_string();
+    let unread = room.unread_count();
+    let highlights = room.highlight_count();
 
     let mut spans = vec![Span::from(name)];
 
@@ -223,14 +225,18 @@ fn make_list_item(joined: &DecoratedRoom) -> ListItem {
 
     let mut lines = Text::from(Line::from(spans));
 
-    let spans = vec![Span::styled(
-        format!(
-            "{}: {}",
-            joined.last_sender.clone().unwrap_or_default(),
-            joined.last_message.clone().unwrap_or_default()
-        ),
-        Style::default().fg(Color::DarkGray),
-    )];
+    let spans = if room.last_sender.is_none() || room.last_message.is_none() {
+        vec![Span::styled("", Style::default().fg(Color::DarkGray))]
+    } else {
+        vec![Span::styled(
+            format!(
+                "{}: {}",
+                room.last_sender.clone().unwrap_or_default(),
+                room.last_message.clone().unwrap_or_default()
+            ),
+            Style::default().fg(Color::DarkGray),
+        )]
+    };
 
     lines.extend(Text::from(Line::from(spans)));
 

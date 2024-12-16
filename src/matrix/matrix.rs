@@ -12,9 +12,11 @@ use futures::stream::StreamExt;
 use log::{error, info};
 use matrix_sdk::attachment::{AttachmentConfig, Thumbnail};
 use matrix_sdk::config::SyncSettings;
+use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
-use matrix_sdk::media::{MediaFormat, MediaRequest};
-use matrix_sdk::room::{Joined, MessagesOptions, Receipts, Room};
+use matrix_sdk::matrix_auth::MatrixSession;
+use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
+use matrix_sdk::room::{MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
@@ -26,7 +28,8 @@ use matrix_sdk::ruma::events::key::verification::start::{
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::UserId;
-use matrix_sdk::{Client, LoopCtrl, ServerName, Session};
+use matrix_sdk::RoomState;
+use matrix_sdk::{Client, LoopCtrl, ServerName};
 use mime::IMAGE_JPEG;
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
@@ -37,14 +40,14 @@ use ruma::events::reaction::ReactionEventContent;
 use ruma::events::relation::Annotation;
 use ruma::events::room::message::MessageType::Image;
 use ruma::events::room::message::MessageType::Video;
-use ruma::events::room::message::{ForwardThread, RoomMessageEventContent};
+use ruma::events::room::message::{AddMentions, ForwardThread, RoomMessageEventContent};
 use ruma::events::{
     AnyMessageLikeEvent, AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, AnyTimelineEvent,
-    MessageLikeEvent, OriginalMessageLikeEvent, SyncEphemeralRoomEvent,
+    MessageLikeEvent, SyncEphemeralRoomEvent,
 };
-use ruma::{OwnedEventId, OwnedUserId, UInt};
+use ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
-use tokio::runtime::Runtime;
+use tokio::runtime::{Handle, Runtime};
 
 use crate::app::App;
 use crate::event::Event;
@@ -62,7 +65,7 @@ use super::notify::Notify;
 /// A Matrix client that maintains it's own Tokio runtime
 #[derive(Clone)]
 pub struct Matrix {
-    rt: Arc<Runtime>,
+    rt: Handle,
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
@@ -74,24 +77,16 @@ pub enum AfterDownload {
     Save,
 }
 
-impl Default for Matrix {
-    fn default() -> Self {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .unwrap();
-
+impl Matrix {
+    pub fn new(runtime: &Runtime) -> Self {
         Matrix {
-            rt: Arc::new(rt),
+            rt: runtime.handle().clone(),
             client: Arc::new(OnceCell::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
         }
     }
-}
 
-impl Matrix {
     fn dirs() -> (PathBuf, PathBuf) {
         let data_dir = dirs::data_dir()
             .expect("no data directory found")
@@ -108,7 +103,7 @@ impl Matrix {
             .to_owned()
     }
 
-    pub fn wrap_room(&self, room: &Joined) -> Option<DecoratedRoom> {
+    pub fn wrap_room(&self, room: &Room) -> Option<DecoratedRoom> {
         self.room_cache.wrap(room)
     }
 
@@ -271,7 +266,7 @@ impl Matrix {
         self.room_cache.get_rooms()
     }
 
-    pub fn fetch_messages(&self, room: Joined, cursor: Option<String>) {
+    pub fn fetch_messages(&self, room: Room, cursor: Option<String>) {
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Fetching more messages.".to_string(), 1000));
 
@@ -291,7 +286,10 @@ impl Matrix {
             let unpacked: Vec<AnyTimelineEvent> = messages
                 .chunk
                 .iter()
-                .map(|te| te.event.deserialize().expect("could not deserialize"))
+                .map(|te| {
+                    Matrix::deserialize_event(te, room.room_id().into())
+                        .expect("could not deserialize")
+                })
                 .collect();
 
             let batch = Batch {
@@ -305,7 +303,7 @@ impl Matrix {
         });
     }
 
-    pub fn fetch_room_member(&self, room: Joined, id: OwnedUserId) {
+    pub fn fetch_room_member(&self, room: Room, id: OwnedUserId) {
         self.rt.spawn(async move {
             match room.get_member(&id).await {
                 Ok(Some(member)) => Matrix::send(MatuiEvent::RoomMember(room, member)),
@@ -323,7 +321,7 @@ impl Matrix {
             let (content_type, request, file_name) = match message {
                 Image(content) => (
                     content.info.unwrap().mimetype.unwrap(),
-                    MediaRequest {
+                    MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
                     },
@@ -331,7 +329,7 @@ impl Matrix {
                 ),
                 Video(content) => (
                     content.info.unwrap().mimetype.unwrap(),
-                    MediaRequest {
+                    MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
                     },
@@ -339,7 +337,7 @@ impl Matrix {
                 ),
                 File(content) => (
                     content.info.unwrap().mimetype.unwrap(),
-                    MediaRequest {
+                    MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
                     },
@@ -354,7 +352,7 @@ impl Matrix {
             let handle = match matrix
                 .client()
                 .media()
-                .get_media_file(&request, &content_type.parse().unwrap(), true)
+                .get_media_file(&request, None, &content_type.parse().unwrap(), true, None)
                 .await
             {
                 Err(err) => {
@@ -381,12 +379,12 @@ impl Matrix {
         });
     }
 
-    pub fn send_text_message(&self, room: Joined, message: String) {
+    pub fn send_text_message(&self, room: Room, message: String) {
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Sending message.".to_string(), 500));
 
             if let Err(err) = room
-                .send(RoomMessageEventContent::text_markdown(message), None)
+                .send(RoomMessageEventContent::text_markdown(message))
                 .await
             {
                 Matrix::send(Error(err.to_string()));
@@ -396,7 +394,7 @@ impl Matrix {
         });
     }
 
-    pub fn send_reply(&self, room: Joined, message: String, in_reply_to: OwnedEventId) {
+    pub fn send_reply(&self, room: Room, message: String, in_reply_to: OwnedEventId) {
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Sending message.".to_string(), 500));
 
@@ -408,10 +406,17 @@ impl Matrix {
                 }
             };
 
-            let reply = RoomMessageEventContent::text_markdown(message)
-                .make_reply_to(&in_reply_to, ForwardThread::Yes);
+            let Some(og_in_reply_to) = in_reply_to.as_original() else {
+                return;
+            };
 
-            if let Err(err) = room.send(reply, None).await {
+            let reply = RoomMessageEventContent::text_markdown(message).make_reply_to(
+                og_in_reply_to,
+                ForwardThread::Yes,
+                AddMentions::No,
+            );
+
+            if let Err(err) = room.send(reply).await {
                 Matrix::send(Error(err.to_string()));
             }
 
@@ -419,7 +424,7 @@ impl Matrix {
         });
     }
 
-    pub fn send_attachements(&self, room: Joined, paths: Vec<PathBuf>) {
+    pub fn send_attachements(&self, room: Room, paths: Vec<PathBuf>) {
         let total = paths.len();
 
         self.rt.spawn(async move {
@@ -476,15 +481,12 @@ impl Matrix {
         });
     }
 
-    pub fn send_reaction(&self, room: Joined, event_id: OwnedEventId, key: String) {
+    pub fn send_reaction(&self, room: Room, event_id: OwnedEventId, key: String) {
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Sending reaction.".to_string(), 500));
 
             if let Err(err) = room
-                .send(
-                    ReactionEventContent::new(Annotation::new(event_id, key)),
-                    None,
-                )
+                .send(ReactionEventContent::new(Annotation::new(event_id, key)))
                 .await
             {
                 Matrix::send(Error(err.to_string()));
@@ -494,7 +496,7 @@ impl Matrix {
         });
     }
 
-    pub fn redact_event(&self, room: Joined, event_id: OwnedEventId) {
+    pub fn redact_event(&self, room: Room, event_id: OwnedEventId) {
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Removing.".to_string(), 500));
 
@@ -507,26 +509,51 @@ impl Matrix {
     }
 
     async fn get_room_event(
-        room: &Joined,
+        room: &Room,
         id: &OwnedEventId,
-    ) -> Option<OriginalMessageLikeEvent<RoomMessageEventContent>> {
-        match room.event(id).await {
-            Ok(event) => match event.event.deserialize().unwrap() {
-                AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomMessage(
-                    MessageLikeEvent::Original(c),
-                )) => Some(c),
-                _ => None,
-            },
+    ) -> Option<MessageLikeEvent<RoomMessageEventContent>> {
+        match room.event(id, Option::None).await {
+            Ok(event) => Matrix::get_room_message_event(room, &event),
             Err(err) => {
-                error!("could not get in_reply_to event: {}", err);
+                error!("could not get room event: {}", err);
                 None
             }
         }
     }
 
+    pub fn deserialize_event(
+        event: &TimelineEvent,
+        room_id: OwnedRoomId,
+    ) -> anyhow::Result<AnyTimelineEvent> {
+        match &event.kind {
+            TimelineEventKind::Decrypted(decrypted) => Ok(decrypted.event.deserialize()?.into()),
+            TimelineEventKind::PlainText { event } => {
+                Ok(event.deserialize()?.into_full_event(room_id))
+            }
+            TimelineEventKind::UnableToDecrypt { event, .. } => {
+                Ok(event.deserialize()?.into_full_event(room_id))
+            }
+        }
+    }
+
+    pub fn get_room_message_event(
+        room: &Room,
+        event: &TimelineEvent,
+    ) -> Option<MessageLikeEvent<RoomMessageEventContent>> {
+        let Ok(event) = Matrix::deserialize_event(event, room.room_id().to_owned()) else {
+            return None;
+        };
+
+        let AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomMessage(event)) = event else {
+            return None;
+        };
+
+        Some(event)
+    }
+
     pub fn replace_event(
         &self,
-        room: Joined,
+        room: Room,
         id: OwnedEventId,
         message: String,
         in_reply_to: Option<OwnedEventId>,
@@ -534,8 +561,21 @@ impl Matrix {
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Editing message.".to_string(), 500));
 
+            let Some(event) = Matrix::get_room_event(&room, &id).await else {
+                return;
+            };
+
+            let Some(event) = event.as_original() else {
+                return;
+            };
+
             let reply_event = match in_reply_to {
                 Some(id) => Matrix::get_room_event(&room, &id).await,
+                None => None,
+            };
+
+            let reply_event = match reply_event {
+                Some(e) => e.as_original().cloned(),
                 None => None,
             };
 
@@ -544,8 +584,7 @@ impl Matrix {
             if let Err(err) = room
                 .send(
                     RoomMessageEventContent::text_markdown(message)
-                        .make_replacement(id, reply_event.as_ref()),
-                    None,
+                        .make_replacement(event, reply_event.as_ref()),
                 )
                 .await
             {
@@ -588,7 +627,7 @@ impl Matrix {
         self.room_cache.room_visit_event(room);
     }
 
-    pub fn read_to(&self, room: Joined, to: OwnedEventId) {
+    pub fn read_to(&self, room: Room, to: OwnedEventId) {
         let receipts = Receipts::new()
             .fully_read_marker(Some(to.clone()))
             .public_read_receipt(Some(to));
@@ -600,7 +639,7 @@ impl Matrix {
         });
     }
 
-    pub fn typing_notification(&self, room: Joined, typing: bool) {
+    pub fn typing_notification(&self, room: Room, typing: bool) {
         self.rt.spawn(async move {
             if let Err(e) = room.typing_notice(typing).await {
                 error!("could not send typing notice: {}", e);
@@ -608,7 +647,7 @@ impl Matrix {
         });
     }
 
-    pub fn begin_typing(&self, room: Joined) -> Sender<()> {
+    pub fn begin_typing(&self, room: Room) -> Sender<()> {
         let (send, recv) = channel();
         let matrix = self.clone();
 
@@ -622,7 +661,7 @@ impl Matrix {
         send
     }
 
-    pub fn end_typing(&self, room: Joined, send: Sender<()>) {
+    pub fn end_typing(&self, room: Room, send: Sender<()>) {
         send.send(()).expect("could not stop thread");
         self.typing_notification(room, false);
     }
@@ -640,7 +679,7 @@ struct ClientSession {
 #[derive(Debug, Serialize, Deserialize)]
 struct FullSession {
     client_session: ClientSession,
-    user_session: Session,
+    user_session: MatrixSession,
     sync_token: Option<String>,
 }
 
@@ -658,7 +697,7 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
     // Build the client with the previous settings from the session.
     let client = Client::builder()
         .server_name(homeserver)
-        .sled_store(client_session.db_path, Some(&client_session.passphrase))
+        .sqlite_store(client_session.db_path, Some(&client_session.passphrase))
         .build()
         .await?;
 
@@ -679,13 +718,15 @@ async fn login(
 
     let (client, client_session) = build_client(data_dir, id).await?;
 
-    client
+    let matrix_auth = client.matrix_auth();
+
+    matrix_auth
         .login_username(username, password)
         .initial_device_display_name("Matui")
         .send()
         .await?;
 
-    let user_session = client
+    let user_session = matrix_auth
         .session()
         .context("Your logged-in user has no session.")?;
 
@@ -720,7 +761,7 @@ async fn build_client(data_dir: &Path, id: &UserId) -> anyhow::Result<(Client, C
 
     let client = Client::builder()
         .server_name(id.server_name())
-        .sled_store(&db_path, Some(passphrase.as_str()))
+        .sqlite_store(&db_path, Some(passphrase.as_str()))
         .build()
         .await?;
 
@@ -799,20 +840,19 @@ fn add_default_handlers(client: Client) {
     });
 
     client.add_event_handler(|event: AnySyncEphemeralRoomEvent, room: Room| async move {
-        let joined = match room {
-            Room::Joined(j) => j,
-            _ => return,
-        };
+        if room.state() != RoomState::Joined {
+            return;
+        }
 
         match event {
             AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent { content: c }) => {
                 App::get_sender()
-                    .send(Matui(MatuiEvent::Typing(joined, c.user_ids)))
+                    .send(Matui(MatuiEvent::Typing(room, c.user_ids)))
                     .expect("could not send typing event");
             }
             AnySyncEphemeralRoomEvent::Receipt(SyncEphemeralRoomEvent { content: c }) => {
                 App::get_sender()
-                    .send(Matui(MatuiEvent::Receipt(joined, c)))
+                    .send(Matui(MatuiEvent::Receipt(room, c)))
                     .expect("could not send typing event");
             }
             _ => {}
@@ -920,6 +960,7 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
             SasState::Accepted { .. } => info!("verification accepted"),
             SasState::Confirmed => info!("verification confirmed"),
             SasState::Cancelled(_) => info!("verification cancelled"),
+            SasState::Created { .. } => info!("verification created"),
         }
     }
 }

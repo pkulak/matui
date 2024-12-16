@@ -7,6 +7,7 @@ use matui::tui::Tui;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
+use std::time::Duration;
 
 fn main() -> anyhow::Result<()> {
     if cfg!(debug_assertions) {
@@ -24,8 +25,14 @@ fn main() -> anyhow::Result<()> {
     let mut tui = Tui::new(terminal);
     tui.init()?;
 
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+
     // Create an application.
-    let mut app = App::new(sender);
+    let mut app = App::new(sender, &runtime);
 
     // Start the main loop.
     while app.running {
@@ -44,5 +51,9 @@ fn main() -> anyhow::Result<()> {
 
     // Exit the user interface.
     tui.exit()?;
+
+    // And then the runtime
+    runtime.shutdown_timeout(Duration::from_secs(10));
+
     Ok(())
 }

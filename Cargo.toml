@@ -18,6 +18,7 @@ linkify = "0.9"
 lazy_static = "1.4"
 log = "0.4"
 log-panics = { version = "2", features = ["with-backtrace"] }
+matrix-sdk = { version = "0.8.0", features = ["markdown"] }
 mime = "0.3"
 native-dialog = "0.5.1"
 notify-rust = { version = "4.8", features = ["images"] }
@@ -27,24 +28,13 @@ open = "4.0"
 rand = "0.8.5"
 ratatui = "0.21.0"
 regex = "1.8.1"
+ruma = "0.11.1"
 serde = { version = "1.0", features = ["derive"] }
 simple-logging = "2.0"
 tempfile = "3"
 textwrap = "0.16"
 timeago = "0.4"
 tokio = { version = "1.24.2", features = ["rt-multi-thread"] }
-
-[dependencies.matrix-sdk]
-git = "https://github.com/matrix-org/matrix-rust-sdk.git"
-rev = "8b5de47acb9486c8dbbbe5764c7c97c24b6997b8"
-features = [
-    "markdown",
-    "image-rayon",
-]
-
-[dependencies.ruma]
-git = "https://github.com/ruma/ruma.git"
-rev = "8eea3e05490fa9a318f9ed66c3a75272e6ef0ee5"
 
 [profile.release]
 lto = true

@@ -142,9 +142,7 @@ impl Notify {
         std::thread::spawn(move || {
             handle.on_close({
                 move |_: CloseReason| {
-                    if let Room::Joined(joined) = room.clone() {
-                        Matrix::send(MatuiEvent::RoomSelected(joined));
-                    }
+                    Matrix::send(MatuiEvent::RoomSelected(room.clone()));
                 }
             });
         });

@@ -21,7 +21,7 @@ use ruma::events::room::message::{
     FileMessageEventContent, ImageMessageEventContent, Relation, TextMessageEventContent,
     VideoMessageEventContent,
 };
-use ruma::events::room::redaction::RoomRedactionEvent;
+use ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
 use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
 use ruma::events::AnyMessageLikeEvent::RoomMessage;
 use ruma::events::AnyMessageLikeEvent::RoomRedaction;
@@ -93,10 +93,10 @@ impl Message {
                     if let Some(size) = info.size {
                         format!("Video: {} ({})", body, human_bytes(size))
                     } else {
-                        body.to_string()
+                        "no size".to_string()
                     }
                 } else {
-                    body.to_string()
+                    "no info".to_string()
                 }
             }
             File(FileMessageEventContent { body, info, .. }) => {
@@ -272,7 +272,7 @@ impl Message {
             {
                 for message in messages.iter_mut() {
                     if message.id == id {
-                        message.edit(content);
+                        message.edit(content.msgtype);
                         return MergeResult::Consumed;
                     }
                 }
@@ -341,9 +341,12 @@ impl Message {
         }
 
         // redactions (don't track the result)
-        if let MessageLike(RoomRedaction(RoomRedactionEvent::Original(c))) = event {
-            let id = &c.redacts;
-
+        if let MessageLike(RoomRedaction(RoomRedactionEvent::Original(
+            OriginalRoomRedactionEvent {
+                redacts: Some(id), ..
+            },
+        ))) = event
+        {
             // first look in the reactions
             for message in messages.iter_mut() {
                 for r in &mut message.reactions {

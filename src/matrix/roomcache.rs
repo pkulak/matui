@@ -1,18 +1,16 @@
-use anyhow::{bail, Context};
+use anyhow::Context;
 use futures::future::join_all;
 use log::info;
-use matrix_sdk::room::{Joined, MessagesOptions, Room};
-use matrix_sdk::{Client, DisplayName};
+use matrix_sdk::room::{MessagesOptions, Room};
+
+use matrix_sdk::{Client, RoomDisplayName, RoomState};
 use ruma::api::Direction;
-use ruma::events::room::message::MessageType::Text;
-use ruma::events::room::message::TextMessageEventContent;
-use ruma::events::AnyMessageLikeEvent::RoomEncrypted;
-use ruma::events::AnyMessageLikeEvent::RoomMessage;
+use ruma::events::room::message::MessageType;
 use ruma::events::AnyTimelineEvent;
-use ruma::events::AnyTimelineEvent::MessageLike;
-use ruma::events::MessageLikeEvent::Original;
 use ruma::{MilliSecondsSinceUnixEpoch, RoomId};
 use std::sync::Mutex;
+
+use crate::matrix::matrix::Matrix;
 
 pub struct RoomCache {
     rooms: Mutex<Vec<DecoratedRoom>>,
@@ -33,7 +31,7 @@ impl RoomCache {
         let rooms = client
             .joined_rooms()
             .into_iter()
-            .map(|r| async move { DecoratedRoom::from_joined(r.clone()).await });
+            .map(|r| async move { DecoratedRoom::from_room(r.clone()).await });
 
         let rooms = join_all(rooms).await;
 
@@ -47,11 +45,11 @@ impl RoomCache {
         self.rooms.lock().expect("to unlock rooms").clone()
     }
 
-    pub fn wrap(&self, joined: &Joined) -> Option<DecoratedRoom> {
+    pub fn wrap(&self, room: &Room) -> Option<DecoratedRoom> {
         let rooms = self.rooms.lock().expect("to unlock rooms");
 
         for r in rooms.iter() {
-            if r.inner.room_id() == joined.room_id() {
+            if r.inner.room_id() == room.room_id() {
                 return Some(r.clone());
             }
         }
@@ -71,12 +69,16 @@ impl RoomCache {
     }
 
     pub async fn timeline_event(&self, client: Client, event: &AnyTimelineEvent) {
-        let joined = match client.get_joined_room(event.room_id()) {
-            Some(joined) => joined,
+        let room = match client.get_room(event.room_id()) {
+            Some(room) => room,
             None => return,
         };
 
-        let decorated = DecoratedRoom::from_joined(joined).await;
+        if room.state() != RoomState::Joined {
+            return;
+        }
+
+        let decorated = DecoratedRoom::from_room(room).await;
 
         let mut rooms = self.rooms.lock().expect("to unlock rooms");
 
@@ -94,8 +96,8 @@ impl RoomCache {
 
 #[derive(Clone)]
 pub struct DecoratedRoom {
-    pub inner: Joined,
-    pub name: DisplayName,
+    pub inner: Room,
+    pub name: RoomDisplayName,
     pub visited: bool,
     pub last_message: Option<String>,
     pub last_sender: Option<String>,
@@ -107,7 +109,7 @@ impl DecoratedRoom {
         self.inner.room_id()
     }
 
-    pub fn inner(&self) -> Joined {
+    pub fn inner(&self) -> Room {
         self.inner.clone()
     }
 
@@ -127,55 +129,61 @@ impl DecoratedRoom {
         self.inner.unread_notification_counts().highlight_count
     }
 
-    async fn from_joined(room: Joined) -> DecoratedRoom {
-        let name = room.display_name().await.unwrap_or(DisplayName::Empty);
+    async fn from_room(room: Room) -> DecoratedRoom {
+        let name = room
+            .compute_display_name()
+            .await
+            .unwrap_or(RoomDisplayName::Empty);
 
-        async fn inner(room: Joined, name: DisplayName) -> anyhow::Result<DecoratedRoom> {
+        async fn inner(room: Room, name: RoomDisplayName) -> anyhow::Result<DecoratedRoom> {
             let messages = room
                 .messages(MessagesOptions::new(Direction::Backward))
                 .await?
                 .chunk;
 
-            if messages.is_empty() {
-                bail!("no events for room")
-            }
+            let mut latest_ts: Option<MilliSecondsSinceUnixEpoch> = None;
 
             for e in &messages {
-                let deserialized = e.event.deserialize();
-
-                if let Ok(MessageLike(RoomMessage(Original(c)))) = deserialized {
-                    let body = match c.content.msgtype {
-                        Text(TextMessageEventContent { body, .. }) => body,
-                        _ => "".to_string(),
-                    };
-
-                    let member = room.get_member(&c.sender).await?.context("not a member")?;
-
-                    return Ok(DecoratedRoom {
-                        inner: room,
-                        name,
-                        visited: false,
-                        last_message: Some(body),
-                        last_sender: Some(member.name().to_string()),
-                        last_ts: Some(c.origin_server_ts),
-                    });
+                if latest_ts.is_none() {
+                    if let Ok(event) = Matrix::deserialize_event(e, room.room_id().to_owned()) {
+                        latest_ts = Some(event.origin_server_ts());
+                    }
                 }
 
-                if let Ok(MessageLike(RoomEncrypted(Original(c)))) = deserialized {
-                    let member = room.get_member(&c.sender).await?.context("not a member")?;
+                let Some(event) = Matrix::get_room_message_event(&room, e) else {
+                    continue;
+                };
 
-                    return Ok(DecoratedRoom {
-                        inner: room,
-                        name,
-                        visited: false,
-                        last_message: Some("encrypted".to_string()),
-                        last_sender: Some(member.name().to_string()),
-                        last_ts: Some(c.origin_server_ts),
-                    });
-                }
+                let (body, og) = if let Some(og) = event.as_original() {
+                    if let MessageType::Text(content) = &og.content.msgtype {
+                        (content.body.clone(), og)
+                    } else {
+                        ("".to_string(), og)
+                    }
+                } else {
+                    continue;
+                };
+
+                let member = room.get_member(&og.sender).await?.context("not a member")?;
+
+                return Ok(DecoratedRoom {
+                    inner: room,
+                    name,
+                    visited: false,
+                    last_message: Some(body),
+                    last_sender: Some(member.name().to_string()),
+                    last_ts: latest_ts,
+                });
             }
 
-            bail!("no message found");
+            Ok(DecoratedRoom {
+                inner: room,
+                name,
+                visited: false,
+                last_message: None,
+                last_sender: None,
+                last_ts: latest_ts,
+            })
         }
 
         match inner(room.clone(), name.clone()).await {

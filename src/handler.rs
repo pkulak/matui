@@ -13,7 +13,7 @@ use ruma::OwnedUserId;
 
 use crate::event::EventHandler;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
-use matrix_sdk::room::{Joined, Room, RoomMember};
+use matrix_sdk::room::{Room, RoomMember};
 use ruma::events::AnyTimelineEvent;
 
 #[derive(Clone, Debug)]
@@ -25,14 +25,14 @@ pub enum MatuiEvent {
     LoginStarted,
     ProgressStarted(String, u64),
     ProgressComplete,
-    Receipt(Joined, ReceiptEventContent),
-    RoomMember(Joined, RoomMember),
-    RoomSelected(Joined),
+    Receipt(Room, ReceiptEventContent),
+    RoomMember(Room, RoomMember),
+    RoomSelected(Room),
     SyncComplete,
     SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
     TimelineBatch(Batch),
-    Typing(Joined, Vec<OwnedUserId>),
+    Typing(Room, Vec<OwnedUserId>),
     VerificationStarted(SasVerification, [Emoji; 7]),
     VerificationCompleted,
 }
@@ -45,7 +45,7 @@ pub enum SyncType {
 
 #[derive(Clone, Debug)]
 pub struct Batch {
-    pub room: Joined,
+    pub room: Room,
     pub events: Vec<AnyTimelineEvent>,
     pub cursor: Option<String>,
 }
@@ -116,17 +116,17 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.batch_event(batch);
             }
         }
-        MatuiEvent::Typing(joined, ids) => {
+        MatuiEvent::Typing(room, ids) => {
             if let Some(c) = &mut app.chat {
-                c.typing_event(joined, ids);
+                c.typing_event(room, ids);
             }
         }
-        MatuiEvent::Receipt(joined, content) => {
+        MatuiEvent::Receipt(room, content) => {
             if let Some(c) = &mut app.chat {
-                c.receipt_event(&joined, &content);
+                c.receipt_event(&room, &content);
             }
 
-            app.receipts.push_back((joined, content));
+            app.receipts.push_back((room, content));
 
             if app.receipts.len() > 500 {
                 app.receipts.pop_front();
@@ -225,9 +225,7 @@ pub fn handle_focus_event(app: &mut App) {
     // we consider it a room "visit" if you come back to the app and view a
     // room
     if let Some(chat) = &mut app.chat {
-        app.matrix
-            .clone()
-            .room_visit_event(Room::Joined(chat.room()));
+        app.matrix.clone().room_visit_event(chat.room());
         chat.focus_event();
     }
 }

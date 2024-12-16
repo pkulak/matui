@@ -14,7 +14,7 @@ use crate::{consumed, limit_list, pretty_list, truncate, KeyCombo};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent};
 use log::info;
-use matrix_sdk::room::{Joined, Room, RoomMember};
+use matrix_sdk::room::{Room, RoomMember};
 use once_cell::sync::OnceCell;
 use ruma::events::receipt::ReceiptEventContent;
 use ruma::events::room::message::MessageType::Text;
@@ -59,7 +59,7 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub fn try_new(matrix: Matrix, room: Joined) -> Option<Self> {
+    pub fn try_new(matrix: Matrix, room: Room) -> Option<Self> {
         let decorated_room = match matrix.wrap_room(&room) {
             Some(r) => r,
             None => return None,
@@ -354,8 +354,8 @@ impl Chat {
         self.set_fully_read();
     }
 
-    pub fn typing_event(&mut self, joined: Joined, ids: Vec<OwnedUserId>) {
-        if joined.room_id() != self.room.room_id() {
+    pub fn typing_event(&mut self, room: Room, ids: Vec<OwnedUserId>) {
+        if room.room_id() != self.room.room_id() {
             return;
         }
 
@@ -390,8 +390,8 @@ impl Chat {
         ));
     }
 
-    pub fn receipt_event(&mut self, joined: &Joined, content: &ReceiptEventContent) {
-        if joined.room_id() == self.room.room_id() {
+    pub fn receipt_event(&mut self, room: &Room, content: &ReceiptEventContent) {
+        if room.room_id() == self.room.room_id() {
             self.receipts.apply_event(content);
             self.messages = make_message_list(&self.events, &self.members, &self.receipts);
             self.pretty_members = OnceCell::new();
@@ -403,7 +403,7 @@ impl Chat {
 
                 // if it's us, that's essentially a room visit (clear notifications)
                 if id == &me {
-                    self.matrix.room_visit_event(Room::Joined(joined.clone()));
+                    self.matrix.room_visit_event(room.clone());
                     info!("room viewed based on receipt");
                 }
             }
@@ -502,7 +502,7 @@ impl Chat {
         ret
     }
 
-    pub fn room(&self) -> Joined {
+    pub fn room(&self) -> Room {
         self.room.inner()
     }
 
@@ -547,7 +547,7 @@ impl Chat {
         })
     }
 
-    pub fn room_member_event(&mut self, room: Joined, member: RoomMember) {
+    pub fn room_member_event(&mut self, room: Room, member: RoomMember) {
         if self.room.room_id() != room.room_id() {
             return;
         }

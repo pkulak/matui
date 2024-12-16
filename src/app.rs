@@ -1,12 +1,13 @@
 use crossterm::event::KeyEvent;
 use log::warn;
 use matrix_sdk::encryption::verification::SasVerification;
-use matrix_sdk::room::{Joined, Room};
+use matrix_sdk::room::Room;
 use once_cell::sync::OnceCell;
 use ruma::events::receipt::ReceiptEventContent;
 use std::collections::VecDeque;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
+use tokio::runtime::Runtime;
 
 use crate::event::Event;
 use crate::matrix::matrix::Matrix;
@@ -43,12 +44,12 @@ pub struct App {
     pub sas: Option<SasVerification>,
 
     /// Keep old read receipts around
-    pub receipts: VecDeque<(Joined, ReceiptEventContent)>,
+    pub receipts: VecDeque<(Room, ReceiptEventContent)>,
 }
 
 impl App {
-    pub fn new(send: Sender<Event>) -> Self {
-        let matrix = Matrix::default();
+    pub fn new(send: Sender<Event>, runtime: &Runtime) -> Self {
+        let matrix = Matrix::new(runtime);
 
         // Save the sender for future threads.
         SENDER
@@ -76,7 +77,7 @@ impl App {
             .clone()
     }
 
-    pub fn select_room(&mut self, room: Joined) {
+    pub fn select_room(&mut self, room: Room) {
         // don't re-select the same room
         if let Some(c) = &self.chat {
             if c.room().room_id() == room.room_id() {
@@ -92,12 +93,12 @@ impl App {
         }
 
         // feed all the cached read receipts back in
-        for (joined, content) in &self.receipts {
-            chat.as_mut().unwrap().receipt_event(joined, content);
+        for (room, content) in &self.receipts {
+            chat.as_mut().unwrap().receipt_event(room, content);
         }
 
         self.chat = chat;
-        self.matrix.room_visit_event(Room::Joined(room));
+        self.matrix.room_visit_event(room);
     }
 
     pub fn set_popup(&mut self, popup: Popup) {
@@ -146,7 +147,7 @@ pub enum Popup {
     Progress(Progress),
     Rooms(Rooms),
     Signin(Signin),
-    Help(Help)
+    Help(Help),
 }
 
 impl Popup {
@@ -157,7 +158,7 @@ impl Popup {
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Rooms(w) => w.key_event(event),
             Popup::Signin(w) => w.key_event(event),
-            Popup::Help(w) => w.key_event(event)
+            Popup::Help(w) => w.key_event(event),
         }
     }
 
