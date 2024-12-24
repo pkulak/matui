@@ -6,6 +6,13 @@ possible and there's no mouse support (yet, at least).
 
 ![Matui](https://github.com/pkulak/matui/blob/main/screenshot.png?raw=true "The main chat window.")
 
+# Upgrade Notes
+
+The underlying Matrix SDK that Matui uses has recently switched from Sled to
+Sqlite. That's great, because it seems to have fixed the horrible data store
+bloat issues, but it also means you will need to blow away your `.local/share/matui`
+directory and log in again after upgrading.
+
 # Who should use this client?
 
 Anyone who wants a very simple terminal Matrix client, but runs another client
