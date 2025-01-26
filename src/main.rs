@@ -3,10 +3,6 @@ use matui::app::App;
 use matui::event::{Event, EventHandler};
 use matui::handler::{handle_app_event, handle_blur_event, handle_focus_event, handle_key_event};
 use matui::settings::watch_settings_forever;
-use matui::tui::Tui;
-use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
-use std::io;
 use std::time::Duration;
 
 fn main() -> anyhow::Result<()> {
@@ -17,13 +13,12 @@ fn main() -> anyhow::Result<()> {
 
     watch_settings_forever();
 
-    // Initialize the terminal user interface.
-    let backend = CrosstermBackend::new(io::stderr());
-    let terminal = Terminal::new(backend)?;
+    // Initialize the terminal user interface
+    let mut terminal = ratatui::init();
+
+    // and the event system.
     let events = EventHandler::new(250);
     let sender = events.sender();
-    let mut tui = Tui::new(terminal);
-    tui.init()?;
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -36,21 +31,23 @@ fn main() -> anyhow::Result<()> {
 
     // Start the main loop.
     while app.running {
-        tui.draw(&mut app, false)?;
+        terminal.draw(|f| app.render(f))?;
 
         // Handle events.
         match events.next()? {
             Event::Tick => app.tick(),
-            Event::Redraw => tui.draw(&mut app, true)?,
             Event::Key(key_event) => handle_key_event(key_event, &mut app, &events)?,
             Event::Matui(app_event) => handle_app_event(app_event, &mut app),
             Event::Focus => handle_focus_event(&mut app),
             Event::Blur => handle_blur_event(&mut app),
+            Event::Redraw => {
+                let _ = terminal.clear();
+            }
         }
     }
 
     // Exit the user interface.
-    tui.exit()?;
+    ratatui::restore();
 
     // And then the runtime
     runtime.shutdown_timeout(Duration::from_secs(10));

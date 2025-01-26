@@ -19,8 +19,7 @@ use crate::widgets::progress::Progress;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
-use ratatui::backend::Backend;
-use ratatui::terminal::Frame;
+use ratatui::Frame;
 
 static SENDER: OnceCell<Mutex<Sender<Event>>> = OnceCell::new();
 
@@ -127,9 +126,9 @@ impl App {
     }
 
     /// Renders the user interface widgets.
-    pub fn render<B: Backend>(&mut self, frame: &mut Frame<'_, B>) {
+    pub fn render(&mut self, frame: &mut Frame) {
         if let Some(c) = &self.chat {
-            frame.render_widget(c.widget(), frame.size());
+            frame.render_widget(c.widget(), frame.area());
         }
 
         if let Some(w) = &self.popup {
@@ -168,14 +167,14 @@ impl Popup {
         };
     }
 
-    pub fn render<B: Backend>(&self, frame: &mut Frame<'_, B>) {
+    pub fn render(&self, frame: &mut Frame) {
         match self {
-            Popup::Confirm(w) => frame.render_widget(w.widget(), frame.size()),
-            Popup::Error(w) => frame.render_widget(w.widget(), frame.size()),
-            Popup::Progress(w) => frame.render_widget(w.widget(), frame.size()),
-            Popup::Rooms(w) => frame.render_widget(w.widget(), frame.size()),
-            Popup::Signin(w) => frame.render_widget(w.widget(), frame.size()),
-            Popup::Help(w) => frame.render_widget(w.widget(), frame.size()),
+            Popup::Confirm(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Rooms(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Signin(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Help(w) => frame.render_widget(w.widget(), frame.area()),
         }
     }
 }

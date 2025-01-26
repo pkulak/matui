@@ -26,10 +26,11 @@ use std::collections::BTreeSet;
 use std::ops::Deref;
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Corner, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{
-    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+    Block, BorderType, Borders, List, ListDirection, ListItem, ListState, Paragraph,
+    StatefulWidget, Widget,
 };
 
 use super::confirm::{Confirm, ConfirmBehavior};
@@ -839,7 +840,7 @@ impl Widget for ChatWidget<'_> {
 
         let list = List::new(items)
             .highlight_symbol("> ")
-            .start_corner(Corner::BottomLeft);
+            .direction(ListDirection::BottomToTop);
 
         StatefulWidget::render(list, splits[1], buf, &mut list_state);
         self.chat.list_state.set(list_state);
