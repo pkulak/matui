@@ -154,7 +154,7 @@ currently assumed.
 
 # See Also
 
-There's a much more mature Matrix TUI here:
+There's another really fun Matrix TUI here, with a lot of the same goals:
 
-[gomuks](https://github.com/tulir/gomuks)
+[iamb](https://github.com/ulyssa/iamb)
 
