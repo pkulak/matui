@@ -9,7 +9,7 @@ use notify_rust::Hint;
 use regex::Regex;
 use std::env::var;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tempfile::Builder;
@@ -32,7 +32,7 @@ pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
 
 pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<Option<String>> {
     let editor = &var("EDITOR").unwrap_or("/usr/bin/vi".to_string());
-    let mut tmpfile = Builder::new().suffix(".md").tempfile()?;
+    let tmpfile = Builder::new().suffix(".md").tempfile()?;
 
     let mut to_write = "".to_string();
 
@@ -85,12 +85,14 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
         bail!("Invalid status code.")
     }
 
-    let mut contents = String::new();
-    tmpfile.read_to_string(&mut contents)?;
+    let mut contents = fs::read_to_string(tmpfile.path())?;
 
     if let Some(str) = suffix {
         contents = contents.replace(str, "");
     }
+
+    // This should survive through read_to_string, but let's be sure.
+    drop(tmpfile);
 
     if contents.trim().is_empty() {
         return Ok(None);
