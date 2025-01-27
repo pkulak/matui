@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info};
-use matrix_sdk::attachment::{AttachmentConfig, Thumbnail};
+use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
@@ -30,7 +30,6 @@ use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::UserId;
 use matrix_sdk::RoomState;
 use matrix_sdk::{Client, LoopCtrl, ServerName};
-use mime::IMAGE_JPEG;
 use once_cell::sync::OnceCell;
 use rand::rngs::OsRng;
 use rand::{distributions::Alphanumeric, Rng};
@@ -454,15 +453,7 @@ impl Matrix {
                 // try to grab a thumbnail if it's a video
                 let config = if content_type.type_() == "video" {
                     match get_video_thumbnail(&path) {
-                        Ok(data) => {
-                            let thumb = Thumbnail {
-                                data,
-                                content_type: IMAGE_JPEG,
-                                info: None,
-                            };
-
-                            AttachmentConfig::with_thumbnail(thumb)
-                        }
+                        Ok(thumbnail) => AttachmentConfig::with_thumbnail(thumbnail),
                         _ => AttachmentConfig::new(),
                     }
                 } else {

@@ -160,7 +160,7 @@ impl Notify {
 
     fn write_image_to_file(img: Vec<u8>, path: &PathBuf) -> anyhow::Result<()> {
         let data = Cursor::new(img);
-        let reader = image::io::Reader::new(data).with_guessed_format()?;
+        let reader = image::ImageReader::new(data).with_guessed_format()?;
 
         let img = reader
             .decode()?
@@ -168,7 +168,7 @@ impl Notify {
 
         let file = OpenOptions::new().create_new(true).write(true).open(path)?;
 
-        img.write_to(&mut BufWriter::new(file), image::ImageOutputFormat::Png)?;
+        img.write_to(&mut BufWriter::new(file), image::ImageFormat::Png)?;
 
         Ok(())
     }

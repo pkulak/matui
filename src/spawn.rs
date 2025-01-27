@@ -169,7 +169,7 @@ pub fn view_text(text: &str) {
 pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> anyhow::Result<()> {
     if let Some(img) = image {
         let data = Cursor::new(img);
-        let reader = image::io::Reader::new(data).with_guessed_format()?;
+        let reader = image::ImageReader::new(data).with_guessed_format()?;
 
         let img = reader
             .decode()?

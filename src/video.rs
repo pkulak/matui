@@ -1,4 +1,8 @@
-use std::{fs, path::Path, process::Command};
+use std::{fs, io::Cursor, path::Path, process::Command};
+
+use matrix_sdk::attachment::Thumbnail;
+use mime::IMAGE_JPEG;
+use ruma::UInt;
 
 pub fn get_video_duration(path: &Path) -> anyhow::Result<f32> {
     let mut command = Command::new("ffprobe");
@@ -20,7 +24,7 @@ pub fn get_video_duration(path: &Path) -> anyhow::Result<f32> {
     Ok(output.trim().parse()?)
 }
 
-pub fn get_video_thumbnail(path: &Path) -> anyhow::Result<Vec<u8>> {
+pub fn get_video_thumbnail(path: &Path) -> anyhow::Result<Thumbnail> {
     let duration = get_video_duration(path)?;
     let tmpfile = tempfile::Builder::new().suffix(".jpg").tempfile()?;
 
@@ -39,5 +43,22 @@ pub fn get_video_thumbnail(path: &Path) -> anyhow::Result<Vec<u8>> {
         anyhow::bail!("could not create thumbnail");
     }
 
-    Ok(fs::read(tmpfile.path())?)
+    let data = fs::read(tmpfile.path())?;
+    let cursor = Cursor::new(&data);
+
+    let img = image::ImageReader::new(cursor)
+        .with_guessed_format()?
+        .decode()?;
+
+    let size = data.len() as u64;
+
+    let thumb = Thumbnail {
+        data,
+        content_type: IMAGE_JPEG,
+        size: UInt::new(size).unwrap(),
+        width: img.width().into(),
+        height: img.height().into(),
+    };
+
+    Ok(thumb)
 }
