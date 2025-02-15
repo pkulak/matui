@@ -1,4 +1,5 @@
 use crate::app::{App, Popup};
+use crate::delaytimer::DelayTimer;
 use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
@@ -24,6 +25,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::Deref;
+use std::time::Duration;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -53,6 +55,7 @@ pub struct Chat {
     total_list_items: Cell<usize>,
     focus: bool,
     delete_combo: KeyCombo,
+    redraw_timer: DelayTimer,
 
     members: Vec<RoomMember>,
     pretty_members: OnceCell<String>,
@@ -67,6 +70,14 @@ impl Chat {
         };
 
         matrix.fetch_messages(room, None);
+
+        // the diffing doesn't always work perfectly on some terminals;
+        // redraw the screen after intense events like scrolling
+        let redraw_timer = DelayTimer::new(Duration::from_millis(250), || {
+            App::get_sender()
+                .send(Event::Redraw)
+                .expect("could not send redraw event");
+        });
 
         Some(Self {
             matrix: matrix.clone(),
@@ -84,6 +95,7 @@ impl Chat {
             total_list_items: Cell::new(0),
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
+            redraw_timer,
             members: vec![],
             pretty_members: OnceCell::new(),
             in_flight: vec![],
@@ -837,12 +849,19 @@ impl Widget for ChatWidget<'_> {
         self.chat.total_list_items.set(items.len());
 
         let mut list_state = self.chat.list_state.take();
+        let prev_offset = list_state.offset();
 
         let list = List::new(items)
             .highlight_symbol("> ")
             .direction(ListDirection::BottomToTop);
 
         StatefulWidget::render(list, splits[1], buf, &mut list_state);
+
+        // note when we scroll
+        if prev_offset != list_state.offset() {
+            self.chat.redraw_timer.record(self.chat.matrix.runtime());
+        }
+
         self.chat.list_state.set(list_state);
 
         // reaction window

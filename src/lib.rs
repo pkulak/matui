@@ -21,11 +21,17 @@ pub mod widgets;
 /// Matrix
 pub mod matrix;
 
-pub mod settings;
-
 /// Using external apps to do our bidding
 pub mod spawn;
+
+// Get some help from FFmpeg
 pub mod video;
+
+// Redraw the whole window occasionally
+pub mod delaytimer;
+
+// Store app settings somewher
+pub mod settings;
 
 pub fn limit_list<T>(iter: T, limit: usize, total: usize, prefix: Option<&str>) -> Vec<String>
 where

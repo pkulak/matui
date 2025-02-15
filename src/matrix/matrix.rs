@@ -102,6 +102,10 @@ impl Matrix {
             .to_owned()
     }
 
+    pub fn runtime(&self) -> Handle {
+        self.rt.clone()
+    }
+
     pub fn wrap_room(&self, room: &Room) -> Option<DecoratedRoom> {
         self.room_cache.wrap(room)
     }
