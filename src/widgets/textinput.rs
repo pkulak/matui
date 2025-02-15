@@ -298,7 +298,7 @@ mod tests {
 
         buf.content()[(line * width)..((line + 1) * width)]
             .iter()
-            .map(|c| c.symbol.clone())
+            .map(|c| c.symbol().clone())
             .collect()
     }
 }
