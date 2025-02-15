@@ -2,6 +2,7 @@ use crate::widgets::message::MessageType::File;
 use chrono::TimeZone;
 use human_bytes::human_bytes;
 use std::cell::Cell;
+use std::cmp;
 use std::collections::BinaryHeap;
 use std::time::{Duration, SystemTime};
 
@@ -446,11 +447,14 @@ impl Message {
             return last.height;
         }
 
-        let mut height = if reply {
+        let message = if reply {
             textwrap::wrap(Message::remove_reply_header(&self.display()), width).len()
         } else {
             textwrap::wrap(&self.display(), width).len()
         };
+
+        // max of 10 lines in a message
+        let mut height = cmp::min(message, 10);
 
         height += 2;
 
@@ -458,7 +462,14 @@ impl Message {
             height += 1;
         }
 
-        height += self.reactions.len();
+        // max of 5 reactions
+        height += cmp::min(self.reactions.len(), 5);
+
+        // and then we have to account for the overlfow message
+        if message > 10 || self.reactions.len() > 5 {
+            height += 1;
+        }
+
         self.last_height.set(LastHeight { width, height });
         height
     }
