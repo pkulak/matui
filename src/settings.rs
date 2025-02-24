@@ -23,10 +23,17 @@ fn get_path() -> PathBuf {
 }
 
 fn build_settings() -> Config {
-    Config::builder()
+    let config = Config::builder()
         .add_source(config::File::from(get_path().as_path()))
-        .build()
-        .expect("could not build settings")
+        .build();
+
+    match config {
+        Ok(c) => c,
+        Err(error) => {
+            info!("could not load config: {}", error);
+            Config::default()
+        }
+    }
 }
 
 pub fn get_settings() -> RwLockReadGuard<'static, Config> {
