@@ -1,4 +1,4 @@
-use log::error;
+use log::{error, info};
 use ruma::UserId;
 use ruma::{events::AnyTimelineEvent, OwnedRoomId};
 use std::fs::OpenOptions;
@@ -141,7 +141,8 @@ impl Notify {
         // spawn a thread to sit around and wait for the notification to close
         std::thread::spawn(move || {
             handle.on_close({
-                move |_: CloseReason| {
+                move |reason: CloseReason| {
+                    info!("close reason {:?}", reason);
                     Matrix::send(MatuiEvent::RoomSelected(room.clone()));
                 }
             });

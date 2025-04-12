@@ -1,0 +1,154 @@
+[00:00:00.269] (7ffff7c0ea40) INFO   initializing matrix
+[00:00:06.551] (7ffff6c026c0) INFO   session restored
+[00:00:06.551] (7ffff6c026c0) INFO   syncing with token Some("s204810_24044546_7140_809750_241407_475_77916_17693_0_1")
+[00:00:06.649] (7ffff6c026c0) INFO   populating room cache
+[00:00:12.541] (7ffff6e036c0) INFO   room cache populated
+[00:00:12.611] (7ffff7c0ea40) INFO   fetching @home:kulak.us
+[00:00:12.611] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[00:00:12.611] (7ffff7c0ea40) INFO   fetching more events...
+[00:00:12.665] (7ffff7c0ea40) INFO   fetching @gwen:kulak.us
+[00:00:16.334] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[00:00:16.334] (7ffff7c0ea40) INFO   fetching more events...
+[00:00:17.092] (7ffff7c0ea40) INFO   fetching more events...
+[00:00:47.272] (7ffff7c0ea40) INFO   fetching @gwen:kulak.us
+[00:00:47.272] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[00:00:47.273] (7ffff7c0ea40) INFO   fetching more events...
+[00:00:48.065] (7ffff7c0ea40) INFO   fetching more events...
+[00:10:53.258] (7ffff7c0ea40) INFO   fetching @moneybot:kulak.us
+[00:10:53.258] (7ffff7c0ea40) INFO   fetching @charlie:kulak.us
+[00:10:53.258] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[00:10:53.259] (7ffff7c0ea40) INFO   fetching more events...
+[00:10:53.369] (7ffff7c0ea40) INFO   fetching more events...
+[00:10:53.385] (7ffff7c0ea40) INFO   room viewed based on receipt
+[00:11:00.108] (7ffff7c0ea40) INFO   room viewed based on receipt
+[00:11:01.276] (7ffff7c0ea40) INFO   room viewed based on receipt
+[00:36:36.875] (7ffff7c0ea40) INFO   fetching @aibot:kulak.us
+[00:36:36.875] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[00:36:36.875] (7ffff7c0ea40) INFO   fetching more events...
+[00:36:52.299] (7ffff7c0ea40) INFO   room viewed based on receipt
+[00:36:55.716] (7ffff7c0ea40) INFO   room viewed based on receipt
+[07:01:33.910] (7ffff64676c0) INFO   close reason Dismissed
+[07:01:33.933] (7ffff7c0ea40) INFO   fetching @gwen:kulak.us
+[07:01:33.934] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[07:01:33.936] (7ffff7c0ea40) INFO   room viewed based on receipt
+[07:01:34.626] (7ffff7c0ea40) INFO   fetching more events...
+[07:01:35.437] (7ffff7c0ea40) INFO   fetching more events...
+[08:10:26.869] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:32:11.605] (7fff97fff6c0) INFO   close reason Dismissed
+[10:32:11.606] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[10:32:11.609] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:32:11.609] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:32:11.609] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:32:52.267] (7ffff6e036c0) ERROR  no sync result: error sending request for url (https://kulak.us/_matrix/client/v3/sync?filter=%7B%22room%22%3A%7B%22state%22%3A%7B%22lazy_load_members%22%3Atrue%7D%7D%7D&since=s204827_24050309_7174_809772_241425_475_77919_17693_0_1&timeout=30000)
+[10:32:56.182] (7ffff4c3a6c0) INFO   close reason Dismissed
+[10:32:56.184] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[10:32:56.187] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:32:57.029] (7ffff7c0ea40) INFO   fetching @charlie:kulak.us
+[10:32:57.029] (7ffff7c0ea40) INFO   fetching more events...
+[10:32:57.859] (7ffff7c0ea40) INFO   fetching more events...
+[10:40:40.871] (7ffff7c0ea40) INFO   fetching @phil:kulak.us
+[10:40:40.871] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:40:40.871] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:40:40.871] (7ffff7c0ea40) INFO   room viewed based on receipt
+[10:40:40.969] (7ffff7c0ea40) INFO   fetching @aibot:kulak.us
+[10:40:40.969] (7ffff7c0ea40) INFO   fetching more events...
+[10:41:18.210] (7ffff7c0ea40) ERROR  thread 'main' panicked at 'attempt to subtract with overflow': src/widgets/message.rs:174
+   0: <backtrace::capture::Backtrace as core::default::Default>::default
+             at /home/phil/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.69/src/capture.rs:410:9
+   1: log_panics::Config::install_panic_hook::{{closure}}
+             at /home/phil/.cargo/registry/src/index.crates.io-6f17d22bba15001f/log-panics-2.1.0/src/lib.rs:115:29
+   2: <alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/alloc/src/boxed.rs:2468:9
+   3: ratatui::terminal::init::set_panic_hook::{{closure}}
+             at /home/phil/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ratatui-0.29.0/src/terminal/init.rs:241:9
+   4: <alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/alloc/src/boxed.rs:2468:9
+      std::panicking::rust_panic_with_hook
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:809:13
+   5: std::panicking::begin_panic_handler::{{closure}}
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:667:13
+   6: std::sys::backtrace::__rust_end_short_backtrace
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/sys/backtrace.rs:170:18
+   7: rust_begin_unwind
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:665:5
+   8: core::panicking::panic_fmt
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/panicking.rs:74:14
+   9: core::panicking::panic_const::panic_const_sub_overflow
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/panicking.rs:181:21
+  10: matui::widgets::message::Message::pretty_elapsed
+             at src/widgets/message.rs:174:47
+  11: matui::widgets::message::Message::to_list_items_internal
+             at src/widgets/message.rs:518:26
+  12: matui::widgets::message::Message::to_list_items
+             at src/widgets/message.rs:499:47
+  13: <matui::widgets::chat::ChatWidget as ratatui::widgets::Widget>::render::{{closure}}
+             at src/widgets/chat.rs:832:27
+  14: core::ops::function::impls::<impl core::ops::function::FnOnce<A> for &mut F>::call_once
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/ops/function.rs:305:13
+  15: core::option::Option<T>::map
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/option.rs:1113:29
+      <core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::next
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/iter/adapters/map.rs:107:26
+  16: <core::iter::adapters::fuse::Fuse<I> as core::iter::adapters::fuse::FuseImpl<I>>::next
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/iter/adapters/fuse.rs:359:9
+  17: <core::iter::adapters::fuse::Fuse<I> as core::iter::traits::iterator::Iterator>::next
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/iter/adapters/fuse.rs:50:9
+      <core::iter::adapters::flatten::FlattenCompat<I,U> as core::iter::traits::iterator::Iterator>::next
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/iter/adapters/flatten.rs:608:29
+  18: <core::iter::adapters::flatten::FlatMap<I,U,F> as core::iter::traits::iterator::Iterator>::next
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/iter/adapters/flatten.rs:64:9
+  19: <alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/alloc/src/vec/spec_from_iter_nested.rs:24:32
+  20: <alloc::vec::Vec<T> as alloc::vec::spec_from_iter::SpecFromIter<T,I>>::from_iter
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/alloc/src/vec/spec_from_iter.rs:33:9
+  21: <alloc::vec::Vec<T> as core::iter::traits::collect::FromIterator<T>>::from_iter
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3388:9
+  22: core::iter::traits::iterator::Iterator::collect
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:2001:9
+  23: <matui::widgets::chat::ChatWidget as ratatui::widgets::Widget>::render
+             at src/widgets/chat.rs:828:36
+  24: ratatui::terminal::frame::Frame::render_widget
+             at /home/phil/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ratatui-0.29.0/src/terminal/frame.rs:96:9
+  25: matui::app::App::render
+             at src/app.rs:131:13
+  26: matui::main::{{closure}}
+             at src/main.rs:34:27
+  27: ratatui::terminal::terminal::Terminal<B>::draw::{{closure}}
+             at /home/phil/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ratatui-0.29.0/src/terminal/terminal.rs:309:13
+  28: ratatui::terminal::terminal::Terminal<B>::try_draw
+             at /home/phil/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ratatui-0.29.0/src/terminal/terminal.rs:390:9
+  29: ratatui::terminal::terminal::Terminal<B>::draw
+             at /home/phil/.cargo/registry/src/index.crates.io-6f17d22bba15001f/ratatui-0.29.0/src/terminal/terminal.rs:308:9
+  30: matui::main
+             at src/main.rs:34:9
+  31: core::ops::function::FnOnce::call_once
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5
+  32: std::sys::backtrace::__rust_begin_short_backtrace
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/std/src/sys/backtrace.rs:154:18
+  33: std::rt::lang_start::{{closure}}
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/std/src/rt.rs:195:18
+  34: core::ops::function::impls::<impl core::ops::function::FnOnce<A> for &F>::call_once
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/core/src/ops/function.rs:284:13
+      std::panicking::try::do_call
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:557:40
+      std::panicking::try
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:520:19
+      std::panic::catch_unwind
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panic.rs:358:14
+      std::rt::lang_start_internal::{{closure}}
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/rt.rs:174:48
+      std::panicking::try::do_call
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:557:40
+      std::panicking::try
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panicking.rs:520:19
+      std::panic::catch_unwind
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/panic.rs:358:14
+      std::rt::lang_start_internal
+             at /rustc/90b35a6239c3d8bdabc530a6a0816f7ff89a0aaf/library/std/src/rt.rs:174:20
+  35: std::rt::lang_start
+             at /nix/store/7s8kryzgq4w79rkz38v5zri6k48sh8gv-rust-minimal-1.83.0/lib/rustlib/src/rust/library/std/src/rt.rs:194:17
+  36: main
+  37: __libc_start_call_main
+  38: __libc_start_main_alias_2
+  39: _start
+

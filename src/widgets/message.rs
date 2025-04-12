@@ -171,7 +171,8 @@ impl Message {
             .as_secs();
 
         let then: u64 = self.sent.as_secs().into();
-        formatter.convert(Duration::from_secs(now - then))
+
+        formatter.convert(Duration::from_secs(now.saturating_sub(then)))
     }
 
     pub fn style(&self) -> Style {
