@@ -5,7 +5,8 @@ use matui::handler::{handle_app_event, handle_blur_event, handle_focus_event, ha
 use matui::settings::watch_settings_forever;
 use std::time::Duration;
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     if cfg!(debug_assertions) {
         simple_logging::log_to_file("test.log", LevelFilter::Info)?;
         log_panics::init();
