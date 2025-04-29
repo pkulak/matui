@@ -61,10 +61,7 @@ pub struct Chat {
 
 impl Chat {
     pub fn try_new(matrix: Matrix, room: Room) -> Option<Self> {
-        let decorated_room = match matrix.wrap_room(&room) {
-            Some(r) => r,
-            None => return None,
-        };
+        let decorated_room = matrix.wrap_room(&room)?;
 
         matrix.fetch_messages(room, None);
 

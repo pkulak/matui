@@ -130,10 +130,7 @@ impl DecoratedRoom {
     }
 
     async fn from_room(room: Room) -> DecoratedRoom {
-        let name = room
-            .compute_display_name()
-            .await
-            .unwrap_or(RoomDisplayName::Empty);
+        let name = room.cached_display_name().unwrap_or(RoomDisplayName::Empty);
 
         async fn inner(room: Room, name: RoomDisplayName) -> anyhow::Result<DecoratedRoom> {
             let messages = room
@@ -189,7 +186,7 @@ impl DecoratedRoom {
         match inner(room.clone(), name.clone()).await {
             Ok(r) => r,
             Err(e) => {
-                info!("could not fetch room details: {}", e.to_string());
+                info!("could not fetch room details: {}", e);
                 DecoratedRoom {
                     inner: room,
                     name,

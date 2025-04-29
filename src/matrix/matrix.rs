@@ -11,10 +11,10 @@ use anyhow::{bail, Context};
 use futures::stream::StreamExt;
 use log::{error, info};
 use matrix_sdk::attachment::AttachmentConfig;
+use matrix_sdk::authentication::matrix::MatrixSession;
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
-use matrix_sdk::matrix_auth::MatrixSession;
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
 use matrix_sdk::room::{MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::client::filter::{
@@ -31,8 +31,8 @@ use matrix_sdk::ruma::UserId;
 use matrix_sdk::RoomState;
 use matrix_sdk::{Client, LoopCtrl, ServerName};
 use once_cell::sync::OnceCell;
-use rand::rngs::OsRng;
-use rand::{distributions::Alphanumeric, Rng};
+use rand::rng;
+use rand::{distr::Alphanumeric, Rng};
 use ruma::events::key::verification::VerificationMethod;
 use ruma::events::reaction::ReactionEventContent;
 
@@ -223,7 +223,7 @@ impl Matrix {
                     let response = match sync_result {
                         Ok(resp) => resp,
                         Err(err) => {
-                            error!("no sync result: {}", err.to_string());
+                            error!("no sync result: {}", err);
                             return Ok(LoopCtrl::Continue);
                         }
                     };
@@ -232,7 +232,7 @@ impl Matrix {
 
                     // We persist the token each time to keep the disk up-to-date
                     if let Err(err) = persist_sync_token(&session_file, response.next_batch) {
-                        error!("could not persist sync token {}", err.to_string())
+                        error!("could not persist sync token {}", err)
                     }
 
                     Ok(LoopCtrl::Continue)
@@ -245,7 +245,7 @@ impl Matrix {
     pub fn confirm_verification(&self, sas: SasVerification) {
         self.rt.spawn(async move {
             if let Err(err) = sas.confirm().await {
-                error!("could not verify: {}", err.to_string());
+                error!("could not verify: {}", err);
                 Matrix::send(Error(format!("Could not verify: {}", err)));
             }
         });
@@ -254,7 +254,7 @@ impl Matrix {
     pub fn mismatched_verification(&self, sas: SasVerification) {
         self.rt.spawn(async move {
             if let Err(err) = sas.mismatch().await {
-                error!("could not cancel SAS verification: {}", err.to_string())
+                error!("could not cancel SAS verification: {}", err)
             } else {
                 info!("verification has been cancelled")
             }
@@ -453,7 +453,7 @@ impl Matrix {
                 // try to grab a thumbnail if it's a video
                 let config = if content_type.type_() == "video" {
                     match get_video_thumbnail(&path) {
-                        Ok(thumbnail) => AttachmentConfig::with_thumbnail(thumbnail),
+                        Ok(thumbnail) => AttachmentConfig::new().thumbnail(Some(thumbnail)),
                         _ => AttachmentConfig::new(),
                     }
                 } else {
@@ -600,7 +600,7 @@ impl Matrix {
                 .await;
 
             if let Err(e) = matrix.notify.timeline_event(matrix.client(), event).await {
-                error!("could not send notification: {}", e.to_string());
+                error!("could not send notification: {}", e);
             }
         });
     }
@@ -625,7 +625,7 @@ impl Matrix {
 
         self.rt.spawn(async move {
             if let Err(e) = room.send_multiple_receipts(receipts).await {
-                error!("could not send read receipt: {}", e.to_string());
+                error!("could not send read receipt: {}", e);
             }
         });
     }
@@ -733,9 +733,7 @@ async fn login(
 }
 
 async fn build_client(data_dir: &Path, id: &UserId) -> anyhow::Result<(Client, ClientSession)> {
-    let mut rng = OsRng;
-
-    let db_subfolder: String = (&mut rng)
+    let db_subfolder: String = (&mut rng())
         .sample_iter(Alphanumeric)
         .take(7)
         .map(char::from)
@@ -744,7 +742,7 @@ async fn build_client(data_dir: &Path, id: &UserId) -> anyhow::Result<(Client, C
     let db_path = data_dir.join(db_subfolder.as_str());
 
     // Generate a random passphrase.
-    let passphrase: String = (&mut rng)
+    let passphrase: String = (&mut rng())
         .sample_iter(Alphanumeric)
         .take(32)
         .map(char::from)

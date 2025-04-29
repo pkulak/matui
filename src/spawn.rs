@@ -4,7 +4,7 @@ use lazy_static::lazy_static;
 use linkify::LinkFinder;
 use log::error;
 use matrix_sdk::media::MediaFileHandle;
-use native_dialog::FileDialog;
+use native_dialog::DialogBuilder;
 use notify_rust::Hint;
 use regex::Regex;
 use std::env::var;
@@ -23,9 +23,10 @@ lazy_static! {
 pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
     let home = dirs::home_dir().context("no home directory")?;
 
-    let path = FileDialog::new()
+    let path = DialogBuilder::file()
         .set_location(home.as_path())
-        .show_open_multiple_file()?;
+        .open_multiple_file()
+        .show()?;
 
     Ok(path)
 }
@@ -163,7 +164,7 @@ pub fn view_text(text: &str) {
         command.stderr(Stdio::piped());
 
         if let Err(e) = command.status() {
-            error!("could not open link: {} {}", link.as_str(), e.to_string());
+            error!("could not open link: {} {}", link.as_str(), e);
         }
     }
 }

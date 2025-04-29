@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
 chrono = "0.4"
-crossterm = "0.28"
+crossterm = "0.29"
 config = { version = "0.15", features = ["toml"] }
 dirs = "6.0"
 emojis = "0.6"
@@ -18,14 +18,14 @@ linkify = "0.10"
 lazy_static = "1.5"
 log = "0.4"
 log-panics = { version = "2", features = ["with-backtrace"] }
-matrix-sdk = { version = "0.9.0", features = ["markdown"] }
+matrix-sdk = { version = "0.11.0", features = ["markdown"] }
 mime = "0.3"
-native-dialog = "0.7.0"
+native-dialog = "0.8.11"
 notify-rust = { version = "4.11", features = ["images"] }
 notify = "8.0"
 once_cell = "1.21"
 open = "5.3"
-rand = "0.8.5"
+rand = "0.9.1"
 ratatui = "0.29.0"
 regex = "1.11.1"
 ruma = "0.12.2"
