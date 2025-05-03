@@ -10,8 +10,10 @@ possible and there's no mouse support (yet, at least).
 
 The underlying Matrix SDK that Matui uses has recently switched from Sled to
 Sqlite. That's great, because it seems to have fixed the horrible data store
-bloat issues, but it also means you will need to blow away your `.local/share/matui`
-directory and log in again after upgrading.
+bloat issues, but it also means the cache has to be re-built after you upgrade
+and there will be some garbage left over. If you'd like to reclaim some space,
+you can blow away the `matrx-sdk-state` folder in your cache
+(`.local/share/matui/{hash}/matrix-sdk-state`).
 
 # Who should use this client?
 
