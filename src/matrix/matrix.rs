@@ -335,7 +335,13 @@ impl Matrix {
                     content.body,
                 ),
                 File(content) => (
-                    content.info.unwrap().mimetype.unwrap(),
+                    match content.info {
+                        Some(c) => match c.mimetype {
+                            Some(m) => m,
+                            None => "application/octet-stream".to_string()
+                        }
+                        None => "application/octet-stream".to_string()
+                    },
                     MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
