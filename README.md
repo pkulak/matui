@@ -144,6 +144,10 @@ muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
 
 # Useful if your custom config is interfering with Enter key bindings
 clear_vim = true
+
+# If non-zero, send a "blur" event after that many seconds of inactivity,
+# useful when blur events aren't sent reliably by your terminal.
+blur_delay = 30
 ```
 
 The config file is hot reloaded and can generally be found at
@@ -159,4 +163,3 @@ currently assumed.
 There's another really fun Matrix TUI here, with a lot of the same goals:
 
 [iamb](https://github.com/ulyssa/iamb)
-

@@ -49,6 +49,10 @@ pub fn clean_vim() -> bool {
     get_settings().get("clean_vim").unwrap_or_default()
 }
 
+pub fn blur_delay() -> i64 {
+    get_settings().get("blur_delay").unwrap_or(30)
+}
+
 fn watch_internal() {
     let (tx, rx) = channel();
 

@@ -1,5 +1,7 @@
 use crate::matrix::matrix::MessageType::File;
+use crate::settings::blur_delay;
 use crate::video::get_video_thumbnail;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::{fs, thread};
 
 use std::path::{Path, PathBuf};
@@ -8,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
+use debounced::delayed;
 use futures::stream::StreamExt;
 use log::{error, info};
 use matrix_sdk::attachment::AttachmentConfig;
@@ -68,6 +71,7 @@ pub struct Matrix {
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
+    focus_key: Arc<AtomicI64>,
 }
 
 /// What should we do with the file after we download it?
@@ -83,6 +87,7 @@ impl Matrix {
             client: Arc::new(OnceCell::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
+            focus_key: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -613,9 +618,29 @@ impl Matrix {
 
     pub fn focus_event(&self) {
         self.notify.focus_event();
+
+        let delay = blur_delay();
+
+        if delay <= 0 {
+            return;
+        }
+
+        let focus_key = self.focus_key.fetch_add(1, Ordering::Relaxed) + 1;
+        let old_focus_key = self.focus_key.clone();
+        let notify = self.notify.clone();
+
+        self.rt.spawn(async move {
+            delayed((), Duration::from_secs(delay.try_into().unwrap())).await;
+
+            if focus_key == old_focus_key.load(Ordering::Relaxed) {
+                info!("sending synthetic blur event");
+                notify.blur_event();
+            }
+        });
     }
 
     pub fn blur_event(&self) {
+        self.focus_key.store(0, Ordering::Relaxed);
         self.notify.blur_event();
     }
 
