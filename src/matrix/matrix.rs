@@ -343,9 +343,9 @@ impl Matrix {
                     match content.info {
                         Some(c) => match c.mimetype {
                             Some(m) => m,
-                            None => "application/octet-stream".to_string()
-                        }
-                        None => "application/octet-stream".to_string()
+                            None => "application/octet-stream".to_string(),
+                        },
+                        None => "application/octet-stream".to_string(),
                     },
                     MediaRequestParameters {
                         source: content.source,
@@ -627,14 +627,16 @@ impl Matrix {
 
         let focus_key = self.focus_key.fetch_add(1, Ordering::Relaxed) + 1;
         let old_focus_key = self.focus_key.clone();
-        let notify = self.notify.clone();
 
         self.rt.spawn(async move {
             delayed((), Duration::from_secs(delay.try_into().unwrap())).await;
 
             if focus_key == old_focus_key.load(Ordering::Relaxed) {
                 info!("sending synthetic blur event");
-                notify.blur_event();
+
+                App::get_sender()
+                    .send(Event::Blur)
+                    .expect("could not send blur event");
             }
         });
     }
