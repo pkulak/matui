@@ -3,7 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
-use crate::settings::is_muted;
+use crate::settings::{is_muted, toggle_mute};
 use crate::spawn::{get_file_paths, get_text};
 use crate::widgets::message::{Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
@@ -176,6 +176,10 @@ impl Chat {
                 if let Some(message) = &self.selected_reply() {
                     message.save(self.matrix.clone())
                 }
+                Ok(consumed!())
+            }
+            KeyCode::Char('m') => {
+                toggle_mute(self.room().room_id());
                 Ok(consumed!())
             }
             KeyCode::Char('c') => {

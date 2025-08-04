@@ -88,6 +88,7 @@ impl Widget for HelpWidget {
                 ]),
                 Row::new(vec!["V", "View the current room in the external editor."]),
                 Row::new(vec!["u", "Upload a file."]),
+                Row::new(vec!["m", "Mute or unmute the current room (until restart)."]),
                 Row::new(vec!["?", "Show this helper."]),
                 Row::new(vec!["", "* arrow keys are fine too."]),
             ],

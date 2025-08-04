@@ -2,17 +2,19 @@ use config::Config;
 use log::{info, warn};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use ruma::RoomId;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
-use std::sync::{RwLock, RwLockReadGuard};
+use std::sync::{LazyLock, Mutex, RwLock, RwLockReadGuard};
 use std::time::Duration;
 use std::{fs, thread};
 
 const DEFAULT_CONFIG: &str = "reactions = [ \"❤️\", \"👍\", \"👎\", \"😂\", \"‼️\", \"❓️\"]\n";
 
-lazy_static::lazy_static! {
-    static ref SETTINGS: RwLock<Config> = RwLock::new(build_settings());
-}
+static SETTINGS: LazyLock<RwLock<Config>> = LazyLock::new(|| RwLock::new(build_settings()));
+
+static OVERRIDES: LazyLock<Mutex<HashMap<String, HashSet<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn get_path() -> PathBuf {
     let mut path = dirs::config_dir().expect("no config directory");
@@ -40,9 +42,60 @@ pub fn get_settings() -> RwLockReadGuard<'static, Config> {
     SETTINGS.read().unwrap()
 }
 
+fn with_override_set<F, R>(key: &str, f: F) -> R
+where
+    F: FnOnce(&mut std::collections::HashSet<String>) -> R
+{
+    let mut overrides = OVERRIDES.lock().unwrap();
+    let set = overrides.entry(key.to_string()).or_default();
+    f(set)
+}
+
+fn overridden(key: &str, value: &str) -> bool {
+    with_override_set(key, |set| {
+        set.contains(value)
+    })
+}
+
 pub fn is_muted(room: &RoomId) -> bool {
+    if overridden("muted", room.as_ref()) {
+        return true;
+    }
+
+    if overridden("unmuted", room.as_ref()) {
+        return false;
+    }
+
     let muted: Vec<String> = get_settings().get("muted").unwrap_or_default();
     muted.contains(&room.to_string())
+}
+
+pub fn toggle_mute(room: &RoomId) {
+    if is_muted(room) {
+        unmute(room);
+    } else {
+        mute(room);
+    }
+}
+
+fn mute(room: &RoomId) {
+    with_override_set("muted", |set| {
+        set.insert(room.to_string());
+    });
+
+    with_override_set("unmuted", |set| {
+        set.remove(&room.to_string());
+    });
+}
+
+fn unmute(room: &RoomId) {
+    with_override_set("unmuted", |set| {
+        set.insert(room.to_string());
+    });
+
+    with_override_set("muted", |set| {
+        set.remove(&room.to_string());
+    });
 }
 
 pub fn clean_vim() -> bool {
