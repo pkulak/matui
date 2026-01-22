@@ -104,7 +104,7 @@ impl Widget for SigninWidget<'_> {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .style(Style::default().bg(Color::Black));
+            .style(Style::default().bg(Color::Reset));
 
         block.render(area, buf);
         self.signin.id.widget().render(splits[0], buf);

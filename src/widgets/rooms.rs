@@ -168,7 +168,7 @@ impl Widget for RoomsWidget<'_> {
         let block = Block::default()
             .title("Rooms")
             .title_alignment(Alignment::Center)
-            .style(Style::default().bg(Color::Black))
+            .style(Style::default().bg(Color::Reset))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded);
 

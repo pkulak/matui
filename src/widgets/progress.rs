@@ -66,7 +66,7 @@ impl Widget for ProgressWidget<'_> {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .style(Style::default().bg(Color::Black))
+            .style(Style::default().bg(Color::Reset))
             .render(area, buf);
 
         let area = Layout::default()

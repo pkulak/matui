@@ -185,7 +185,7 @@ impl Widget for ReactWidget<'_> {
         let block = Block::default()
             .title(title)
             .title_alignment(Alignment::Center)
-            .style(Style::default().bg(Color::Black))
+            .style(Style::default().bg(Color::Reset))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded);
 

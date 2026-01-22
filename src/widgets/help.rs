@@ -45,7 +45,7 @@ impl Widget for HelpWidget {
         let block = Block::default()
             .title("Help")
             .title_alignment(Alignment::Center)
-            .style(Style::default().bg(Color::Black))
+            .style(Style::default().bg(Color::Reset))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded);
 

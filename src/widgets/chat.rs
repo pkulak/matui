@@ -778,7 +778,7 @@ impl Widget for ChatWidget<'_> {
             return;
         }
 
-        buf.set_style(area, Style::default().bg(Color::Black));
+        buf.set_style(area, Style::default().bg(Color::Reset));
 
         let area = Layout::default()
             .direction(Direction::Horizontal)
@@ -802,7 +802,7 @@ impl Widget for ChatWidget<'_> {
         let header = Block::default()
             .title(truncate(header_text, (splits[0].width - 8).into()))
             .title_alignment(Alignment::Center)
-            .style(Style::default().bg(Color::Black))
+            .style(Style::default().bg(Color::Reset))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded);
 
