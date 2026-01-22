@@ -1,6 +1,6 @@
 use crate::matrix::matrix::MessageType::File;
+use crate::media::get_thumbnail;
 use crate::settings::blur_delay;
-use crate::video::get_video_thumbnail;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::{fs, thread};
 
@@ -461,14 +461,12 @@ impl Matrix {
                     }
                 };
 
-                // try to grab a thumbnail if it's a video
-                let config = if content_type.type_() == "video" {
-                    match get_video_thumbnail(&path) {
-                        Ok(thumbnail) => AttachmentConfig::new().thumbnail(Some(thumbnail)),
-                        _ => AttachmentConfig::new(),
-                    }
-                } else {
-                    AttachmentConfig::new()
+                // try to grab a thumbnail
+                let config = match get_thumbnail(&path, &content_type) {
+                    Ok((thumbnail, info)) => AttachmentConfig::new()
+                        .thumbnail(thumbnail)
+                        .info(info),
+                    _ => AttachmentConfig::new(),
                 };
 
                 if let Err(err) = room
