@@ -318,13 +318,16 @@ impl Matrix {
 
     pub fn download_content(&self, message: MessageType, after: AfterDownload) {
         let matrix = self.clone();
+        let octets = "application/octet-stream".to_string();
 
         self.rt.spawn(async move {
             Matrix::send(ProgressStarted("Downloading file.".to_string(), 250));
 
             let (content_type, request, file_name) = match message {
                 Image(content) => (
-                    content.info.unwrap().mimetype.unwrap(),
+                    content.info
+                        .and_then(|info| info.mimetype)
+                        .unwrap_or_else(|| octets),
                     MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
@@ -332,7 +335,9 @@ impl Matrix {
                     content.body,
                 ),
                 Video(content) => (
-                    content.info.unwrap().mimetype.unwrap(),
+                    content.info
+                        .and_then(|info| info.mimetype)
+                        .unwrap_or_else(|| octets),
                     MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
@@ -340,13 +345,9 @@ impl Matrix {
                     content.body,
                 ),
                 File(content) => (
-                    match content.info {
-                        Some(c) => match c.mimetype {
-                            Some(m) => m,
-                            None => "application/octet-stream".to_string(),
-                        },
-                        None => "application/octet-stream".to_string(),
-                    },
+                    content.info
+                        .and_then(|info| info.mimetype)
+                        .unwrap_or_else(|| octets),
                     MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
@@ -463,9 +464,9 @@ impl Matrix {
 
                 // try to grab a thumbnail
                 let config = match get_thumbnail(&path, &content_type) {
-                    Ok((thumbnail, info)) => AttachmentConfig::new()
-                        .thumbnail(thumbnail)
-                        .info(info),
+                    Ok((thumbnail, info)) => {
+                        AttachmentConfig::new().thumbnail(thumbnail).info(info)
+                    }
                     _ => AttachmentConfig::new(),
                 };
 
