@@ -12,7 +12,7 @@ use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
 use crate::{consumed, limit_list, pretty_list, truncate, KeyCombo};
 use anyhow::bail;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use log::info;
 use matrix_sdk::room::{Room, RoomMember};
 use once_cell::sync::OnceCell;
@@ -50,6 +50,7 @@ pub struct Chat {
     next_cursor: Option<String>,
     fetching: Cell<bool>,
     width: Cell<usize>,
+    height: Cell<usize>,
     total_list_items: Cell<usize>,
     focus: bool,
     delete_combo: KeyCombo,
@@ -78,6 +79,7 @@ impl Chat {
             next_cursor: None,
             fetching: Cell::new(true),
             width: Cell::new(80),
+            height: Cell::new(20),
             total_list_items: Cell::new(0),
             focus: true,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
@@ -133,7 +135,7 @@ impl Chat {
 
         // then look for key combos
         if let KeyCode::Char(c) = input.code {
-            if self.delete_combo.record(c) {
+            if input.modifiers.is_empty() && self.delete_combo.record(c) {
                 let message = match self.selected_reply() {
                     Some(m) => m,
                     None => return Ok(EventResult::Ignored),
@@ -158,12 +160,25 @@ impl Chat {
 
         match input.code {
             KeyCode::Char('j') | KeyCode::Down => {
-                self.previous();
+                self.previous(1);
+                Ok(consumed!())
+            }
+            KeyCode::Char('d') if input.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.previous(self.height.get() / 2);
                 Ok(consumed!())
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.next();
+                self.next(1);
                 self.try_fetch_previous();
+                Ok(consumed!())
+            }
+            KeyCode::Char('u') if input.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.next(self.height.get() / 2);
+                self.try_fetch_previous();
+                Ok(consumed!())
+            }
+            KeyCode::Char('G') => {
+                self.first();
                 Ok(consumed!())
             }
             KeyCode::Enter => {
@@ -577,15 +592,15 @@ impl Chat {
         }
     }
 
-    fn next(&self) {
+    fn next(&self, step: usize) {
         let mut state = self.list_state.take();
 
         let mut i = match state.selected() {
             Some(i) => {
-                if i >= &self.total_list_items.get() - 1 {
+                if i + step >= &self.total_list_items.get() - 1 {
                     &self.total_list_items.get() - 1
                 } else {
-                    i + 1
+                    i + step
                 }
             }
             None => 0,
@@ -599,25 +614,25 @@ impl Chat {
         self.list_state.set(state);
     }
 
-    fn previous(&self) {
+    fn previous(&self, step: usize) {
         let mut state = self.list_state.take();
 
-        let mut i = match state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    0
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
+        let mut i = state
+            .selected()
+            .map(|i| i.saturating_sub(step))
+            .unwrap_or_default();
 
         if self.invalid_selection(i) {
             i -= 1;
         }
 
         state.select(Some(i));
+        self.list_state.set(state);
+    }
+
+    fn first(&self) {
+        let mut state = self.list_state.take();
+        state.select(Some(0));
         self.list_state.set(state);
     }
 
@@ -833,8 +848,9 @@ impl Widget for ChatWidget<'_> {
             .flat_map(|m| m.to_list_items((area.width - 2) as usize))
             .collect();
 
-        // make sure we save our last render width and total items
+        // make sure we save our last render dimensions and total items
         self.chat.width.set((area.width - 2).into());
+        self.chat.height.set((area.height).into());
         self.chat.total_list_items.set(items.len());
 
         let mut list_state = self.chat.list_state.take();

@@ -70,6 +70,9 @@ impl Widget for HelpWidget {
                 Row::new(vec!["Space", "Show the room switcher"]),
                 Row::new(vec!["j*", "Select one line down."]),
                 Row::new(vec!["k*", "Select one line up."]),
+                Row::new(vec!["Ctrl+d", "Select half a page down."]),
+                Row::new(vec!["Ctrl+u", "Select half a page up."]),
+                Row::new(vec!["G", "Select latest message."]),
                 Row::new(vec!["i", "Create a new message using the external editor."]),
                 Row::new(vec![
                     "Enter",
@@ -88,7 +91,10 @@ impl Widget for HelpWidget {
                 ]),
                 Row::new(vec!["V", "View the current room in the external editor."]),
                 Row::new(vec!["u", "Upload a file."]),
-                Row::new(vec!["m", "Mute or unmute the current room (until restart)."]),
+                Row::new(vec![
+                    "m",
+                    "Mute or unmute the current room (until restart).",
+                ]),
                 Row::new(vec!["?", "Show this helper."]),
                 Row::new(vec!["", "* arrow keys are fine too."]),
             ],

@@ -327,7 +327,7 @@ impl Matrix {
                 Image(content) => (
                     content.info
                         .and_then(|info| info.mimetype)
-                        .unwrap_or_else(|| octets),
+                        .unwrap_or(octets),
                     MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
@@ -337,7 +337,7 @@ impl Matrix {
                 Video(content) => (
                     content.info
                         .and_then(|info| info.mimetype)
-                        .unwrap_or_else(|| octets),
+                        .unwrap_or(octets),
                     MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
@@ -347,7 +347,7 @@ impl Matrix {
                 File(content) => (
                     content.info
                         .and_then(|info| info.mimetype)
-                        .unwrap_or_else(|| octets),
+                        .unwrap_or(octets),
                     MediaRequestParameters {
                         source: content.source,
                         format: MediaFormat::File,
