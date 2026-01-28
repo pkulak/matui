@@ -17,6 +17,7 @@ use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::Rooms;
+use crate::widgets::search::Search;
 use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
 use ratatui::Frame;
@@ -108,21 +109,31 @@ impl App {
         self.popup = None;
     }
 
-    /// Handles the tick event of the terminal.
-    pub fn tick(&mut self) {
+    /// Handles the tick event of the terminal. Returns true if this tick
+    /// should trigger a render.
+    pub fn tick(&mut self) -> bool {
         // if this is the very first tick, initialize and move on
         if self.timestamp == 0 {
             self.timestamp += 1;
             self.matrix.init();
-            return;
+            return true;
         }
+
+        let mut render = false;
 
         // send out the ticks
         if let Some(w) = self.popup.as_mut() {
-            w.tick_event(self.timestamp)
+            w.tick_event(self.timestamp);
+            render = true;
+        }
+
+        // make sure we render every once in a while
+        if self.timestamp % 60 == 0 {
+            render = true;
         }
 
         self.timestamp += 1;
+        render
     }
 
     /// Renders the user interface widgets.
@@ -146,6 +157,7 @@ pub enum Popup {
     Progress(Progress),
     Rooms(Rooms),
     Signin(Signin),
+    Search(Search),
     Help(Help),
 }
 
@@ -157,14 +169,18 @@ impl Popup {
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Rooms(w) => w.key_event(event),
             Popup::Signin(w) => w.key_event(event),
+            Popup::Search(w) => w.key_event(event),
             Popup::Help(w) => w.key_event(event),
         }
     }
 
-    pub fn tick_event(&mut self, timestamp: usize) {
+    pub fn tick_event(&mut self, timestamp: usize) -> bool {
         if let Popup::Progress(w) = self {
             w.tick_event(timestamp);
+            return true;
         };
+
+        false
     }
 
     pub fn render(&self, frame: &mut Frame) {
@@ -174,6 +190,7 @@ impl Popup {
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Rooms(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Signin(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Search(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Help(w) => frame.render_widget(w.widget(), frame.area()),
         }
     }

@@ -28,6 +28,7 @@ pub enum MatuiEvent {
     Receipt(Room, ReceiptEventContent),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
+    Search(String),
     SyncComplete,
     SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
@@ -79,6 +80,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             }
         }
         MatuiEvent::RoomSelected(room) => app.select_room(room),
+        MatuiEvent::Search(search_term) => {
+            if let Some(c) = &mut app.chat {
+                c.search_event(&search_term);
+            }
+        },
         MatuiEvent::SyncStarted(st) => {
             match st {
                 SyncType::Initial => app.set_popup(Popup::Progress(Progress::new(

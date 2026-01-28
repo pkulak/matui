@@ -106,6 +106,10 @@ pub fn blur_delay() -> i64 {
     get_settings().get("blur_delay").unwrap_or(30)
 }
 
+pub fn max_events() -> usize {
+    get_settings().get("max_events").unwrap_or(4096)
+}
+
 fn watch_internal() {
     let (tx, rx) = channel();
 

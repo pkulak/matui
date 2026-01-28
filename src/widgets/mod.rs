@@ -5,6 +5,7 @@ pub mod error;
 pub mod progress;
 pub mod rooms;
 pub mod signin;
+pub mod search;
 pub mod help;
 
 pub mod button;
