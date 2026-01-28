@@ -32,11 +32,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Start the main loop.
     while app.running {
-        terminal.draw(|f| app.render(f))?;
-
         // Handle events.
+        let mut render = true;
+
         match events.next()? {
-            Event::Tick => app.tick(),
+            Event::Tick => {
+                render = app.tick();
+            }
             Event::Key(key_event) => handle_key_event(key_event, &mut app, &events)?,
             Event::Matui(app_event) => handle_app_event(app_event, &mut app),
             Event::Focus => handle_focus_event(&mut app),
@@ -44,6 +46,10 @@ async fn main() -> anyhow::Result<()> {
             Event::Redraw => {
                 let _ = terminal.clear();
             }
+        }
+
+        if render {
+            terminal.draw(|f| app.render(f))?;
         }
     }
 

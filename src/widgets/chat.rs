@@ -3,11 +3,12 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
-use crate::settings::{is_muted, toggle_mute};
+use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, get_text};
-use crate::widgets::message::{Message, Reaction, ReactionEvent};
+use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
+use crate::widgets::search::Search;
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
 use crate::{consumed, limit_list, pretty_list, truncate, KeyCombo};
@@ -23,7 +24,8 @@ use ruma::{OwnedEventId, OwnedUserId};
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
-use std::ops::Deref;
+use std::ops::{Deref, Range};
+use std::sync::Mutex;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -43,16 +45,18 @@ pub struct Chat {
     events: BTreeSet<OrderedEvent>,
     receipts: Receipts,
     messages: Vec<Message>,
+    window: Range<usize>,
     read_to: Option<OwnedEventId>,
     react: Option<React>,
     typing: Option<String>,
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
     fetching: Cell<bool>,
-    width: Cell<usize>,
     height: Cell<usize>,
-    total_list_items: Cell<usize>,
+    line_types: Mutex<Vec<LineType>>,
+    bookmark: Cell<Option<Bookmark>>,
     focus: bool,
+    search_term: String,
     delete_combo: KeyCombo,
 
     members: Vec<RoomMember>,
@@ -64,7 +68,7 @@ impl Chat {
     pub fn try_new(matrix: Matrix, room: Room) -> Option<Self> {
         let decorated_room = matrix.wrap_room(&room)?;
 
-        matrix.fetch_messages(room, None);
+        matrix.fetch_messages(room, None, 25);
 
         Some(Self {
             matrix: matrix.clone(),
@@ -72,16 +76,18 @@ impl Chat {
             events: BTreeSet::new(),
             receipts: Receipts::new(matrix.me()),
             messages: vec![],
+            window: (0..0),
             read_to: None,
             react: None,
             typing: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
             fetching: Cell::new(true),
-            width: Cell::new(80),
             height: Cell::new(20),
-            total_list_items: Cell::new(0),
+            line_types: Mutex::new(vec![]),
+            bookmark: Cell::new(Option::None),
             focus: true,
+            search_term: "".to_string(),
             delete_combo: KeyCombo::new(vec!['d', 'd']),
             members: vec![],
             pretty_members: OnceCell::new(),
@@ -182,7 +188,10 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Enter => {
-                if let Some(message) = &self.selected_reply() {
+                if !self.search_term.is_empty() {
+                    self.search_term = "".to_string();
+                    self.set_messages(true);
+                } else if let Some(message) = &self.selected_reply() {
                     message.open(self.matrix.clone())
                 }
                 Ok(consumed!())
@@ -207,7 +216,7 @@ impl Chat {
                     handler.park();
 
                     let result = get_text(
-                        Some(&message.display()),
+                        Some(message.display()),
                         Some(&format!(
                             "<!-- Edit your message above to change it in {}. -->",
                             self.room.name
@@ -276,7 +285,7 @@ impl Chat {
                     .initial_indent("  ")
                     .subsequent_indent("  ");
 
-                let body = textwrap::wrap(&message.display(), &wrap_options).join("\n");
+                let body = textwrap::wrap(message.display(), &wrap_options).join("\n");
 
                 let send = self.matrix.begin_typing(self.room());
 
@@ -346,6 +355,9 @@ impl Chat {
 
                 Ok(consumed!())
             }
+            KeyCode::Char('/') => Ok(Consumed(Box::new(|app| {
+                app.set_popup(Popup::Search(Search::default()))
+            }))),
             _ => Ok(EventResult::Ignored),
         }
     }
@@ -366,7 +378,7 @@ impl Chat {
 
         self.check_event_sender(&event);
         self.events.insert(OrderedEvent::new(event));
-        self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+        self.set_messages(false);
         self.pretty_members = OnceCell::new();
         self.set_fully_read();
     }
@@ -410,7 +422,7 @@ impl Chat {
     pub fn receipt_event(&mut self, room: &Room, content: &ReceiptEventContent) {
         if room.room_id() == self.room.room_id() {
             self.receipts.apply_event(content);
-            self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+            self.set_messages(false);
             self.pretty_members = OnceCell::new();
             let me = self.matrix.me();
 
@@ -433,7 +445,7 @@ impl Chat {
         }
 
         self.next_cursor = batch.cursor;
-        let previous_count = self.messages.len();
+        let batch_size = batch.events.len();
 
         for event in batch.events {
             self.check_event_sender(&event);
@@ -442,7 +454,7 @@ impl Chat {
 
         let reset = self.messages.is_empty();
 
-        self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+        self.set_messages(false);
         self.pretty_members = OnceCell::new();
         self.fetching.set(false);
         self.set_fully_read();
@@ -453,15 +465,83 @@ impl Chat {
             self.list_state.set(state);
         }
 
-        if self.messages.len() > previous_count {
+        if batch_size > 0 {
             self.try_fetch_previous();
         } else {
             info!("refusing to fetch more messages without making progress");
         }
     }
 
+    pub fn search_event(&mut self, search_term: &str) {
+        self.search_term = search_term.to_string();
+        self.set_messages(false);
+        self.try_fetch_previous();
+
+        if search_term.is_empty() {
+            self.first();
+        }
+    }
+
     fn check_event_sender(&mut self, event: &AnyTimelineEvent) {
         self.check_sender(&event.sender().to_owned());
+    }
+
+    fn set_messages(&mut self, force_bookmark: bool) {
+        self.messages = make_message_list(
+            &self.events,
+            &self.members,
+            &self.receipts,
+            &self.search_term,
+        );
+
+        self.adjust_range(force_bookmark);
+    }
+
+    fn adjust_range(&mut self, force_bookmark: bool) {
+        if self.messages.is_empty() {
+            self.window = 0..0;
+            return;
+        }
+
+        let mut bookmark = match self.get_bookmark() {
+            Some(b) => b,
+            None => Bookmark {
+                message_id: self.messages.first().unwrap().id.clone(),
+                offset: 1,
+                window_offset: 0,
+            },
+        };
+
+        let new_selected = self
+            .messages
+            .iter()
+            .position(|m| m.contains_id(&bookmark.message_id))
+            .unwrap_or_default();
+
+        // only keep a 100-long window around our index
+        let start = new_selected.saturating_sub(100);
+        let end = (new_selected + 101).min(self.messages.len());
+
+        self.window = start..end;
+
+        let list_state = self.list_state.take();
+        let selected = list_state.selected().unwrap_or_default();
+        let offset = list_state.offset();
+        self.list_state.set(list_state);
+
+        if offset == 0 && !force_bookmark {
+            // if we're on the bottom, stay there
+            if selected == 0 {
+                return;
+            }
+
+            // if it's just the offset on the bottom, keep it
+            if offset == 0 {
+                bookmark.window_offset = usize::MAX;
+            }
+        }
+
+        self.bookmark.set(Some(bookmark));
     }
 
     fn check_sender(&mut self, user_id: &OwnedUserId) {
@@ -572,7 +652,7 @@ impl Chat {
         self.in_flight.retain(|id| id != member.user_id());
         self.members.push(member);
         self.pretty_members = OnceCell::new();
-        self.messages = make_message_list(&self.events, &self.members, &self.receipts);
+        self.set_messages(false);
     }
 
     fn try_fetch_previous(&self) {
@@ -581,24 +661,27 @@ impl Chat {
         }
 
         let state = self.list_state.take();
-        let buffer = self.total_list_items.get() - state.selected().unwrap_or_default();
+        let buffer = self.total_list_items() - state.selected().unwrap_or_default();
         self.list_state.set(state);
 
-        if buffer < 100 {
+        if buffer < 100 && self.events.len() < max_events() {
+            let limit = if self.search_term.is_empty() { 32 } else { 256 };
+
             self.matrix
-                .fetch_messages(self.room(), self.next_cursor.clone());
+                .fetch_messages(self.room(), self.next_cursor.clone(), limit);
+
             self.fetching.set(true);
-            info!("fetching more events...")
+            info!("fetching more events... {}", self.events.len())
         }
     }
 
-    fn next(&self, step: usize) {
+    fn next(&mut self, step: usize) {
         let mut state = self.list_state.take();
 
         let mut i = match state.selected() {
             Some(i) => {
-                if i + step >= &self.total_list_items.get() - 1 {
-                    &self.total_list_items.get() - 1
+                if i + step >= &self.total_list_items() - 1 {
+                    &self.total_list_items() - 1
                 } else {
                     i + step
                 }
@@ -612,9 +695,10 @@ impl Chat {
 
         state.select(Some(i));
         self.list_state.set(state);
+        self.adjust_range(false);
     }
 
-    fn previous(&self, step: usize) {
+    fn previous(&mut self, step: usize) {
         let mut state = self.list_state.take();
 
         let mut i = state
@@ -628,64 +712,59 @@ impl Chat {
 
         state.select(Some(i));
         self.list_state.set(state);
+        self.adjust_range(false);
     }
 
-    fn first(&self) {
+    fn first(&mut self) {
         let mut state = self.list_state.take();
-        state.select(Some(0));
+        *state.selected_mut() = Some(0);
+        *state.offset_mut() = 0;
         self.list_state.set(state);
+
+        self.window = 0..(self.messages.len().min(200));
+        self.bookmark.set(None);
+    }
+
+    fn get_bookmark(&self) -> Option<Bookmark> {
+        let list_state = self.list_state.take();
+        let ls_selected = list_state.selected().unwrap_or_default();
+        let ls_offset = list_state.offset();
+        self.list_state.set(list_state);
+
+        let mut selected = ls_selected;
+        let mut offset = 0;
+        let lines = self.line_types.lock().unwrap();
+
+        loop {
+            let line = lines.get(selected)?;
+
+            if let LineType::MessageStart(message_id) = line {
+                return Some(Bookmark {
+                    message_id: message_id.clone(),
+                    offset,
+                    window_offset: ls_selected.saturating_sub(ls_offset),
+                });
+            }
+
+            selected += 1;
+            offset += 1;
+        }
+    }
+
+    fn total_list_items(&self) -> usize {
+        self.line_types.lock().unwrap().len()
     }
 
     // the message (or reply) currently selected by the UI
     fn selected_reply(&self) -> Option<&Message> {
-        if self.messages.is_empty() {
-            return None;
-        }
-
-        let state = self.list_state.take();
-        let selected = state.selected().unwrap_or_default();
-        self.list_state.set(state);
-
-        // count message heights until we overrun the counter
-        let mut counter = 0;
-
-        for m in &self.messages {
-            let flattened = m.flatten();
-
-            for (index, message) in flattened.iter().rev().enumerate() {
-                counter += message.height(self.width.get(), index < flattened.len() - 1);
-
-                if counter > selected {
-                    return Some(message);
-                }
-            }
-        }
-
-        // otherwise, return the last reply on the last message
-        if let Some(last) = self.messages.last() {
-            return last.flatten().last().copied();
-        }
-
-        None
+        let bookmark = self.get_bookmark()?;
+        self.messages.iter().find(|&m| m.id == bookmark.message_id)
     }
 
     // is the given selection in the middle of two messages?
     fn invalid_selection(&self, selected: usize) -> bool {
-        let mut counter = 0;
-
-        for m in &self.messages {
-            let flattened = m.flatten();
-
-            for (index, message) in flattened.iter().rev().enumerate() {
-                counter += message.height(self.width.get(), index < flattened.len() - 1);
-
-                if counter > selected {
-                    return counter == selected + 1;
-                }
-            }
-        }
-
-        false
+        let lines = self.line_types.lock().unwrap();
+        lines.get(selected).unwrap_or(&LineType::MessageContent) == &LineType::DeadSpace
     }
 
     // the reactions on the currently selected message
@@ -731,6 +810,17 @@ impl Chat {
 
         None
     }
+}
+
+pub struct Bookmark {
+    // which message are we pointing at?
+    message_id: OwnedEventId,
+
+    // how many lines down from the top?
+    offset: usize,
+
+    // and how offset is the bottom of the window?
+    window_offset: usize,
 }
 
 // a good PR would be to add Ord to AnyTimelineEvent
@@ -831,29 +921,54 @@ impl Widget for ChatWidget<'_> {
             .split(splits[0])[0];
 
         let (p_content, p_color) = if self.chat.typing.is_some() {
-            (self.chat.typing.as_ref().unwrap().as_str(), Color::Yellow)
+            (
+                self.chat.typing.as_ref().unwrap().to_string(),
+                Color::Yellow,
+            )
+        } else if self.chat.fetching.get() {
+            let term = if self.chat.search_term.is_empty() {
+                "Loading"
+            } else {
+                "Searching"
+            };
+
+            (
+                format!("{}... ({})", term, self.chat.events.len()),
+                Color::Yellow,
+            )
         } else {
-            (self.chat.pretty_members(), Color::Magenta)
+            (self.chat.pretty_members().to_string(), Color::Magenta)
         };
 
         Paragraph::new(p_content)
             .style(Style::default().fg(p_color))
             .render(p_area, buf);
 
-        // chat messages
-        let items: Vec<ListItem> = self
-            .chat
-            .messages
-            .iter()
-            .flat_map(|m| m.to_list_items((area.width - 2) as usize))
-            .collect();
+        let mut line_types = self.chat.line_types.lock().unwrap();
+        line_types.clear();
 
-        // make sure we save our last render dimensions and total items
-        self.chat.width.set((area.width - 2).into());
-        self.chat.height.set((area.height).into());
-        self.chat.total_list_items.set(items.len());
+        let mut items: Vec<ListItem> = vec![];
+        let mut buffer: Vec<LineType> = vec![];
+        let window = &self.chat.messages[self.chat.window.clone()];
+
+        for m in window.iter() {
+            items.append(&mut m.to_list_items((area.width - 2) as usize, &mut buffer));
+            line_types.append(&mut buffer);
+        }
+
+        // make sure we save our last render dimensions
+        self.chat.height.set((splits[1].height).into());
 
         let mut list_state = self.chat.list_state.take();
+
+        // if there's a bookmark, use it to set our selection
+        if let Some(bookmark) = self.chat.bookmark.take() {
+            let selected = find_bookmark(&bookmark, &line_types).unwrap_or_default();
+            let offset = selected.saturating_sub(bookmark.window_offset);
+
+            *list_state.selected_mut() = Some(selected);
+            *list_state.offset_mut() = offset;
+        }
 
         let list = List::new(items)
             .highlight_symbol("> ")
@@ -869,10 +984,23 @@ impl Widget for ChatWidget<'_> {
     }
 }
 
+fn find_bookmark(bookmark: &Bookmark, lines: &[LineType]) -> Option<usize> {
+    for (i, line) in lines.iter().enumerate() {
+        if let LineType::MessageStart(message_id) = line {
+            if *message_id == bookmark.message_id {
+                return Some(i.saturating_sub(bookmark.offset));
+            }
+        }
+    }
+
+    None
+}
+
 fn make_message_list(
     timeline: &BTreeSet<OrderedEvent>,
     members: &Vec<RoomMember>,
     receipts: &Receipts,
+    search_term: &str,
 ) -> Vec<Message> {
     // TODO: don't split these out
     let mut messages = vec![];
@@ -889,6 +1017,11 @@ fn make_message_list(
                 messages.push(message);
             }
         }
+    }
+
+    if !search_term.is_empty() {
+        messages.retain(|m| m.contains_search_term(search_term));
+        messages.iter().for_each(|m| m.set_search_term(search_term));
     }
 
     // apply our read receipts

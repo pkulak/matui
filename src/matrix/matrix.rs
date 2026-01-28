@@ -270,13 +270,12 @@ impl Matrix {
         self.room_cache.get_rooms()
     }
 
-    pub fn fetch_messages(&self, room: Room, cursor: Option<String>) {
+    pub fn fetch_messages(&self, room: Room, cursor: Option<String>, limit: usize) {
         self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Fetching more messages.".to_string(), 1000));
-
             // fetch the actual messages
             let mut options = MessagesOptions::new(Direction::Backward);
-            options.limit = UInt::from(25_u16);
+            options.limit =
+                UInt::new(limit.try_into().unwrap_or(25)).expect("invalid paging limit");
             options.from = cursor;
 
             let messages = match room.messages(options).await {
@@ -302,7 +301,6 @@ impl Matrix {
                 cursor: messages.end,
             };
 
-            Matrix::send(MatuiEvent::ProgressComplete);
             Matrix::send(MatuiEvent::TimelineBatch(batch));
         });
     }
@@ -325,7 +323,8 @@ impl Matrix {
 
             let (content_type, request, file_name) = match message {
                 Image(content) => (
-                    content.info
+                    content
+                        .info
                         .and_then(|info| info.mimetype)
                         .unwrap_or(octets),
                     MediaRequestParameters {
@@ -335,7 +334,8 @@ impl Matrix {
                     content.body,
                 ),
                 Video(content) => (
-                    content.info
+                    content
+                        .info
                         .and_then(|info| info.mimetype)
                         .unwrap_or(octets),
                     MediaRequestParameters {
@@ -345,7 +345,8 @@ impl Matrix {
                     content.body,
                 ),
                 File(content) => (
-                    content.info
+                    content
+                        .info
                         .and_then(|info| info.mimetype)
                         .unwrap_or(octets),
                     MediaRequestParameters {

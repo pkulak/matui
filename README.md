@@ -99,6 +99,7 @@ complicated. Especially if you don't implement too many features.
 | V      | View the current room in the external editor.          |
 | u      | Upload a file.                                         |
 | m      | Mute or unmute the current room (until restart).       |
+| \      | Search the current room.                               |
 | ?      | Show this helper.                                      |
 
 \* arrow keys are fine too
@@ -137,6 +138,18 @@ with all the files you care about. I recommend [mpv](https://mpv.io/) and
 KDialog and/or Zenity is required to show the file picker. FFMpeg is also
 required to create thumbnails if you upload videos.
 
+## Search
+
+Search (triggered by typing / in a room) is client side, and brute force. This
+uses more resources, but lets us go back as far as we like, and works in every
+room, encrypted or not. There are some guardrails, detailed below, but in
+general, it works great for finding recent messages, and you can go back
+farther if really needed.
+
+Searches are live as you type, and hitting Enter will let you scroll the list
+of results. Hitting Enter again on a result will jump to that message in the
+full timeline.
+
 # Configuration Example
 
 ```
@@ -152,6 +165,12 @@ clear_vim = true
 # If non-zero, send a "blur" event after that many seconds of inactivity,
 # useful when blur events aren't sent reliably by your terminal.
 blur_delay = 30
+
+# What's the limit on how far back to go, in events? This is mostly to
+# put a limit on how far back a search will look. If you know your
+# homeserver is okay with it (and you have unlimited memory in your machine),
+# you can set this to -1. Default shown below.
+max_events = 8192
 ```
 
 The config file is hot reloaded and can generally be found at

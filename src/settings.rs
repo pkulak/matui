@@ -1,4 +1,4 @@
-use config::Config;
+use config::{Config};
 use log::{info, warn};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use ruma::RoomId;
@@ -104,6 +104,19 @@ pub fn clean_vim() -> bool {
 
 pub fn blur_delay() -> i64 {
     get_settings().get("blur_delay").unwrap_or(30)
+}
+
+pub fn max_events() -> usize {
+    let max: Option<i32> = get_settings().get("max_events").ok();
+
+    match max {
+        Some(-1) => usize::MAX,
+        Some(i) if i > 0 => i as usize,
+        _ => {
+            warn!("invalid max_events; setting to 8192");
+            1024
+        }
+    }
 }
 
 fn watch_internal() {

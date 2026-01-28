@@ -1,10 +1,11 @@
 use crate::widgets::message::MessageType::File;
 use chrono::TimeZone;
 use human_bytes::human_bytes;
-use std::cell::Cell;
-use std::cmp;
+use std::borrow::Cow;
 use std::collections::BinaryHeap;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
+use timeago::Formatter;
 
 use crate::matrix::matrix::{pad_emoji, AfterDownload, Matrix};
 use crate::matrix::username::Username;
@@ -13,7 +14,7 @@ use crate::{limit_list, pretty_list};
 use chrono::offset::Local;
 use matrix_sdk::room::RoomMember;
 use once_cell::unsync::OnceCell;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 use ruma::events::relation::{InReplyTo, Replacement};
@@ -48,7 +49,19 @@ pub struct Message {
     pub replies: Vec<Message>,
     pub receipts: Vec<Username>,
 
-    last_height: Cell<LastHeight>,
+    body_lower: OnceCell<String>,
+    search_term: OnceCell<String>,
+    display_cache: OnceCell<String>,
+}
+
+static FORMATTER: OnceLock<Formatter> = OnceLock::new();
+
+fn get_formatter() -> &'static Formatter {
+    FORMATTER.get_or_init(|| {
+        let mut fmtr = timeago::Formatter::new();
+        fmtr.min_unit(timeago::TimeUnit::Minutes);
+        fmtr
+    })
 }
 
 #[derive(PartialEq, Eq)]
@@ -56,14 +69,6 @@ pub enum MergeResult {
     Consumed,
     Missed,
     Ignored,
-}
-
-// We need to calculate the message hight a lot, but it rarely changes;
-// keep it around.
-#[derive(Copy, Clone, Default)]
-struct LastHeight {
-    width: usize,
-    height: usize,
 }
 
 impl Message {
@@ -115,8 +120,25 @@ impl Message {
         }
     }
 
-    pub fn display(&self) -> String {
-        Message::display_body(&self.body).trim().to_string()
+    pub fn contains_search_term(&self, search_term: &str) -> bool {
+        if search_term.is_empty() {
+            return true;
+        }
+
+        let lowered = &self
+            .body_lower
+            .get_or_init(|| self.body.body().to_lowercase());
+
+        lowered.contains(search_term)
+            || self
+                .replies
+                .iter()
+                .any(|r| r.contains_search_term(search_term))
+    }
+
+    pub fn display(&self) -> &str {
+        self.display_cache
+            .get_or_init(|| Message::display_body(&self.body).trim().to_string())
     }
 
     pub fn display_full(&self) -> String {
@@ -129,7 +151,7 @@ impl Message {
             self.sender.id
         );
 
-        ret.push_str(&self.display());
+        ret.push_str(self.display());
         ret.push_str("\n\n");
 
         if !self.reactions.is_empty() {
@@ -163,8 +185,6 @@ impl Message {
     }
 
     pub fn pretty_elapsed(&self) -> String {
-        let formatter = timeago::Formatter::new();
-
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -172,7 +192,7 @@ impl Message {
 
         let then: u64 = self.sent.as_secs().into();
 
-        formatter.convert(Duration::from_secs(now.saturating_sub(then)))
+        get_formatter().convert(Duration::from_secs(now.saturating_sub(then)))
     }
 
     pub fn style(&self) -> Style {
@@ -187,7 +207,7 @@ impl Message {
             Image(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
-            Text(_) => view_text(&self.display()),
+            Text(_) => view_text(self.display()),
             _ => {}
         }
     }
@@ -204,6 +224,11 @@ impl Message {
     pub fn edit(&mut self, new_body: MessageType) {
         let old = std::mem::replace(&mut self.body, new_body);
         self.history.push(old);
+    }
+
+    pub fn set_search_term(&self, term: &str) {
+        let _ = self.search_term.set(term.to_string());
+        self.replies.iter().for_each(|m| m.set_search_term(term));
     }
 
     // can we make a brand-new message, just from this event?
@@ -246,7 +271,9 @@ impl Message {
                 reactions: Vec::new(),
                 replies: Vec::new(),
                 receipts: Vec::new(),
-                last_height: Cell::new(LastHeight::default()),
+                body_lower: OnceCell::new(),
+                search_term: OnceCell::new(),
+                display_cache: OnceCell::new(),
             });
         }
 
@@ -441,40 +468,6 @@ impl Message {
         &body[std::cmp::min(marker, body.len())..body.len()]
     }
 
-    pub fn height(&self, width: usize, reply: bool) -> usize {
-        let last = self.last_height.get();
-
-        if last.width == width {
-            return last.height;
-        }
-
-        let message = if reply {
-            textwrap::wrap(Message::remove_reply_header(&self.display()), width).len()
-        } else {
-            textwrap::wrap(&self.display(), width).len()
-        };
-
-        // max of 10 lines in a message
-        let mut height = cmp::min(message, 10);
-
-        height += 2;
-
-        if !self.receipts.is_empty() {
-            height += 1;
-        }
-
-        // max of 5 reactions
-        height += cmp::min(self.reactions.len(), 5);
-
-        // and then we have to account for the overlfow message
-        if message > 10 || self.reactions.len() > 5 {
-            height += 1;
-        }
-
-        self.last_height.set(LastHeight { width, height });
-        height
-    }
-
     // Indent 2 chars.
     fn indent(lines: &mut [Vec<Span>], first: bool) {
         let first_pipe = if first { "╷" } else { "│" };
@@ -486,51 +479,115 @@ impl Message {
         }
     }
 
-    pub fn flatten(&self) -> Vec<&Message> {
-        let mut messages = vec![self];
-
-        for r in &self.replies {
-            messages.append(&mut r.flatten());
+    pub fn contains_id(&self, id: &OwnedEventId) -> bool {
+        if &self.id == id {
+            return true
         }
 
-        messages
+        for r in self.replies.iter() {
+            if r.contains_id(id) {
+                return true
+            }
+        }
+
+        false
     }
 
-    pub fn to_list_items(&self, width: usize) -> Vec<ListItem> {
+    fn highlight<'a>(&self, line: Cow<'a, str>) -> Vec<Span<'a>> {
+        let term = match self.search_term.get() {
+            Some(t) => t,
+            None => return vec![Span::styled(line.to_string(), self.style())],
+        };
+
+        let mut result = Vec::new();
+        let mut last_end = 0;
+        let line_lower = line.to_lowercase();
+
+        for (pos, _) in line_lower.match_indices(term) {
+            // pre match
+            if pos > last_end {
+                let style = self.style();
+                let text = match &line {
+                    Cow::Borrowed(s) => Cow::Borrowed(&s[last_end..pos]),
+                    Cow::Owned(s) => Cow::Owned(s[last_end..pos].to_string()),
+                };
+                result.push(Span::styled(text, style));
+            }
+
+            // actual match
+            let style = self
+                .style()
+                .add_modifier(Modifier::UNDERLINED | Modifier::BOLD);
+            let text = match &line {
+                Cow::Borrowed(s) => Cow::Borrowed(&s[pos..pos + term.len()]),
+                Cow::Owned(s) => Cow::Owned(s[pos..pos + term.len()].to_string()),
+            };
+            result.push(Span::styled(text, style));
+            last_end = pos + term.len();
+        }
+
+        if last_end < line.len() {
+            let style = self.style();
+            let text = match &line {
+                Cow::Borrowed(s) => Cow::Borrowed(&s[last_end..]),
+                Cow::Owned(s) => Cow::Owned(s[last_end..].to_string()),
+            };
+            result.push(Span::styled(text, style));
+        }
+
+        result.retain(|s| !s.content.is_empty());
+        result
+    }
+
+    pub fn to_list_items(&self, width: usize, sidecar: &mut Vec<LineType>) -> Vec<ListItem> {
         let items: Vec<ratatui::text::Text> = self
-            .to_list_items_internal(&self.display(), width)
+            .to_list_items_internal(self.display(), width, sidecar)
             .into_iter()
             .map(|spans| ratatui::text::Text::from(Line::from(spans)))
             .collect();
 
+        sidecar.reverse();
         items.into_iter().rev().map(ListItem::new).collect()
     }
 
-    fn to_list_items_internal(&self, body: &str, width: usize) -> Vec<Vec<Span>> {
+    fn to_list_items_internal<'a>(
+        &'a self,
+        body: &'a str,
+        width: usize,
+        sidecar: &mut Vec<LineType>,
+    ) -> Vec<Vec<Span<'a>>> {
         let mut lines = vec![];
 
         // start with some negative space
         lines.push(vec![Span::from(" ")]);
+        sidecar.push(LineType::DeadSpace);
 
         // author
-        let mut spans = vec![
+        let mut author = vec![
             Span::styled(self.sender.as_str(), Style::default().fg(Color::Green)),
             Span::from(" "),
             Span::styled(self.pretty_elapsed(), Style::default().fg(Color::DarkGray)),
         ];
 
         if !self.history.is_empty() {
-            spans.push(Span::styled(" (edited)", Style::default().fg(Color::Red)))
+            author.push(Span::styled(" (edited)", Style::default().fg(Color::Red)))
         }
 
-        lines.push(spans);
+        lines.push(author);
+        sidecar.push(LineType::MessageStart(self.id.clone()));
 
         // the actual message
         let wrapped = textwrap::wrap(body, width);
         let message_overlap = wrapped.len() > 10;
 
         for l in wrapped.into_iter().take(10) {
-            lines.push(vec![Span::styled(l.trim().to_string(), self.style())]);
+            let trimmed = match l {
+                Cow::Borrowed(s) => Cow::Borrowed(s.trim()),
+                Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
+            };
+
+            lines.push(self.highlight(trimmed));
+            sidecar.push(LineType::MessageContent);
         }
 
         // overflow warning
@@ -538,7 +595,9 @@ impl Message {
             lines.push(vec![Span::styled(
                 "* overflow: type \"v\" to view entire message",
                 Style::default().fg(Color::Red),
-            )])
+            )]);
+
+            sidecar.push(LineType::MessageContent);
         }
 
         // receipts
@@ -555,7 +614,9 @@ impl Message {
                     pretty_list(limit_list(iter, 4, self.receipts.len(), None))
                 ),
                 Style::default().fg(Color::DarkGray),
-            )])
+            )]);
+
+            sidecar.push(LineType::MessageContent);
         }
 
         // reactions
@@ -563,20 +624,30 @@ impl Message {
             lines.push(vec![Span::styled(
                 r.list_view(),
                 Style::default().fg(Color::DarkGray),
-            )])
+            )]);
+
+            sidecar.push(LineType::MessageContent);
         }
 
         // replies
         for (i, r) in self.replies.iter().enumerate() {
             let reply = r.display();
-            let body = Message::remove_reply_header(&reply);
-            let mut reply_lines = r.to_list_items_internal(body, width - 2);
+            let body = Message::remove_reply_header(reply);
+            let mut reply_lines = r.to_list_items_internal(body, width - 2, sidecar);
             Message::indent(&mut reply_lines, i == 0);
             lines.append(&mut reply_lines);
         }
 
         lines
     }
+}
+
+// We need to bookkeep exactly what every line represents.
+#[derive(PartialEq)]
+pub enum LineType {
+    MessageStart(OwnedEventId),
+    MessageContent,
+    DeadSpace,
 }
 
 // A reaction is a single emoji. I may have 1 or more events, one for each
