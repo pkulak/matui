@@ -445,6 +445,7 @@ impl Chat {
         }
 
         self.next_cursor = batch.cursor;
+        let previous_count = self.messages.len();
         let batch_size = batch.events.len();
 
         for event in batch.events {
@@ -465,7 +466,8 @@ impl Chat {
             self.list_state.set(state);
         }
 
-        if batch_size > 0 {
+        if self.messages.len() > previous_count || (!self.search_term.is_empty() && batch_size > 0)
+        {
             self.try_fetch_previous();
         } else {
             info!("refusing to fetch more messages without making progress");
