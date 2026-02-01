@@ -539,7 +539,7 @@ impl Message {
         result
     }
 
-    pub fn to_list_items(&self, width: usize, sidecar: &mut Vec<LineType>) -> Vec<ListItem> {
+    pub fn to_list_items(&self, width: usize, sidecar: &mut Vec<LineType>) -> Vec<ListItem<'_>> {
         let items: Vec<ratatui::text::Text> = self
             .to_list_items_internal(self.display(), width, sidecar)
             .into_iter()

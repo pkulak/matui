@@ -25,7 +25,7 @@ impl Default for Search {
 }
 
 impl Search {
-    pub fn widget(&self) -> SearchWidget {
+    pub fn widget(&self) -> SearchWidget<'_> {
         SearchWidget { search: self }
     }
 

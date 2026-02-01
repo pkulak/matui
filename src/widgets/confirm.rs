@@ -44,7 +44,7 @@ impl Confirm {
         }
     }
 
-    pub fn widget(&self) -> ConfirmWidget {
+    pub fn widget(&self) -> ConfirmWidget<'_> {
         ConfirmWidget { confirm: self }
     }
 

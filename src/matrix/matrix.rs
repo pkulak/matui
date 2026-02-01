@@ -528,7 +528,7 @@ impl Matrix {
         room_id: OwnedRoomId,
     ) -> anyhow::Result<AnyTimelineEvent> {
         match &event.kind {
-            TimelineEventKind::Decrypted(decrypted) => Ok(decrypted.event.deserialize()?.into()),
+            TimelineEventKind::Decrypted(decrypted) => Ok(decrypted.event.deserialize()?),
             TimelineEventKind::PlainText { event } => {
                 Ok(event.deserialize()?.into_full_event(room_id))
             }
@@ -584,10 +584,7 @@ impl Matrix {
             info!("reply event: {:?}", reply_event);
 
             if let Err(err) = room
-                .send(
-                    RoomMessageEventContent::text_markdown(message)
-                        .make_replacement(event, reply_event.as_ref()),
-                )
+                .send(RoomMessageEventContent::text_markdown(message).make_replacement(event))
                 .await
             {
                 Matrix::send(Error(err.to_string()));
@@ -867,12 +864,12 @@ fn add_default_handlers(client: Client) {
         }
 
         match event {
-            AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent { content: c }) => {
+            AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent { content: c, .. }) => {
                 App::get_sender()
                     .send(Matui(MatuiEvent::Typing(room, c.user_ids)))
                     .expect("could not send typing event");
             }
-            AnySyncEphemeralRoomEvent::Receipt(SyncEphemeralRoomEvent { content: c }) => {
+            AnySyncEphemeralRoomEvent::Receipt(SyncEphemeralRoomEvent { content: c, .. }) => {
                 App::get_sender()
                     .send(Matui(MatuiEvent::Receipt(room, c)))
                     .expect("could not send typing event");

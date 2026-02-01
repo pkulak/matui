@@ -47,7 +47,7 @@ impl Rooms {
         ret
     }
 
-    pub fn widget(&self) -> RoomsWidget {
+    pub fn widget(&self) -> RoomsWidget<'_> {
         RoomsWidget { rooms: self }
     }
 
@@ -202,7 +202,7 @@ impl Widget for RoomsWidget<'_> {
     }
 }
 
-fn make_list_item(room: &DecoratedRoom) -> ListItem {
+fn make_list_item(room: &DecoratedRoom) -> ListItem<'_> {
     let name = room.name.to_string();
     let unread = room.unread_count();
     let highlights = room.highlight_count();

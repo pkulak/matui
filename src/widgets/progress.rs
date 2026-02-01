@@ -29,7 +29,7 @@ impl Progress {
         }
     }
 
-    pub fn widget(&self) -> ProgressWidget {
+    pub fn widget(&self) -> ProgressWidget<'_> {
         ProgressWidget { progress: self }
     }
 

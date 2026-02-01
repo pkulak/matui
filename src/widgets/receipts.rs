@@ -29,7 +29,7 @@ impl Receipts {
         }
     }
 
-    pub fn get_all(&self) -> BinaryHeap<Receipt> {
+    pub fn get_all(&self) -> BinaryHeap<Receipt<'_>> {
         let mut heap = BinaryHeap::with_capacity(self.markers.len());
 
         heap.extend(self.markers.iter().map(|(k, v)| Receipt {

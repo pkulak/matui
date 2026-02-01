@@ -99,7 +99,7 @@ impl Chat {
         self.widget().render(area, buf);
     }
 
-    pub fn widget(&self) -> ChatWidget {
+    pub fn widget(&self) -> ChatWidget<'_> {
         ChatWidget { chat: self }
     }
 

@@ -6,6 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// Terminal events.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Event {
     /// Terminal tick.

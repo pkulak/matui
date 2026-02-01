@@ -16,6 +16,7 @@ use matrix_sdk::encryption::verification::{Emoji, SasVerification};
 use matrix_sdk::room::{Room, RoomMember};
 use ruma::events::AnyTimelineEvent;
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum MatuiEvent {
     Confirm(String, String),

@@ -40,7 +40,7 @@ impl Signin {
         ]
     }
 
-    pub fn widget(&self) -> SigninWidget {
+    pub fn widget(&self) -> SigninWidget<'_> {
         SigninWidget { signin: self }
     }
 

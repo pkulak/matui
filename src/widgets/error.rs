@@ -32,7 +32,7 @@ impl Error {
         }
     }
 
-    pub fn widget(&self) -> ErrorWidget {
+    pub fn widget(&self) -> ErrorWidget<'_> {
         ErrorWidget { error: self }
     }
 

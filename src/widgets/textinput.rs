@@ -45,7 +45,7 @@ impl TextInput {
         }
     }
 
-    pub fn widget(&self) -> TextInputWidget {
+    pub fn widget(&self) -> TextInputWidget<'_> {
         TextInputWidget { textinput: self }
     }
 

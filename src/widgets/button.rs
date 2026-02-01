@@ -45,7 +45,7 @@ impl Button {
         }
     }
 
-    pub fn widget(&self) -> ButtonWidget {
+    pub fn widget(&self) -> ButtonWidget<'_> {
         ButtonWidget { button: self }
     }
 }

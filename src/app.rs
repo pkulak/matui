@@ -128,7 +128,7 @@ impl App {
         }
 
         // make sure we render every once in a while
-        if self.timestamp % 60 == 0 {
+        if self.timestamp.is_multiple_of(60) {
             render = true;
         }
 

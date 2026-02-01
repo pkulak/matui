@@ -73,7 +73,7 @@ impl React {
         }
     }
 
-    pub fn widget(&self) -> ReactWidget {
+    pub fn widget(&self) -> ReactWidget<'_> {
         ReactWidget { parent: self }
     }
 
