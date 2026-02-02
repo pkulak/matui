@@ -17,7 +17,10 @@ use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::authentication::matrix::MatrixSession;
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
-use matrix_sdk::encryption::verification::{Emoji, SasState, SasVerification, Verification};
+use matrix_sdk::encryption::verification::{
+    Emoji, SasState, SasVerification, Verification, VerificationRequest, VerificationRequestState,
+};
+use matrix_sdk::encryption::EncryptionSettings;
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
 use matrix_sdk::room::{MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::client::filter::{
@@ -25,9 +28,6 @@ use matrix_sdk::ruma::api::client::filter::{
 };
 use matrix_sdk::ruma::api::Direction;
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
-use matrix_sdk::ruma::events::key::verification::start::{
-    OriginalSyncKeyVerificationStartEvent, ToDeviceKeyVerificationStartEvent,
-};
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::UserId;
@@ -191,33 +191,59 @@ impl Matrix {
             };
 
             matrix.room_cache.populate(client.clone()).await;
-
             Matrix::send(MatuiEvent::SyncComplete);
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            matrix.verify();
+        });
+    }
+
+    pub fn verify(&self) {
+        let matrix = self.clone();
+
+        self.rt.spawn(async move {
+            let client = matrix.client();
 
             if let Some(user_id) = client.user_id() {
                 match client.encryption().get_user_identity(user_id).await {
                     Ok(Some(identity)) => {
-                        if let Err(err) = identity
+                        match identity
                             .request_verification_with_methods(vec![VerificationMethod::SasV1])
                             .await
                         {
-                            error!("could not request verification: {}", err);
-                        } else {
-                            info!("verification requested");
+                            Err(err) => error!("could not request verification: {}", err),
+                            Ok(request) => matrix.wait_on_verify_request(request),
                         }
                     }
                     Ok(None) => error!("no user identity"),
                     Err(err) => error!("could not get user identity: {}", err),
+                };
+            };
+        });
+    }
+
+    fn wait_on_verify_request(&self, request: VerificationRequest) {
+        info!("verification requested");
+
+        self.rt.spawn(async move {
+            let mut stream = request.changes();
+
+            while let Some(state) = stream.next().await {
+                if let VerificationRequestState::Transitioned {
+                    verification: Verification::SasV1(s),
+                } = state
+                {
+                    tokio::spawn(sas_verification_handler(s, App::get_sender()));
+                    break;
                 }
             }
         });
     }
 
     pub fn sync(&self) {
-        add_default_handlers(self.client());
-        add_verification_handlers(self.client());
-
         let client = self.client();
+
+        add_default_handlers(client.clone());
+        add_verification_handlers(client.clone());
 
         // apparently we only need the token for sync_once
         let sync_settings = build_sync_settings(None);
@@ -719,6 +745,7 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
     let client = Client::builder()
         .server_name(homeserver)
         .sqlite_store(client_session.db_path, Some(&client_session.passphrase))
+        .with_encryption_settings(build_encryption_settings())
         .build()
         .await?;
 
@@ -781,6 +808,7 @@ async fn build_client(data_dir: &Path, id: &UserId) -> anyhow::Result<(Client, C
     let client = Client::builder()
         .server_name(id.server_name())
         .sqlite_store(&db_path, Some(passphrase.as_str()))
+        .with_encryption_settings(build_encryption_settings())
         .build()
         .await?;
 
@@ -813,6 +841,14 @@ fn build_sync_settings(sync_token: Option<String>) -> SyncSettings {
     }
 
     sync_settings
+}
+
+fn build_encryption_settings() -> EncryptionSettings {
+    EncryptionSettings {
+        auto_enable_cross_signing: true,
+        auto_enable_backups: true,
+        backup_download_strategy: matrix_sdk::encryption::BackupDownloadStrategy::OneShot,
+    }
 }
 
 async fn sync_once(
@@ -894,22 +930,7 @@ fn add_verification_handlers(client: Client) {
                 }
             };
 
-            request
-                .accept()
-                .await
-                .expect("Can't accept verification request");
-        },
-    );
-
-    client.add_event_handler(
-        |ev: ToDeviceKeyVerificationStartEvent, client: Client| async move {
-            if let Some(Verification::SasV1(sas)) = client
-                .encryption()
-                .get_verification(&ev.sender, ev.content.transaction_id.as_str())
-                .await
-            {
-                tokio::spawn(sas_verification_handler(sas, App::get_sender()));
-            };
+            tokio::spawn(request_verification_handler(request));
         },
     );
 
@@ -928,25 +949,40 @@ fn add_verification_handlers(client: Client) {
                     }
                 };
 
-                request
-                    .accept()
-                    .await
-                    .expect("Can't accept verification request");
+                tokio::spawn(request_verification_handler(request));
             }
         },
+    );
+}
+
+async fn request_verification_handler(request: VerificationRequest) {
+    info!(
+        "Accepting verification request from {}",
+        request.other_user_id()
     );
 
-    client.add_event_handler(
-        |ev: OriginalSyncKeyVerificationStartEvent, client: Client| async move {
-            if let Some(Verification::SasV1(sas)) = client
-                .encryption()
-                .get_verification(&ev.sender, ev.content.relates_to.event_id.as_str())
-                .await
-            {
-                tokio::spawn(sas_verification_handler(sas, App::get_sender()));
+    request
+        .accept()
+        .await
+        .expect("Can't accept verification request");
+
+    let mut stream = request.changes();
+
+    while let Some(state) = stream.next().await {
+        match state {
+            VerificationRequestState::Created { .. }
+            | VerificationRequestState::Requested { .. }
+            | VerificationRequestState::Ready { .. } => (),
+            VerificationRequestState::Transitioned { verification } => {
+                // We only support SAS verification.
+                if let Verification::SasV1(s) = verification {
+                    tokio::spawn(sas_verification_handler(s, App::get_sender()));
+                    break;
+                }
             }
-        },
-    );
+            VerificationRequestState::Done | VerificationRequestState::Cancelled(_) => break,
+        }
+    }
 }
 
 async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
