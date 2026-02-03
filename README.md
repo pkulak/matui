@@ -100,7 +100,7 @@ complicated. Especially if you don't implement too many features.
 | V      | View the current room in the external editor.          |
 | u      | Upload a file.                                         |
 | m      | Mute or unmute the current room (until restart).       |
-| \      | Search the current room.                               |
+| /      | Search the current room.                               |
 | ?      | Show this helper.                                      |
 
 \* arrow keys are fine too
