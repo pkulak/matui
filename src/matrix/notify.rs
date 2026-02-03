@@ -2,6 +2,7 @@ use log::{error, info};
 use ruma::UserId;
 use ruma::{events::AnyTimelineEvent, OwnedRoomId};
 use std::fs::OpenOptions;
+use std::sync::Arc;
 use std::{
     collections::HashMap,
     fs,
@@ -29,7 +30,7 @@ use super::matrix::Matrix;
 pub struct Notify {
     focus: AtomicBool,
     room_id: Mutex<Option<OwnedRoomId>>,
-    rooms: Mutex<HashMap<String, u32>>,
+    rooms: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl Default for Notify {
@@ -37,7 +38,7 @@ impl Default for Notify {
         Notify {
             focus: AtomicBool::new(false),
             room_id: Mutex::new(None),
-            rooms: Mutex::new(HashMap::new()),
+            rooms: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -129,25 +130,35 @@ impl Notify {
             watch = false;
         }
 
-        let handle = notification.show()?;
-        let handle_id = handle.id();
+        drop(map);
 
-        map.insert(room.room_id().to_string(), handle_id);
-
-        if !watch {
-            return Ok(());
-        }
-
-        // spawn a thread to sit around and wait for the notification to close
-        std::thread::spawn(move || {
-            handle.on_close({
-                move |reason: CloseReason| {
-                    info!("close reason {:?}", reason);
-                    Matrix::send(MatuiEvent::RoomSelected(room.clone()));
+        // Clone what we need for the async block
+        let room_id = room.room_id().to_string();
+        let rooms = self.rooms.clone();
+        
+        tokio::spawn(async move {
+            match notification.show_async().await {
+                Ok(handle) => {
+                    let handle_id = handle.id();
+                    
+                    // Add to the map
+                    let mut map = rooms.lock().expect("could not lock rooms");
+                    map.insert(room_id, handle_id);
+                    drop(map); // Release lock
+                    
+                    if watch {
+                        handle.on_close(move |reason: CloseReason| {
+                            info!("close reason {:?}", reason);
+                            Matrix::send(MatuiEvent::RoomSelected(room.clone()));
+                        });
+                    }
                 }
-            });
+                Err(e) => {
+                    error!("Failed to show notification: {}", e);
+                }
+            }
         });
-
+        
         Ok(())
     }
 
