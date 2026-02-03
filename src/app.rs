@@ -16,6 +16,7 @@ use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
+use crate::widgets::recover::Recover;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::search::Search;
 use crate::widgets::signin::Signin;
@@ -155,6 +156,7 @@ pub enum Popup {
     Confirm(Confirm),
     Error(Error),
     Progress(Progress),
+    Recover(Recover),
     Rooms(Rooms),
     Signin(Signin),
     Search(Search),
@@ -167,6 +169,7 @@ impl Popup {
             Popup::Confirm(w) => w.key_event(event),
             Popup::Error(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
+            Popup::Recover(w) => w.key_event(event),
             Popup::Rooms(w) => w.key_event(event),
             Popup::Signin(w) => w.key_event(event),
             Popup::Search(w) => w.key_event(event),
@@ -188,6 +191,7 @@ impl Popup {
             Popup::Confirm(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Rooms(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Signin(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Search(w) => frame.render_widget(w.widget(), frame.area()),

@@ -95,6 +95,7 @@ complicated. Especially if you don't implement too many features.
 | c      | Edit the selected message in the external editor.      |
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |
+| Ctrl+Alt+r | Verify this client with your passphrase.           |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room in the external editor.          |
 | u      | Upload a file.                                         |
@@ -148,7 +149,14 @@ farther if really needed.
 
 Searches are live as you type, and hitting Enter will let you scroll the list
 of results. Hitting Enter again on a result will jump to that message in the
-full timeline.
+full timeline. Use Shift+G to go back to the latest message.
+
+## End-to-End Encryption
+
+After login, a verification request is sent out to your other clients. If you
+don't have any other clients, or don't want to verify this way, you can
+cancel/ignore the request and hit Ctrl+Alt+r from the chat window to start
+a verification by passphrase.
 
 # Configuration Example
 

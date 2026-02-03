@@ -3,6 +3,7 @@ use crate::widgets::EventResult::Ignored;
 
 pub mod error;
 pub mod progress;
+pub mod recover;
 pub mod rooms;
 pub mod signin;
 pub mod search;

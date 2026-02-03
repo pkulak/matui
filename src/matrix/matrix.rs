@@ -239,6 +239,24 @@ impl Matrix {
         });
     }
 
+    pub fn recover(&self, key: &str) {
+        let matrix = self.clone();
+        let key = key.to_string();
+
+        self.rt.spawn(async move {
+            match matrix.client().encryption().recovery().recover(&key).await {
+                Ok(()) => App::get_sender()
+                    .send(Matui(MatuiEvent::ProgressComplete))
+                    .expect("to send progress complete event"),
+                Err(_) => App::get_sender()
+                    .send(Matui(MatuiEvent::Error(
+                        "Could not recover encryption keys.".to_string(),
+                    )))
+                    .expect("to send error event"),
+            }
+        });
+    }
+
     pub fn sync(&self) {
         let client = self.client();
 

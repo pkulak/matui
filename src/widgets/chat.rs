@@ -8,6 +8,7 @@ use crate::spawn::{get_file_paths, get_text};
 use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
+use crate::widgets::recover::Recover;
 use crate::widgets::search::Search;
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::{get_margin, EventResult};
@@ -274,6 +275,14 @@ impl Chat {
                 } else {
                     bail!("Couldn't read from editor.")
                 }
+            }
+            KeyCode::Char('r')
+                if input.modifiers.contains(KeyModifiers::CONTROL)
+                    && input.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                Ok(Consumed(Box::new(|app| {
+                    app.set_popup(Popup::Recover(Recover::default()))
+                })))
             }
             KeyCode::Char('R') => {
                 let message = match self.selected_reply() {

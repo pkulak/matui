@@ -26,6 +26,7 @@ pub enum MatuiEvent {
     LoginStarted,
     ProgressStarted(String, u64),
     ProgressComplete,
+    Recover(String),
     Receipt(Room, ReceiptEventContent),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
@@ -73,6 +74,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.set_popup(Popup::Progress(Progress::new(&msg, delay)))
         }
         MatuiEvent::ProgressComplete => app.popup = None,
+        MatuiEvent::Recover(key) => {
+            app.set_popup(Popup::Progress(Progress::new(
+                "Fetching encryption keys.",
+                0,
+            )));
+            app.matrix.recover(&key);
+        }
 
         // Let the chat update when we learn about room membership
         MatuiEvent::RoomMember(room, member) => {
@@ -85,7 +93,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             if let Some(c) = &mut app.chat {
                 c.search_event(&search_term);
             }
-        },
+        }
         MatuiEvent::SyncStarted(st) => {
             match st {
                 SyncType::Initial => app.set_popup(Popup::Progress(Progress::new(

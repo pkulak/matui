@@ -86,6 +86,10 @@ impl Widget for HelpWidget {
                 Row::new(vec!["r", "React to the selected message."]),
                 Row::new(vec!["R", "Reply to the selected message."]),
                 Row::new(vec![
+                    "Ctrl+Alt+r",
+                    "Verify this client with your passphrase.",
+                ]),
+                Row::new(vec![
                     "v",
                     "View the selected message in the external editor.",
                 ]),
@@ -95,6 +99,7 @@ impl Widget for HelpWidget {
                     "m",
                     "Mute or unmute the current room (until restart).",
                 ]),
+                Row::new(vec!["/", "Search the current room"]),
                 Row::new(vec!["?", "Show this helper."]),
                 Row::new(vec!["", "* arrow keys are fine too."]),
             ],
