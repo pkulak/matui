@@ -119,6 +119,10 @@ pub fn max_events() -> usize {
     }
 }
 
+pub fn respect_notification_close_reason() -> bool {
+    get_settings().get("respect_notification_close_reason").unwrap_or_default()
+}
+
 fn watch_internal() {
     let (tx, rx) = channel();
 

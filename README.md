@@ -168,7 +168,7 @@ reactions = [ "❤️", "👍", "👎", "😂", "‼️", "❓️"]
 muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
 
 # Useful if your custom config is interfering with Enter key bindings
-clear_vim = true
+clear_vim = false
 
 # If non-zero, send a "blur" event after that many seconds of inactivity,
 # useful when blur events aren't sent reliably by your terminal.
@@ -179,6 +179,12 @@ blur_delay = 30
 # homeserver is okay with it (and you have unlimited memory in your machine),
 # you can set this to -1. Default shown below.
 max_events = 8192
+
+
+# If you have a notification system that doesn't just send "dismissed" no
+# matter what, you can set this to true. This way, hopefully, when you dismiss
+# a notification, the room won't change.
+respect_notification_close_reason = false
 ```
 
 The config file is hot reloaded and can generally be found at

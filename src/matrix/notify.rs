@@ -23,6 +23,7 @@ use matrix_sdk::{
 };
 use notify_rust::{CloseReason, Hint};
 
+use crate::settings::respect_notification_close_reason;
 use crate::{handler::MatuiEvent, settings::is_muted, widgets::message::Message};
 
 use super::matrix::Matrix;
@@ -135,20 +136,27 @@ impl Notify {
         // Clone what we need for the async block
         let room_id = room.room_id().to_string();
         let rooms = self.rooms.clone();
-        
+
         tokio::spawn(async move {
             match notification.show_async().await {
                 Ok(handle) => {
                     let handle_id = handle.id();
-                    
+
                     // Add to the map
                     let mut map = rooms.lock().expect("could not lock rooms");
                     map.insert(room_id, handle_id);
                     drop(map); // Release lock
-                    
+
                     if watch {
                         handle.on_close(move |reason: CloseReason| {
                             info!("close reason {:?}", reason);
+
+                            if respect_notification_close_reason()
+                                && !matches!(reason, CloseReason::CloseAction)
+                            {
+                                return;
+                            }
+
                             Matrix::send(MatuiEvent::RoomSelected(room.clone()));
                         });
                     }
@@ -158,7 +166,7 @@ impl Notify {
                 }
             }
         });
-        
+
         Ok(())
     }
 
