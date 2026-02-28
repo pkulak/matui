@@ -7,7 +7,7 @@ use ruma::events::receipt::ReceiptEventContent;
 use std::collections::VecDeque;
 use std::sync::mpsc::Sender;
 use std::sync::Mutex;
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 
 use crate::event::Event;
 use crate::matrix::matrix::Matrix;
@@ -49,8 +49,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(send: Sender<Event>, runtime: &Runtime) -> Self {
-        let matrix = Matrix::new(runtime);
+    pub fn new(send: Sender<Event>, handle: Handle) -> Self {
+        let matrix = Matrix::new(handle);
 
         // Save the sender for future threads.
         SENDER
@@ -120,21 +120,14 @@ impl App {
             return true;
         }
 
-        let mut render = false;
-
         // send out the ticks
         if let Some(w) = self.popup.as_mut() {
             w.tick_event(self.timestamp);
-            render = true;
-        }
-
-        // make sure we render every once in a while
-        if self.timestamp.is_multiple_of(60) {
-            render = true;
+            return true;
         }
 
         self.timestamp += 1;
-        render
+        false
     }
 
     /// Renders the user interface widgets.

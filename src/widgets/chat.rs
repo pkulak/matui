@@ -902,6 +902,8 @@ impl Widget for ChatWidget<'_> {
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];
 
+        buf.merge(&Buffer::empty(area));
+
         let splits = Layout::default()
             .direction(Direction::Vertical)
             .vertical_margin(1)

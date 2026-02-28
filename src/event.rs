@@ -49,6 +49,7 @@ impl EventHandler {
     /// Constructs a new instance of [`EventHandler`].
     pub fn new(tick_rate: u64) -> Self {
         let tick_rate = Duration::from_millis(tick_rate);
+    
         let (sender, receiver) = channel();
         let (pk_sender, pk_receiver) = channel();
         let handler = {
@@ -56,11 +57,15 @@ impl EventHandler {
             thread::spawn(move || {
                 let mut last_tick = Instant::now();
                 let mut last_park = Instant::now().sub(Duration::from_secs(10));
+                let mut last_redraw = Instant::now();
 
                 loop {
                     let timeout = tick_rate
                         .checked_sub(last_tick.elapsed())
                         .unwrap_or(tick_rate);
+
+                    // redraw every every hour, just in case
+                    let mut redraw_rate = Duration::from_mins(60);
 
                     if pk_receiver.try_recv().is_ok() {
                         thread::park();
@@ -82,6 +87,12 @@ impl EventHandler {
                                 CrosstermEvent::Key(e) => sender.send(Event::Key(e)),
                                 CrosstermEvent::FocusGained => sender.send(Event::Focus),
                                 CrosstermEvent::FocusLost => sender.send(Event::Blur),
+                                CrosstermEvent::Resize(_, _) => {
+                                    // these can come in batches, so reset the
+                                    // timer instead of sending one-to-one
+                                    redraw_rate = tick_rate;
+                                    Ok(())
+                                },
                                 _ => Ok(()),
                             }
                             .expect("failed to send terminal event")
@@ -91,6 +102,11 @@ impl EventHandler {
                     if last_tick.elapsed() >= tick_rate {
                         sender.send(Event::Tick).expect("failed to send tick event");
                         last_tick = Instant::now();
+                    }
+
+                    if last_redraw.elapsed() >= redraw_rate {
+                        sender.send(Event::Redraw).expect("failed to send redraw event");
+                        last_redraw = Instant::now();
                     }
                 }
             })

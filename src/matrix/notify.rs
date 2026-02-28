@@ -148,16 +148,18 @@ impl Notify {
                     drop(map); // Release lock
 
                     if watch {
-                        handle.on_close(move |reason: CloseReason| {
-                            info!("close reason {:?}", reason);
+                        std::thread::spawn(move || {
+                            handle.on_close(move |reason: CloseReason| {
+                                info!("close reason {:?}", reason);
 
-                            if respect_notification_close_reason()
-                                && !matches!(reason, CloseReason::CloseAction)
-                            {
-                                return;
-                            }
+                                if respect_notification_close_reason()
+                                    && !matches!(reason, CloseReason::CloseAction)
+                                {
+                                    return;
+                                }
 
-                            Matrix::send(MatuiEvent::RoomSelected(room.clone()));
+                                Matrix::send(MatuiEvent::RoomSelected(room.clone()));
+                            });
                         });
                     }
                 }

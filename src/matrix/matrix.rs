@@ -1,4 +1,5 @@
 use crate::matrix::matrix::MessageType::File;
+
 use crate::media::get_thumbnail;
 use crate::settings::blur_delay;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -49,7 +50,7 @@ use ruma::events::{
 };
 use ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::Handle;
 
 use crate::app::App;
 use crate::event::Event;
@@ -81,9 +82,9 @@ pub enum AfterDownload {
 }
 
 impl Matrix {
-    pub fn new(runtime: &Runtime) -> Self {
+    pub fn new(handle: Handle) -> Self {
         Matrix {
-            rt: runtime.handle().clone(),
+            rt: handle,
             client: Arc::new(OnceCell::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
