@@ -120,14 +120,20 @@ impl App {
             return true;
         }
 
+        let mut render = false;
+
         // send out the ticks
         if let Some(w) = self.popup.as_mut() {
             w.tick_event(self.timestamp);
-            return true;
+            render = true;
+        }
+
+        if self.timestamp.is_multiple_of(240) {
+            render = true;
         }
 
         self.timestamp += 1;
-        false
+        render
     }
 
     /// Renders the user interface widgets.
