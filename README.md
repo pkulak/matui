@@ -41,7 +41,7 @@ There is a `flake.nix` that can be used run temporarily locally, or to install o
 
 ### Shell
 
-`nix run 'https://github.com/pkulak/matui.git'`
+`nix run github:pkulak/matui`
 
 ### OS
 
