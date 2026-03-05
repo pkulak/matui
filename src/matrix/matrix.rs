@@ -1,6 +1,6 @@
-use crate::matrix::matrix::MessageType::File;
+use ruma::events::room::message::MessageType::File;
 
-use crate::media::get_thumbnail;
+use crate::media::get_attachment_info;
 use crate::settings::blur_delay;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::{fs, thread};
@@ -41,6 +41,7 @@ use ruma::events::key::verification::VerificationMethod;
 use ruma::events::reaction::ReactionEventContent;
 
 use ruma::events::relation::Annotation;
+use ruma::events::room::message::MessageType::Audio;
 use ruma::events::room::message::MessageType::Image;
 use ruma::events::room::message::MessageType::Video;
 use ruma::events::room::message::{AddMentions, ForwardThread, RoomMessageEventContent};
@@ -389,6 +390,17 @@ impl Matrix {
                     },
                     content.body,
                 ),
+                Audio(content) => (
+                    content
+                        .info
+                        .and_then(|info| info.mimetype)
+                        .unwrap_or(octets),
+                    MediaRequestParameters {
+                        source: content.source,
+                        format: MediaFormat::File,
+                    },
+                    content.body,
+                ),
                 File(content) => (
                     content
                         .info
@@ -509,7 +521,7 @@ impl Matrix {
                 };
 
                 // try to grab a thumbnail
-                let config = match get_thumbnail(&path, &content_type) {
+                let config = match get_attachment_info(&path, &content_type) {
                     Ok((thumbnail, info)) => {
                         AttachmentConfig::new().thumbnail(thumbnail).info(info)
                     }

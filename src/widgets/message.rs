@@ -18,10 +18,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 use ruma::events::relation::{InReplyTo, Replacement};
-use ruma::events::room::message::MessageType::{self, Image, Text, Video};
+use ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
 use ruma::events::room::message::{
-    FileMessageEventContent, ImageMessageEventContent, Relation, TextMessageEventContent,
-    VideoMessageEventContent,
+    AudioMessageEventContent, FileMessageEventContent, ImageMessageEventContent, Relation,
+    TextMessageEventContent, VideoMessageEventContent,
 };
 use ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
 use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
@@ -103,6 +103,17 @@ impl Message {
                     }
                 } else {
                     "no info".to_string()
+                }
+            }
+            Audio(AudioMessageEventContent { body, info, .. }) => {
+                if let Some(info) = info {
+                    if let Some(size) = info.size {
+                        format!("Audio: {} ({})", body, human_bytes(size))
+                    } else {
+                        body.to_string()
+                    }
+                } else {
+                    body.to_string()
                 }
             }
             File(FileMessageEventContent { body, info, .. }) => {
@@ -206,6 +217,7 @@ impl Message {
         match &self.body {
             Image(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
+            Audio(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             Text(_) => view_text(self.display()),
             _ => {}
@@ -216,6 +228,7 @@ impl Message {
         match &self.body {
             Image(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
+            Audio(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
             _ => {}
         }
@@ -237,7 +250,7 @@ impl Message {
             let c = c.clone();
 
             let body = match c.content.msgtype {
-                Text(_) | Image(_) | Video(_) | File(_) => c.content.msgtype,
+                Text(_) | Image(_) | Video(_) | Audio(_) | File(_) => c.content.msgtype,
                 _ => return None,
             };
 

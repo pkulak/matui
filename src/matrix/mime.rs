@@ -5,7 +5,9 @@ use mime::{Mime, APPLICATION_OCTET_STREAM};
 /// keep around a few important, chat-related formats
 /// everything else can be an octet stream
 pub static MIME_TYPES: &[(&str, &str)] = &[
+    ("aac", "audio/aac"),
     ("avif", "image/avif"),
+    ("flac", "audio/flac"),
     ("gif", "image/gif"),
     ("jpeg", "image/jpeg"),
     ("jpg", "image/jpeg"),
@@ -20,6 +22,9 @@ pub static MIME_TYPES: &[(&str, &str)] = &[
     ("mp3", "audio/mpeg"),
     ("mp4", "video/mp4"),
     ("mp4a", "audio/mp4"),
+    ("oga", "audio/ogg"),
+    ("ogg", "audio/ogg"),
+    ("opus", "audio/opus"),
     ("pdf", "application/pdf"),
     ("png", "image/png"),
     ("tar", "application/x-tar"),
@@ -59,6 +64,11 @@ mod tests {
         path.push("funny_photo.jpg");
 
         assert_eq!(mime_from_path(&path).to_string(), "image/jpeg");
+
+        path.pop();
+        path.push("cool_song.mp3");
+
+        assert_eq!(mime_from_path(&path).to_string(), "audio/mpeg");
 
         Ok(())
     }

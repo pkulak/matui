@@ -76,9 +76,9 @@ impl Widget for HelpWidget {
                 Row::new(vec!["i", "Create a new message using the external editor."]),
                 Row::new(vec![
                     "Enter",
-                    "Open the selected message (images, videos, urls, etc).",
+                    "Open the selected message (images, videos, audio, urls, etc).",
                 ]),
-                Row::new(vec!["s", "Save the selected message (images and videos)."]),
+                Row::new(vec!["s", "Save the selected message (images, videos and audio)."]),
                 Row::new(vec![
                     "c",
                     "Edit the selected message in the external editor.",

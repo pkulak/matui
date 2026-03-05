@@ -103,14 +103,11 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
 }
 
 pub fn view_file(handle: MediaFileHandle) -> anyhow::Result<()> {
-    let status = open::commands(handle.path())[0].status()?;
+    open::that(handle.path())?;
 
-    // keep the file handle open until the viewer exits
-    drop(handle);
-
-    if !status.success() {
-        bail!("Invalid status code.")
-    }
+    // xdg-open often returns immediately, so if we drop the handle now,
+    // the temporary file is deleted before the viewer can open it.
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
     Ok(())
 }
