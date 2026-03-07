@@ -51,7 +51,6 @@ use ruma::events::{
 };
 use ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
-use tokio::runtime::Handle;
 
 use crate::app::App;
 use crate::event::Event;
@@ -69,7 +68,6 @@ use super::notify::Notify;
 /// A Matrix client that maintains it's own Tokio runtime
 #[derive(Clone)]
 pub struct Matrix {
-    rt: Handle,
     client: Arc<OnceCell<Client>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
@@ -82,17 +80,18 @@ pub enum AfterDownload {
     Save,
 }
 
-impl Matrix {
-    pub fn new(handle: Handle) -> Self {
+impl Default for Matrix {
+    fn default() -> Self {
         Matrix {
-            rt: handle,
             client: Arc::new(OnceCell::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
             focus_key: Arc::new(AtomicI64::new(0)),
         }
     }
+}
 
+impl Matrix {
     fn dirs() -> (PathBuf, PathBuf) {
         let data_dir = dirs::data_dir()
             .expect("no data directory found")
@@ -113,31 +112,25 @@ impl Matrix {
         self.room_cache.wrap(room)
     }
 
-    pub fn send(event: MatuiEvent) {
-        App::get_sender()
-            .send(Matui(event))
-            .expect("could not send Matrix event");
-    }
-
     pub fn init(&self) {
         info!("initializing matrix");
 
         let (_, session_file) = Matrix::dirs();
 
         if !session_file.exists() {
-            Matrix::send(MatuiEvent::LoginRequired);
+            App::send(MatuiEvent::LoginRequired);
             return;
         }
 
         let matrix = self.clone();
 
-        self.rt.spawn(async move {
-            Matrix::send(MatuiEvent::SyncStarted(SyncType::Latest));
+        App::spawn(async move {
+            App::send(MatuiEvent::SyncStarted(SyncType::Latest));
 
             let (client, token) = match restore_session(session_file.as_path()).await {
                 Ok(tuple) => tuple,
                 Err(err) => {
-                    Matrix::send(Error(err.to_string()));
+                    App::send(Error(err.to_string()));
                     return;
                 }
             };
@@ -152,13 +145,13 @@ impl Matrix {
             info!("syncing with token {:?}", token);
 
             if let Err(err) = sync_once(client.clone(), token, &session_file).await {
-                Matrix::send(Error(err.to_string()));
+                App::send(Error(err.to_string()));
                 return;
             };
 
             matrix.room_cache.populate(client).await;
 
-            Matrix::send(MatuiEvent::SyncComplete);
+            App::send(MatuiEvent::SyncComplete);
         });
     }
 
@@ -168,13 +161,13 @@ impl Matrix {
         let pass = password.to_string();
         let matrix = self.clone();
 
-        self.rt.spawn(async move {
-            Matrix::send(MatuiEvent::LoginStarted);
+        App::spawn(async move {
+            App::send(MatuiEvent::LoginStarted);
 
             let client = match login(&data_dir, &session_file, &user, &pass).await {
                 Ok(client) => client,
                 Err(err) => {
-                    Matrix::send(Error(err.to_string()));
+                    App::send(Error(err.to_string()));
                     return;
                 }
             };
@@ -184,16 +177,16 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
-            Matrix::send(MatuiEvent::LoginComplete);
-            Matrix::send(MatuiEvent::SyncStarted(SyncType::Initial));
+            App::send(MatuiEvent::LoginComplete);
+            App::send(MatuiEvent::SyncStarted(SyncType::Initial));
 
             if let Err(err) = sync_once(client.clone(), None, &session_file).await {
-                Matrix::send(Error(err.to_string()));
+                App::send(Error(err.to_string()));
                 return;
             };
 
             matrix.room_cache.populate(client.clone()).await;
-            Matrix::send(MatuiEvent::SyncComplete);
+            App::send(MatuiEvent::SyncComplete);
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             matrix.verify();
         });
@@ -202,7 +195,7 @@ impl Matrix {
     pub fn verify(&self) {
         let matrix = self.clone();
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             let client = matrix.client();
 
             if let Some(user_id) = client.user_id() {
@@ -226,7 +219,7 @@ impl Matrix {
     fn wait_on_verify_request(&self, request: VerificationRequest) {
         info!("verification requested");
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             let mut stream = request.changes();
 
             while let Some(state) = stream.next().await {
@@ -234,7 +227,7 @@ impl Matrix {
                     verification: Verification::SasV1(s),
                 } = state
                 {
-                    tokio::spawn(sas_verification_handler(s, App::get_sender()));
+                    App::spawn(sas_verification_handler(s, App::get_sender()));
                     break;
                 }
             }
@@ -245,16 +238,12 @@ impl Matrix {
         let matrix = self.clone();
         let key = key.to_string();
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             match matrix.client().encryption().recovery().recover(&key).await {
-                Ok(()) => App::get_sender()
-                    .send(Matui(MatuiEvent::ProgressComplete))
-                    .expect("to send progress complete event"),
-                Err(_) => App::get_sender()
-                    .send(Matui(MatuiEvent::Error(
-                        "Could not recover encryption keys.".to_string(),
-                    )))
-                    .expect("to send error event"),
+                Ok(()) => App::send(MatuiEvent::ProgressComplete),
+                Err(_) => App::send(MatuiEvent::Error(
+                    "Could not recover encryption keys.".to_string(),
+                )),
             }
         });
     }
@@ -268,7 +257,7 @@ impl Matrix {
         // apparently we only need the token for sync_once
         let sync_settings = build_sync_settings(None);
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             client
                 .sync_with_result_callback(sync_settings, |sync_result| async move {
                     let response = match sync_result {
@@ -294,16 +283,16 @@ impl Matrix {
     }
 
     pub fn confirm_verification(&self, sas: SasVerification) {
-        self.rt.spawn(async move {
+        App::spawn(async move {
             if let Err(err) = sas.confirm().await {
                 error!("could not verify: {}", err);
-                Matrix::send(Error(format!("Could not verify: {}", err)));
+                App::send(Error(format!("Could not verify: {}", err)));
             }
         });
     }
 
     pub fn mismatched_verification(&self, sas: SasVerification) {
-        self.rt.spawn(async move {
+        App::spawn(async move {
             if let Err(err) = sas.mismatch().await {
                 error!("could not cancel SAS verification: {}", err)
             } else {
@@ -317,7 +306,7 @@ impl Matrix {
     }
 
     pub fn fetch_messages(&self, room: Room, cursor: Option<String>, limit: usize) {
-        self.rt.spawn(async move {
+        App::spawn(async move {
             // fetch the actual messages
             let mut options = MessagesOptions::new(Direction::Backward);
             options.limit =
@@ -327,7 +316,7 @@ impl Matrix {
             let messages = match room.messages(options).await {
                 Ok(msg) => msg,
                 Err(err) => {
-                    Matrix::send(Error(err.to_string()));
+                    App::send(Error(err.to_string()));
                     return;
                 }
             };
@@ -347,14 +336,14 @@ impl Matrix {
                 cursor: messages.end,
             };
 
-            Matrix::send(MatuiEvent::TimelineBatch(batch));
+            App::send(MatuiEvent::TimelineBatch(batch));
         });
     }
 
     pub fn fetch_room_member(&self, room: Room, id: OwnedUserId) {
-        self.rt.spawn(async move {
+        App::spawn(async move {
             match room.get_member(&id).await {
-                Ok(Some(member)) => Matrix::send(MatuiEvent::RoomMember(room, member)),
+                Ok(Some(member)) => App::send(MatuiEvent::RoomMember(room, member)),
                 _ => todo!(),
             }
         });
@@ -364,8 +353,8 @@ impl Matrix {
         let matrix = self.clone();
         let octets = "application/octet-stream".to_string();
 
-        self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Downloading file.".to_string(), 250));
+        App::spawn(async move {
+            App::send(ProgressStarted("Downloading file.".to_string(), 250));
 
             let (content_type, request, file_name) = match message {
                 Image(content) => (
@@ -413,7 +402,7 @@ impl Matrix {
                     content.body,
                 ),
                 _ => {
-                    Matrix::send(Error("Unknown file type.".to_string()));
+                    App::send(Error("Unknown file type.".to_string()));
                     return;
                 }
             };
@@ -425,21 +414,21 @@ impl Matrix {
                 .await
             {
                 Err(err) => {
-                    Matrix::send(Error(err.to_string()));
+                    App::send(Error(err.to_string()));
                     return;
                 }
                 Ok(mfh) => mfh,
             };
 
-            Matrix::send(ProgressComplete);
+            App::send(ProgressComplete);
 
             match after {
                 AfterDownload::View => {
                     tokio::task::spawn_blocking(move || view_file(handle));
                 }
                 AfterDownload::Save => match save_file(handle, &file_name) {
-                    Err(err) => Matrix::send(Error(err.to_string())),
-                    Ok(path) => Matrix::send(MatuiEvent::Confirm(
+                    Err(err) => App::send(Error(err.to_string())),
+                    Ok(path) => App::send(MatuiEvent::Confirm(
                         "Download Complete".to_string(),
                         format!("Saved to {}", path.to_str().unwrap()),
                     )),
@@ -449,28 +438,28 @@ impl Matrix {
     }
 
     pub fn send_text_message(&self, room: Room, message: String) {
-        self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Sending message.".to_string(), 500));
+        App::spawn(async move {
+            App::send(ProgressStarted("Sending message.".to_string(), 500));
 
             if let Err(err) = room
                 .send(RoomMessageEventContent::text_markdown(message))
                 .await
             {
-                Matrix::send(Error(err.to_string()));
+                App::send(Error(err.to_string()));
             }
 
-            Matrix::send(ProgressComplete);
+            App::send(ProgressComplete);
         });
     }
 
     pub fn send_reply(&self, room: Room, message: String, in_reply_to: OwnedEventId) {
-        self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Sending message.".to_string(), 500));
+        App::spawn(async move {
+            App::send(ProgressStarted("Sending message.".to_string(), 500));
 
             let in_reply_to = match Matrix::get_room_event(&room, &in_reply_to).await {
                 Some(e) => e,
                 None => {
-                    Matrix::send(Error("Could not find reply event.".to_string()));
+                    App::send(Error("Could not find reply event.".to_string()));
                     return;
                 }
             };
@@ -486,19 +475,19 @@ impl Matrix {
             );
 
             if let Err(err) = room.send(reply).await {
-                Matrix::send(Error(err.to_string()));
+                App::send(Error(err.to_string()));
             }
 
-            Matrix::send(ProgressComplete);
+            App::send(ProgressComplete);
         });
     }
 
     pub fn send_attachements(&self, room: Room, paths: Vec<PathBuf>) {
         let total = paths.len();
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             for (i, path) in paths.into_iter().enumerate() {
-                Matrix::send(ProgressStarted(
+                App::send(ProgressStarted(
                     format!("Uploading {} of {}.", i + 1, total),
                     0,
                 ));
@@ -515,7 +504,7 @@ impl Matrix {
                 let data = match fs::read(path.to_str().unwrap()) {
                     Ok(d) => d,
                     Err(err) => {
-                        Matrix::send(Error(err.to_string()));
+                        App::send(Error(err.to_string()));
                         return;
                     }
                 };
@@ -532,38 +521,38 @@ impl Matrix {
                     .send_attachment(&name, &content_type, data, config)
                     .await
                 {
-                    Matrix::send(Error(err.to_string()));
+                    App::send(Error(err.to_string()));
                 }
 
-                Matrix::send(ProgressComplete);
+                App::send(ProgressComplete);
             }
         });
     }
 
     pub fn send_reaction(&self, room: Room, event_id: OwnedEventId, key: String) {
-        self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Sending reaction.".to_string(), 500));
+        App::spawn(async move {
+            App::send(ProgressStarted("Sending reaction.".to_string(), 500));
 
             if let Err(err) = room
                 .send(ReactionEventContent::new(Annotation::new(event_id, key)))
                 .await
             {
-                Matrix::send(Error(err.to_string()));
+                App::send(Error(err.to_string()));
             }
 
-            Matrix::send(ProgressComplete);
+            App::send(ProgressComplete);
         });
     }
 
     pub fn redact_event(&self, room: Room, event_id: OwnedEventId) {
-        self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Removing.".to_string(), 500));
+        App::spawn(async move {
+            App::send(ProgressStarted("Removing.".to_string(), 500));
 
             if let Err(err) = room.redact(&event_id, None, None).await {
-                Matrix::send(Error(err.to_string()));
+                App::send(Error(err.to_string()));
             }
 
-            Matrix::send(ProgressComplete);
+            App::send(ProgressComplete);
         });
     }
 
@@ -617,8 +606,8 @@ impl Matrix {
         message: String,
         in_reply_to: Option<OwnedEventId>,
     ) {
-        self.rt.spawn(async move {
-            Matrix::send(ProgressStarted("Editing message.".to_string(), 500));
+        App::spawn(async move {
+            App::send(ProgressStarted("Editing message.".to_string(), 500));
 
             let Some(event) = Matrix::get_room_event(&room, &id).await else {
                 return;
@@ -644,10 +633,10 @@ impl Matrix {
                 .send(RoomMessageEventContent::text_markdown(message).make_replacement(event))
                 .await
             {
-                Matrix::send(Error(err.to_string()));
+                App::send(Error(err.to_string()));
             }
 
-            Matrix::send(ProgressComplete);
+            App::send(ProgressComplete);
         });
     }
 
@@ -658,7 +647,7 @@ impl Matrix {
     pub fn timeline_event(&self, event: AnyTimelineEvent) {
         let matrix = self.clone();
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             matrix
                 .room_cache
                 .timeline_event(matrix.client(), &event)
@@ -682,7 +671,7 @@ impl Matrix {
         let focus_key = self.focus_key.fetch_add(1, Ordering::Relaxed) + 1;
         let old_focus_key = self.focus_key.clone();
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             delayed((), Duration::from_secs(delay.try_into().unwrap())).await;
 
             if focus_key == old_focus_key.load(Ordering::Relaxed) {
@@ -710,7 +699,7 @@ impl Matrix {
             .fully_read_marker(Some(to.clone()))
             .public_read_receipt(Some(to));
 
-        self.rt.spawn(async move {
+        App::spawn(async move {
             if let Err(e) = room.send_multiple_receipts(receipts).await {
                 error!("could not send read receipt: {}", e);
             }
@@ -718,7 +707,7 @@ impl Matrix {
     }
 
     pub fn typing_notification(&self, room: Room, typing: bool) {
-        self.rt.spawn(async move {
+        App::spawn(async move {
             if let Err(e) = room.typing_notice(typing).await {
                 error!("could not send typing notice: {}", e);
             }
@@ -961,7 +950,7 @@ fn add_verification_handlers(client: Client) {
                 }
             };
 
-            tokio::spawn(request_verification_handler(request));
+            App::spawn(request_verification_handler(request));
         },
     );
 
@@ -980,7 +969,7 @@ fn add_verification_handlers(client: Client) {
                     }
                 };
 
-                tokio::spawn(request_verification_handler(request));
+                App::spawn(request_verification_handler(request));
             }
         },
     );
@@ -1007,7 +996,7 @@ async fn request_verification_handler(request: VerificationRequest) {
             VerificationRequestState::Transitioned { verification } => {
                 // We only support SAS verification.
                 if let Verification::SasV1(s) = verification {
-                    tokio::spawn(sas_verification_handler(s, App::get_sender()));
+                    App::spawn(sas_verification_handler(s, App::get_sender()));
                     break;
                 }
             }

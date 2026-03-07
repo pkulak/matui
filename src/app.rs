@@ -5,11 +5,12 @@ use matrix_sdk::room::Room;
 use once_cell::sync::OnceCell;
 use ruma::events::receipt::ReceiptEventContent;
 use std::collections::VecDeque;
+use std::future::Future;
 use std::sync::mpsc::Sender;
-use std::sync::Mutex;
 use tokio::runtime::Handle;
 
 use crate::event::Event;
+use crate::handler::MatuiEvent;
 use crate::matrix::matrix::Matrix;
 use crate::widgets::chat::Chat;
 use crate::widgets::confirm::Confirm;
@@ -23,7 +24,8 @@ use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
 use ratatui::Frame;
 
-static SENDER: OnceCell<Mutex<Sender<Event>>> = OnceCell::new();
+static SENDER: OnceCell<Sender<Event>> = OnceCell::new();
+static HANDLE: OnceCell<Handle> = OnceCell::new();
 
 /// Application.
 pub struct App {
@@ -37,9 +39,8 @@ pub struct App {
     pub popup: Option<Popup>,
     pub chat: Option<Chat>,
 
-    /// And our single Matrix client and channel
+    /// And our Matrix client
     pub matrix: Matrix,
-    pub sender: Sender<Event>,
 
     /// We'll hold on to any in-progress verifications here
     pub sas: Option<SasVerification>,
@@ -50,12 +51,11 @@ pub struct App {
 
 impl App {
     pub fn new(send: Sender<Event>, handle: Handle) -> Self {
-        let matrix = Matrix::new(handle);
+        // Save the sender and handle for future threads.
+        SENDER.set(send).expect("could not set sender");
+        HANDLE.set(handle).expect("could not set handle");
 
-        // Save the sender for future threads.
-        SENDER
-            .set(Mutex::new(send.clone()))
-            .expect("could not set sender");
+        let matrix = Matrix::default();
 
         Self {
             running: true,
@@ -63,19 +63,30 @@ impl App {
             popup: None,
             chat: None,
             matrix,
-            sender: send,
             sas: None,
             receipts: VecDeque::new(),
         }
     }
 
     pub fn get_sender() -> Sender<Event> {
-        SENDER
-            .get()
-            .expect("could not get sender")
-            .lock()
-            .expect("could not lock sender")
-            .clone()
+        SENDER.get().expect("could not lock sender").clone()
+    }
+
+    pub fn get_handle() -> Handle {
+        HANDLE.get().expect("could not get handle").clone()
+    }
+
+    pub fn send(event: MatuiEvent) {
+        App::get_sender()
+            .send(Event::Matui(event))
+            .expect("could not send event");
+    }
+
+    pub fn spawn<F>(future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        App::get_handle().spawn(future);
     }
 
     pub fn select_room(&mut self, room: Room) {
