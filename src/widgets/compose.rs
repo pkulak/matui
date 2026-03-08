@@ -4,6 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui_textarea::TextArea;
 
 use crate::app::App;
 use crate::consumed;
@@ -11,19 +12,18 @@ use crate::event::{Event, EventHandler};
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::spawn::get_text;
-use crate::widgets::textinput::TextInput;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::{get_margin, EventResult};
 
 pub struct Compose {
-    input: TextInput,
+    input: TextArea<'static>,
     room: DecoratedRoom,
     matrix: Matrix,
 }
 
 impl Compose {
     pub fn new(room: DecoratedRoom, matrix: Matrix) -> Self {
-        let input = TextInput::new("Message".to_string(), true, false);
+        let input = TextArea::default();
 
         Self {
             input,
@@ -45,9 +45,11 @@ impl Compose {
         if input.modifiers.contains(KeyModifiers::CONTROL) && input.code == KeyCode::Char('x') {
             let send = self.matrix.begin_typing(self.room());
 
+            let text = &self.input.lines().join("\n").trim().to_string();
+
             handler.park();
             let result = get_text(
-                Some(&self.input.value),
+                Some(text),
                 Some(&format!(
                     "<!-- The message above will be sent to {}. -->",
                     self.room.name
@@ -61,7 +63,7 @@ impl Compose {
 
             if let Ok(Some(message)) = result {
                 if message.trim().is_empty() {
-                    self.input.value = "".to_string();
+                    self.input = TextArea::default()
                 } else {
                     self.matrix.send_text_message(self.room(), message);
 
@@ -74,7 +76,7 @@ impl Compose {
             return consumed!();
         }
 
-        if let Consumed(_) = self.input.key_event(input) {
+        if self.input.input(*input) {
             self.matrix.typing_notification(self.room(), true);
             return consumed!();
         }
@@ -85,8 +87,8 @@ impl Compose {
             KeyCode::Esc => Consumed(Box::new(move |app| {
                 app.close_popup();
             })),
-            KeyCode::Enter => {
-                let message = self.input.value.clone();
+            KeyCode::Down => {
+                let message = self.input.lines().join("\n").trim().to_string();
 
                 if !message.trim().is_empty() {
                     self.matrix.send_text_message(self.room(), message);
@@ -138,7 +140,7 @@ impl Widget for ComposeWidget<'_> {
 
         block.render(area, buf);
 
-        self.compose.input.widget().render(splits[0], buf);
+        self.compose.input.render(splits[0], buf);
 
         Paragraph::new("type ^X to edit in external editor").render(splits[1], buf);
     }
