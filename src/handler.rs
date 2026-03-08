@@ -184,7 +184,7 @@ pub fn handle_key_event(
 
     // give the popup first crack at the event
     let result = if let Some(w) = &mut app.popup {
-        w.key_event(&key_event)
+        w.key_event(&key_event, handler)
     } else {
         EventResult::Ignored
     };
