@@ -5,6 +5,7 @@ use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, get_text};
+use crate::widgets::compose::Compose;
 use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
@@ -250,31 +251,12 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('i') => {
-                let send = self.matrix.begin_typing(self.room());
+                let room = self.room.clone();
+                let matrix = self.matrix.clone();
 
-                handler.park();
-                let result = get_text(
-                    None,
-                    Some(&format!(
-                        "<!-- Type a new message above to send to {}. -->",
-                        self.room.name
-                    )),
-                );
-                handler.unpark();
-
-                self.matrix.end_typing(self.room(), send);
-                App::get_sender().send(Event::Redraw)?;
-
-                if let Ok(input) = result {
-                    if let Some(input) = input {
-                        self.matrix.send_text_message(self.room(), input);
-                        Ok(consumed!())
-                    } else {
-                        bail!("Ignoring blank message.")
-                    }
-                } else {
-                    bail!("Couldn't read from editor.")
-                }
+                Ok(Consumed(Box::new(|app| {
+                    app.set_popup(Popup::Compose(Compose::new(room, matrix)))
+                })))
             }
             KeyCode::Char('r')
                 if input.modifiers.contains(KeyModifiers::CONTROL)

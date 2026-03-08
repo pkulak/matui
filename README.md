@@ -1,8 +1,9 @@
 # Matui
 
-A very opinionated [Matrix](https://matrix.org/) TUI. Text entry is done
-externally, as is opening of all attachements. The UI is kept as simple as
-possible and there's no mouse support (yet, at least).
+A very opinionated [Matrix](https://matrix.org/) TUI. The UI is kept as simple
+as possible and there's no mouse support (yet, at least). With the assumption
+that usually only the last couple messages actually matter, vertical space
+is not conserved at all.
 
 ![Matui](https://github.com/pkulak/matui/blob/main/screenshot.png?raw=true "The main chat window.")
 

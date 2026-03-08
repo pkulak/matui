@@ -9,10 +9,11 @@ use std::future::Future;
 use std::sync::mpsc::Sender;
 use tokio::runtime::Handle;
 
-use crate::event::Event;
+use crate::event::{Event, EventHandler};
 use crate::handler::MatuiEvent;
 use crate::matrix::matrix::Matrix;
 use crate::widgets::chat::Chat;
+use crate::widgets::compose::Compose;
 use crate::widgets::confirm::Confirm;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
@@ -164,6 +165,7 @@ impl App {
 // to give up before I lose it. PRs welcome if there's a better way!
 pub enum Popup {
     Confirm(Confirm),
+    Compose(Compose),
     Error(Error),
     Progress(Progress),
     Recover(Recover),
@@ -174,9 +176,10 @@ pub enum Popup {
 }
 
 impl Popup {
-    pub fn key_event(&mut self, event: &KeyEvent) -> EventResult {
+    pub fn key_event(&mut self, event: &KeyEvent, handler: &EventHandler) -> EventResult {
         match self {
             Popup::Confirm(w) => w.key_event(event),
+            Popup::Compose(w) => w.key_event(event, handler),
             Popup::Error(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Recover(w) => w.key_event(event),
@@ -199,6 +202,7 @@ impl Popup {
     pub fn render(&self, frame: &mut Frame) {
         match self {
             Popup::Confirm(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Compose(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),
