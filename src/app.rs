@@ -163,6 +163,7 @@ impl App {
 // As far as I can tell, there's no way to use dynamic dispatch here, so
 // instead we'll use a giant enum. I tried for way too long and just have
 // to give up before I lose it. PRs welcome if there's a better way!
+#[allow(clippy::large_enum_variant)]
 pub enum Popup {
     Confirm(Confirm),
     Compose(Compose),
