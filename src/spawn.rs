@@ -62,20 +62,12 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
             command.arg("--clean");
         }
 
-        if existing.is_none() {
+        if existing.is_none() || existing.unwrap().is_empty() {
             // open in insert mode
             command.arg("+star");
-
-            // map Shift+Enter to insert a new line (needs terminal keybindings)
-            command.arg("-c");
-            command.arg("imap <S-CR> <esc>o");
-
-            // map Enter to save and quit (works with no keybindings)
-            command.arg("-c");
-            command.arg("imap <C-M> <esc>:wq<enter>");
         }
 
-        // but always turn on word wrap and spellcheck
+        // turn on word wrap and spellcheck
         command.arg("-c");
         command.arg("set wrap linebreak nolist spell");
     }

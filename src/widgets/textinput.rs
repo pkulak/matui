@@ -98,7 +98,7 @@ impl TextInput {
         }
     }
 
-    fn backspace(&mut self) {
+    pub fn backspace(&mut self) {
         if self.cursor == 0 || self.value.is_empty() {
             return;
         }

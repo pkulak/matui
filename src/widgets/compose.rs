@@ -48,12 +48,11 @@ impl Compose {
             && self.combo.record(c)
         {
             let send = self.matrix.begin_typing(self.room());
-            let mut message = self.input.value.clone();
-            message.pop();
+            self.input.backspace();
 
             handler.park();
             let result = get_text(
-                Some(&message),
+                Some(&self.input.value),
                 Some(&format!(
                     "<!-- The message above will be sent to {}. -->",
                     self.room.name
