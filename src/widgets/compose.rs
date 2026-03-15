@@ -5,11 +5,10 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use crate::app::App;
-use crate::event::{Event, EventHandler};
+use crate::event::EventHandler;
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
-use crate::spawn::get_text;
+use crate::spawn::spawn_editor;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::textinput::TextInput;
 use crate::widgets::{EventResult, get_margin};
@@ -47,22 +46,17 @@ impl Compose {
         if let KeyCode::Char(c) = input.code
             && self.combo.record(c)
         {
-            let send = self.matrix.begin_typing(self.room());
             self.input.backspace();
 
-            handler.park();
-            let result = get_text(
+            let result = spawn_editor(
+                handler,
+                Some((&self.matrix, self.room())),
                 Some(&self.input.value),
                 Some(&format!(
                     "<!-- The message above will be sent to {}. -->",
                     self.room.name
                 )),
             );
-            handler.unpark();
-
-            self.matrix.end_typing(self.room(), send);
-
-            let _ = App::get_sender().send(Event::Redraw);
 
             if let Ok(Some(message)) = result {
                 if message.trim().is_empty() {

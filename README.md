@@ -90,7 +90,8 @@ complicated. Especially if you don't implement too many features.
 | Ctrl+d | Select half a page down.                               |
 | Ctrl+u | Select half a page up.                                 |
 | G      | Select latest message.                                 |
-| i      | Create a new message using the external editor.        |
+| i      | Compose a new message.                                 |
+| I      | Create a new message directly in the external editor.  |
 | Enter  | Open the selected message (images, videos, urls, etc). |
 | s      | Save the selected message (images and videos).         |
 | c      | Edit the selected message in the external editor.      |
@@ -109,25 +110,7 @@ complicated. Especially if you don't implement too many features.
 # External Applications
 
 The only requirement is an editor, and the $EDITOR environmental variable should
-be set. Vim is highly recommended, as Matui is optimized for it. When using Vim,
-the editor is started in insert mode for new messages and Enter sends them.
-
-## Text Entry
-
-Having Enter send a message is nice for messaging, but it then begs to have
-Shift+Enter insert a new line. Unfortunately, that's not possible without
-modifying your terminal config to send the key bindings that Neovim expects.
-In Alacritty, it would be this:
-
-```
-key_bindings:
-  - { key: Return, mods: Shift, chars: "\x1b[13;2u" }
-```
-
-Once that is setup, Matui will open Neovim (if that's your default editor)
-with keys mapped such that Shift+Enter inserts a new line.
-
-Another nice option is to map `jx` to `<Esc>:x<CR>` in insert mode.
+be set.
 
 ## File Viewing
 

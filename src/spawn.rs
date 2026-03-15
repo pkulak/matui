@@ -14,7 +14,11 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tempfile::Builder;
 
+use crate::app::App;
+use crate::event::{Event, EventHandler};
+use crate::matrix::matrix::Matrix;
 use crate::settings::clean_vim;
+use matrix_sdk::Room;
 
 lazy_static! {
     static ref FILE_RE: Regex = Regex::new(r"-([0-9]+)(\.|$)").unwrap();
@@ -29,6 +33,34 @@ pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
         .show()?;
 
     Ok(path)
+}
+
+pub fn spawn_editor(
+    handler: &EventHandler,
+    matrix: Option<(&Matrix, Room)>,
+    existing: Option<&str>,
+    suffix: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let mut send = None;
+
+    if let Some((m, r)) = matrix.as_ref() {
+        send = Some(m.begin_typing(r.clone()));
+    }
+
+    handler.park();
+    let result = get_text(existing, suffix);
+    handler.unpark();
+
+    if let Some((m, r)) = matrix
+        && let Some(send) = send
+    {
+        m.end_typing(r, send);
+    }
+
+    // make sure we redraw the whole app when we come back
+    let _ = App::get_sender().send(Event::Redraw);
+
+    result
 }
 
 pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<Option<String>> {

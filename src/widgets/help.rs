@@ -73,7 +73,11 @@ impl Widget for HelpWidget {
                 Row::new(vec!["Ctrl+d", "Select half a page down."]),
                 Row::new(vec!["Ctrl+u", "Select half a page up."]),
                 Row::new(vec!["G", "Select latest message."]),
-                Row::new(vec!["i", "Create a new message using the external editor."]),
+                Row::new(vec!["i", "Compose a new message."]),
+                Row::new(vec![
+                    "I",
+                    "Create a new message directly in the external editor.",
+                ]),
                 Row::new(vec![
                     "Enter",
                     "Open the selected message (images, videos, audio, urls, etc).",

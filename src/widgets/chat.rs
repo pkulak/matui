@@ -4,7 +4,7 @@ use crate::handler::Batch;
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::settings::{is_muted, max_events, toggle_mute};
-use crate::spawn::{get_file_paths, get_text};
+use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::compose::Compose;
 use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
@@ -216,20 +216,15 @@ impl Chat {
                 };
 
                 if matches!(message.body, Text(_)) {
-                    handler.park();
-
-                    let result = get_text(
+                    let result = spawn_editor(
+                        handler,
+                        None,
                         Some(message.display()),
                         Some(&format!(
                             "<!-- Edit your message above to change it in {}. -->",
                             self.room.name
                         )),
                     );
-
-                    handler.unpark();
-
-                    // make sure we redraw the whole app when we come back
-                    App::get_sender().send(Event::Redraw)?;
 
                     if let Ok(edit) = result {
                         if let Some(edit) = edit {
@@ -259,6 +254,25 @@ impl Chat {
                     app.set_popup(Popup::Compose(Compose::new(room, matrix)))
                 })))
             }
+            KeyCode::Char('I') => {
+                let result = spawn_editor(
+                    handler,
+                    Some((&self.matrix, self.room())),
+                    None,
+                    Some(&format!(
+                        "<!-- The message above will be sent to {}. -->",
+                        self.room.name
+                    )),
+                );
+
+                if let Ok(Some(message)) = result
+                    && !message.trim().is_empty()
+                {
+                    self.matrix.send_text_message(self.room(), message);
+                }
+
+                Ok(consumed!())
+            }
             KeyCode::Char('r')
                 if input.modifiers.contains(KeyModifiers::CONTROL)
                     && input.modifiers.contains(KeyModifiers::ALT) =>
@@ -279,14 +293,12 @@ impl Chat {
 
                 let body = textwrap::wrap(message.display(), &wrap_options).join("\n");
 
-                let send = self.matrix.begin_typing(self.room());
-
-                handler.park();
-                let result = get_text(None, Some(&REPLY_TEMPLATE.replace("{}", &body)));
-                handler.unpark();
-
-                self.matrix.end_typing(self.room(), send);
-                App::get_sender().send(Event::Redraw)?;
+                let result = spawn_editor(
+                    handler,
+                    Some((&self.matrix, self.room())),
+                    None,
+                    Some(&REPLY_TEMPLATE.replace("{}", &body)),
+                );
 
                 if let Ok(input) = result {
                     if let Some(input) = input {
@@ -306,19 +318,13 @@ impl Chat {
                     None => return Ok(EventResult::Ignored),
                 };
 
-                handler.park();
-                get_text(Some(&message.display_full()), None)?;
-                handler.unpark();
+                spawn_editor(handler, None, Some(&message.display_full()), None)?;
 
-                App::get_sender().send(Event::Redraw)?;
                 Ok(consumed!())
             }
             KeyCode::Char('V') => {
-                handler.park();
-                get_text(Some(&self.display_full()), None)?;
-                handler.unpark();
+                spawn_editor(handler, None, Some(&self.display_full()), None)?;
 
-                App::get_sender().send(Event::Redraw)?;
                 Ok(consumed!())
             }
             KeyCode::Char('r') => {
