@@ -12,9 +12,9 @@ use ratatui::widgets::{
 };
 use std::cell::Cell;
 
+use crate::widgets::EventResult::Consumed;
 use crate::widgets::get_margin;
 use crate::widgets::textinput::TextInput;
-use crate::widgets::EventResult::Consumed;
 
 use super::EventResult;
 
@@ -30,11 +30,12 @@ impl Rooms {
         sort_rooms(&mut rooms);
 
         // if the current room is at the top, put it at the bottom
-        if let Some(current) = current {
-            if rooms.len() > 1 && rooms.first().unwrap().inner.room_id() == current.room_id() {
-                let first = rooms.remove(0);
-                rooms.push(first);
-            }
+        if let Some(current) = current
+            && rooms.len() > 1
+            && rooms.first().unwrap().inner.room_id() == current.room_id()
+        {
+            let first = rooms.remove(0);
+            rooms.push(first);
         }
 
         let mut ret = Self {

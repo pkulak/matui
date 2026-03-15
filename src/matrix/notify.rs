@@ -1,6 +1,6 @@
 use log::{error, info};
 use ruma::UserId;
-use ruma::{events::AnyTimelineEvent, OwnedRoomId};
+use ruma::{OwnedRoomId, events::AnyTimelineEvent};
 use std::fs::OpenOptions;
 use std::sync::Arc;
 use std::{
@@ -9,17 +9,17 @@ use std::{
     io::{BufWriter, Cursor},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use image::imageops::FilterType;
 
 use matrix_sdk::{
+    Client,
     media::MediaFormat,
     room::{Room, RoomMember},
-    Client,
 };
 use notify_rust::{CloseReason, Hint};
 
@@ -98,10 +98,10 @@ impl Notify {
     pub fn room_visit_event(&self, room: Room) {
         let mut map = self.rooms.lock().expect("could not lock rooms");
 
-        if let Some(handle_id) = map.remove(room.room_id().as_str()) {
-            if let Ok(handle) = notify_rust::Notification::new().id(handle_id).show() {
-                handle.close();
-            }
+        if let Some(handle_id) = map.remove(room.room_id().as_str())
+            && let Ok(handle) = notify_rust::Notification::new().id(handle_id).show()
+        {
+            handle.close();
         }
 
         *self.room_id.lock().unwrap() = Some(room.room_id().to_owned());

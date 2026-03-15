@@ -5,8 +5,8 @@ use matrix_sdk::room::{MessagesOptions, Room};
 
 use matrix_sdk::{Client, RoomDisplayName, RoomState};
 use ruma::api::Direction;
-use ruma::events::room::message::MessageType;
 use ruma::events::AnyTimelineEvent;
+use ruma::events::room::message::MessageType;
 use ruma::{MilliSecondsSinceUnixEpoch, RoomId};
 use std::sync::Mutex;
 
@@ -141,10 +141,10 @@ impl DecoratedRoom {
             let mut latest_ts: Option<MilliSecondsSinceUnixEpoch> = None;
 
             for e in &messages {
-                if latest_ts.is_none() {
-                    if let Ok(event) = Matrix::deserialize_event(e, room.room_id().to_owned()) {
-                        latest_ts = Some(event.origin_server_ts());
-                    }
+                if latest_ts.is_none()
+                    && let Ok(event) = Matrix::deserialize_event(e, room.room_id().to_owned())
+                {
+                    latest_ts = Some(event.origin_server_ts());
                 }
 
                 let Some(event) = Matrix::get_room_message_event(&room, e) else {

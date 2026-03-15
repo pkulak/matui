@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use timeago::Formatter;
 
-use crate::matrix::matrix::{pad_emoji, AfterDownload, Matrix};
+use crate::matrix::matrix::{AfterDownload, Matrix, pad_emoji};
 use crate::matrix::username::Username;
 use crate::spawn::view_text;
 use crate::{limit_list, pretty_list};
@@ -17,6 +17,12 @@ use once_cell::unsync::OnceCell;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
+use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
+use ruma::events::AnyMessageLikeEvent::RoomMessage;
+use ruma::events::AnyMessageLikeEvent::RoomRedaction;
+use ruma::events::AnyTimelineEvent;
+use ruma::events::AnyTimelineEvent::MessageLike;
+use ruma::events::MessageLikeEvent;
 use ruma::events::relation::{InReplyTo, Replacement};
 use ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
 use ruma::events::room::message::{
@@ -24,12 +30,6 @@ use ruma::events::room::message::{
     TextMessageEventContent, VideoMessageEventContent,
 };
 use ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
-use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
-use ruma::events::AnyMessageLikeEvent::RoomMessage;
-use ruma::events::AnyMessageLikeEvent::RoomRedaction;
-use ruma::events::AnyTimelineEvent;
-use ruma::events::AnyTimelineEvent::MessageLike;
-use ruma::events::MessageLikeEvent;
 use ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId};
 
 use super::receipts::Receipt;
@@ -328,16 +328,16 @@ impl Message {
                 let mut sibling = None;
 
                 for (i, message) in messages.iter_mut().enumerate() {
-                    if message.id == id {
-                        if let Some(reply) = Message::try_from(event, true) {
-                            if depth > 3 {
-                                sibling = Some(reply)
-                            } else {
-                                message.replies.push(reply);
-                                found_index = Some(i);
-                            }
-                            break;
+                    if message.id == id
+                        && let Some(reply) = Message::try_from(event, true)
+                    {
+                        if depth > 3 {
+                            sibling = Some(reply)
+                        } else {
+                            message.replies.push(reply);
+                            found_index = Some(i);
                         }
+                        break;
                     }
                 }
 
@@ -494,12 +494,12 @@ impl Message {
 
     pub fn contains_id(&self, id: &OwnedEventId) -> bool {
         if &self.id == id {
-            return true
+            return true;
         }
 
         for r in self.replies.iter() {
             if r.contains_id(id) {
-                return true
+                return true;
             }
         }
 

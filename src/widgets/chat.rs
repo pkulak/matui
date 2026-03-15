@@ -5,23 +5,23 @@ use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, get_text};
+use crate::widgets::EventResult::Consumed;
 use crate::widgets::compose::Compose;
 use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
 use crate::widgets::recover::Recover;
 use crate::widgets::search::Search;
-use crate::widgets::EventResult::Consumed;
-use crate::widgets::{get_margin, EventResult};
-use crate::{consumed, limit_list, pretty_list, truncate, KeyCombo};
+use crate::widgets::{EventResult, get_margin};
+use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use log::info;
 use matrix_sdk::room::{Room, RoomMember};
 use once_cell::sync::OnceCell;
+use ruma::events::AnyTimelineEvent;
 use ruma::events::receipt::ReceiptEventContent;
 use ruma::events::room::message::MessageType::Text;
-use ruma::events::AnyTimelineEvent;
 use ruma::{OwnedEventId, OwnedUserId};
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -142,28 +142,29 @@ impl Chat {
         }
 
         // then look for key combos
-        if let KeyCode::Char(c) = input.code {
-            if input.modifiers.is_empty() && self.delete_combo.record(c) {
-                let message = match self.selected_reply() {
-                    Some(m) => m,
-                    None => return Ok(EventResult::Ignored),
-                };
+        if let KeyCode::Char(c) = input.code
+            && input.modifiers.is_empty()
+            && self.delete_combo.record(c)
+        {
+            let message = match self.selected_reply() {
+                Some(m) => m,
+                None => return Ok(EventResult::Ignored),
+            };
 
-                let preview = truncate(message.display().to_string(), 16);
-                let warning = format!("Are you sure you want to delete \"{}\"", preview);
+            let preview = truncate(message.display().to_string(), 16);
+            let warning = format!("Are you sure you want to delete \"{}\"", preview);
 
-                let confirm = Confirm::new(
-                    "Delete Message".to_string(),
-                    warning,
-                    "Yes".to_string(),
-                    "No".to_string(),
-                    ConfirmBehavior::DeleteMessage(self.room(), message.id.clone()),
-                );
+            let confirm = Confirm::new(
+                "Delete Message".to_string(),
+                warning,
+                "Yes".to_string(),
+                "No".to_string(),
+                ConfirmBehavior::DeleteMessage(self.room(), message.id.clone()),
+            );
 
-                return Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Confirm(confirm))
-                })));
-            }
+            return Ok(Consumed(Box::new(|app| {
+                app.set_popup(Popup::Confirm(confirm))
+            })));
         }
 
         match input.code {
@@ -379,10 +380,12 @@ impl Chat {
             return;
         }
 
+        let me = self.matrix.me();
+
         let typing: Vec<&RoomMember> = self
             .members
             .iter()
-            .filter(|m| ids.iter().any(|id| m.user_id() == id))
+            .filter(|m| m.user_id() != me && ids.iter().any(|id| m.user_id() == id))
             .collect();
 
         if typing.is_empty() {
@@ -981,10 +984,10 @@ impl Widget for ChatWidget<'_> {
 
 fn find_bookmark(bookmark: &Bookmark, lines: &[LineType]) -> Option<usize> {
     for (i, line) in lines.iter().enumerate() {
-        if let LineType::MessageStart(message_id) = line {
-            if *message_id == bookmark.message_id {
-                return Some(i.saturating_sub(bookmark.offset));
-            }
+        if let LineType::MessageStart(message_id) = line
+            && *message_id == bookmark.message_id
+        {
+            return Some(i.saturating_sub(bookmark.offset));
         }
     }
 

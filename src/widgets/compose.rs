@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::Room;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -6,18 +6,19 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::app::App;
-use crate::consumed;
 use crate::event::{Event, EventHandler};
 use crate::matrix::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::spawn::get_text;
-use crate::widgets::textinput::TextInput;
 use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{get_margin, EventResult};
+use crate::widgets::textinput::TextInput;
+use crate::widgets::{EventResult, get_margin};
+use crate::{KeyCombo, consumed};
 
 pub struct Compose {
     input: TextInput,
     room: DecoratedRoom,
+    combo: KeyCombo,
     matrix: Matrix,
 }
 
@@ -28,6 +29,7 @@ impl Compose {
         Self {
             input,
             room,
+            combo: KeyCombo::new(vec!['j', 'j']),
             matrix,
         }
     }
@@ -41,13 +43,17 @@ impl Compose {
     }
 
     pub fn key_event(&mut self, input: &KeyEvent, handler: &EventHandler) -> EventResult {
-        // Handle ^/ to edit in external editor
-        if input.modifiers.contains(KeyModifiers::CONTROL) && input.code == KeyCode::Char('x') {
+        // Handle "jj" to edit in external editor
+        if let KeyCode::Char(c) = input.code
+            && self.combo.record(c)
+        {
             let send = self.matrix.begin_typing(self.room());
+            let mut message = self.input.value.clone();
+            message.pop();
 
             handler.park();
             let result = get_text(
-                Some(&self.input.value),
+                Some(&message),
                 Some(&format!(
                     "<!-- The message above will be sent to {}. -->",
                     self.room.name
@@ -140,6 +146,6 @@ impl Widget for ComposeWidget<'_> {
 
         self.compose.input.widget().render(splits[0], buf);
 
-        Paragraph::new("type ^X to edit in external editor").render(splits[1], buf);
+        Paragraph::new("type \"jj\" to edit in external editor").render(splits[1], buf);
     }
 }

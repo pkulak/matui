@@ -2,7 +2,7 @@
 name = "matui"
 version = "0.6.0"
 authors = ["Phil Kulak"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }

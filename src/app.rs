@@ -12,6 +12,7 @@ use tokio::runtime::Handle;
 use crate::event::{Event, EventHandler};
 use crate::handler::MatuiEvent;
 use crate::matrix::matrix::Matrix;
+use crate::widgets::EventResult;
 use crate::widgets::chat::Chat;
 use crate::widgets::compose::Compose;
 use crate::widgets::confirm::Confirm;
@@ -22,7 +23,6 @@ use crate::widgets::recover::Recover;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::search::Search;
 use crate::widgets::signin::Signin;
-use crate::widgets::EventResult;
 use ratatui::Frame;
 
 static SENDER: OnceCell<Sender<Event>> = OnceCell::new();
@@ -92,10 +92,10 @@ impl App {
 
     pub fn select_room(&mut self, room: Room) {
         // don't re-select the same room
-        if let Some(c) = &self.chat {
-            if c.room().room_id() == room.room_id() {
-                return;
-            }
+        if let Some(c) = &self.chat
+            && c.room().room_id() == room.room_id()
+        {
+            return;
         }
 
         let mut chat = Chat::try_new(self.matrix.clone(), room.clone());
@@ -163,6 +163,7 @@ impl App {
 // As far as I can tell, there's no way to use dynamic dispatch here, so
 // instead we'll use a giant enum. I tried for way too long and just have
 // to give up before I lose it. PRs welcome if there's a better way!
+#[allow(clippy::large_enum_variant)]
 pub enum Popup {
     Confirm(Confirm),
     Compose(Compose),

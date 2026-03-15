@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use image::imageops::FilterType;
 use lazy_static::lazy_static;
 use linkify::LinkFinder;
@@ -134,11 +134,11 @@ pub fn make_unique(mut path: PathBuf) -> PathBuf {
 
 fn next_file_name(og: &str) -> String {
     // if there's already a version, increment
-    if let Some(cap) = FILE_RE.captures_iter(og).next() {
-        if let Ok(version) = cap[1].parse::<usize>() {
-            let replacement = format!("-{}$2", version + 1);
-            return FILE_RE.replace(og, replacement).to_string();
-        }
+    if let Some(cap) = FILE_RE.captures_iter(og).next()
+        && let Ok(version) = cap[1].parse::<usize>()
+    {
+        let replacement = format!("-{}$2", version + 1);
+        return FILE_RE.replace(og, replacement).to_string();
     }
 
     // if there's an extension, start a new version just before
