@@ -33,6 +33,15 @@ impl Focusable for &mut TextInput {
     }
 }
 
+/// Convert a char index into its corresponding byte offset within `s`.
+/// Returns `s.len()` if `char_idx` is past the end.
+fn char_to_byte(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
+}
+
 impl TextInput {
     pub fn new(title: String, focused: bool, password: bool) -> TextInput {
         Self {
@@ -83,17 +92,13 @@ impl TextInput {
     }
 
     fn append_char(&mut self, ch: char) {
-        if self.cursor == self.value.len() {
-            self.value.push(ch);
-        } else {
-            self.value.insert(self.cursor, ch);
-        }
-
+        let byte_pos = char_to_byte(&self.value, self.cursor);
+        self.value.insert(byte_pos, ch);
         self.cursor += 1;
     }
 
     fn move_right(&mut self) {
-        if self.cursor < self.value.len() {
+        if self.cursor < self.value.chars().count() {
             self.cursor += 1;
         }
     }
@@ -103,7 +108,9 @@ impl TextInput {
             return;
         }
 
-        self.value.replace_range(self.cursor - 1..self.cursor, "");
+        let end_byte = char_to_byte(&self.value, self.cursor);
+        let start_byte = char_to_byte(&self.value, self.cursor - 1);
+        self.value.replace_range(start_byte..end_byte, "");
         self.cursor -= 1;
 
         let left = self.left.get();
@@ -126,17 +133,20 @@ impl TextInput {
     }
 
     fn display_value(&self) -> String {
+        let char_count = self.value.chars().count();
         let mut value = if self.password {
-            "*".repeat(self.value.len())
+            "*".repeat(char_count)
         } else {
             self.value.clone()
         };
 
         if self.focused {
-            if self.cursor >= self.value.len() {
+            if self.cursor >= char_count {
                 value.push('█');
             } else {
-                value.replace_range(self.cursor..self.cursor + 1, "█");
+                let byte_start = char_to_byte(&value, self.cursor);
+                let ch_len = value[byte_start..].chars().next().unwrap().len_utf8();
+                value.replace_range(byte_start..byte_start + ch_len, "█");
             }
         }
 
@@ -155,9 +165,10 @@ impl TextInputWidget<'_> {
 
     fn adjust_window(&self, size: usize) {
         let left = self.textinput.left.get();
+        let char_count = self.textinput.value.chars().count();
 
         // we fit entirely
-        if self.textinput.value.len() <= size {
+        if char_count <= size {
             self.set_left(0);
             return;
         }
@@ -169,8 +180,8 @@ impl TextInputWidget<'_> {
         }
 
         // scroll right
-        if left >= self.textinput.value.len() - size {
-            self.set_left(self.textinput.value.len() - size + 1);
+        if left >= char_count - size {
+            self.set_left(char_count - size + 1);
         }
     }
 
@@ -182,7 +193,8 @@ impl TextInputWidget<'_> {
             return value;
         }
 
-        value[left..].to_string()
+        let byte_pos = char_to_byte(&value, left);
+        value[byte_pos..].to_string()
     }
 }
 
@@ -291,6 +303,44 @@ mod tests {
 
         input.widget().render(area, &mut buf);
         assert_eq!(get_line(&buf, 1), "│yping some thi█s. │");
+    }
+
+    #[test]
+    fn it_handles_unicode() {
+        let mut input = TextInput::new("Test".to_string(), true, false);
+
+        // Type one character of each UTF-8 byte width:
+        //   'A'  = 1 byte  (U+0041)
+        //   'é'  = 2 bytes (U+00E9)
+        //   '中' = 3 bytes (U+4E2D)
+        //   '😀' = 4 bytes (U+1F600)
+        for c in "Aé中😀".chars() {
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(input.value(), "Aé中😀");
+
+        // Backspace removes the 4-byte emoji
+        input.key_event(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(input.value(), "Aé中");
+
+        // Move left past '中', then backspace removes 'é'
+        input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        input.key_event(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(input.value(), "A中");
+
+        // Insert '😀' before '中'
+        input.key_event(&KeyEvent::new(KeyCode::Char('😀'), KeyModifiers::NONE));
+        assert_eq!(input.value(), "A😀中");
+
+        // Move right past '中', then backspace removes '中'
+        input.key_event(&KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        input.key_event(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(input.value(), "A😀");
+
+        // Render should not panic
+        let area = Rect::new(0, 0, 20, 3);
+        let mut buf = Buffer::empty(area);
+        input.widget().render(area, &mut buf);
     }
 
     fn get_line(buf: &Buffer, line: usize) -> String {
