@@ -87,6 +87,7 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
     // which is great for us, because an editor forcing us back to the
     // main screen is not at all ideal
     command.env("TERM", "xterm1");
+    command.env("MATUI_EDITOR", "1");
 
     // set up vim just right, if that's what we're using
     if editor.ends_with("vim") || editor.ends_with("vi") {
