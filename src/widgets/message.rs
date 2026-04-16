@@ -1,3 +1,5 @@
+use crate::markdown;
+use crate::settings;
 use crate::widgets::message::MessageType::File;
 use chrono::TimeZone;
 use human_bytes::human_bytes;
@@ -591,10 +593,11 @@ impl Message {
 
         // the actual message
         if matches!(self.body, Text(_)) && self.search_term.get().is_none() {
-            let md_lines = crate::markdown::md_body_to_spans(body, width);
-            let message_overlap = md_lines.len() > 10;
+            let md_lines = markdown::md_body_to_spans(body, width);
+            let limit = settings::message_line_limit();
+            let message_overlap = md_lines.len() > limit;
 
-            for line_spans in md_lines.into_iter().take(10) {
+            for line_spans in md_lines.into_iter().take(limit) {
                 lines.push(line_spans);
                 sidecar.push(LineType::MessageContent);
             }
@@ -609,9 +612,10 @@ impl Message {
             }
         } else {
             let wrapped = textwrap::wrap(body, width);
-            let message_overlap = wrapped.len() > 10;
+            let limit = settings::message_line_limit();
+            let message_overlap = wrapped.len() > limit;
 
-            for l in wrapped.into_iter().take(10) {
+            for l in wrapped.into_iter().take(limit) {
                 let trimmed = match l {
                     Cow::Borrowed(s) => Cow::Borrowed(s.trim()),
                     Cow::Owned(s) => Cow::Owned(s.trim().to_string()),

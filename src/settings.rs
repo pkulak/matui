@@ -1,4 +1,4 @@
-use config::{Config};
+use config::Config;
 use log::{info, warn};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use ruma::RoomId;
@@ -44,7 +44,7 @@ pub fn get_settings() -> RwLockReadGuard<'static, Config> {
 
 fn with_override_set<F, R>(key: &str, f: F) -> R
 where
-    F: FnOnce(&mut std::collections::HashSet<String>) -> R
+    F: FnOnce(&mut std::collections::HashSet<String>) -> R,
 {
     let mut overrides = OVERRIDES.lock().unwrap();
     let set = overrides.entry(key.to_string()).or_default();
@@ -52,9 +52,7 @@ where
 }
 
 fn overridden(key: &str, value: &str) -> bool {
-    with_override_set(key, |set| {
-        set.contains(value)
-    })
+    with_override_set(key, |set| set.contains(value))
 }
 
 pub fn is_muted(room: &RoomId) -> bool {
@@ -120,7 +118,18 @@ pub fn max_events() -> usize {
 }
 
 pub fn respect_notification_close_reason() -> bool {
-    get_settings().get("respect_notification_close_reason").unwrap_or_default()
+    get_settings()
+        .get("respect_notification_close_reason")
+        .unwrap_or_default()
+}
+
+pub fn message_line_limit() -> usize {
+    let limit: Option<i32> = get_settings().get("message_line_limit").ok();
+
+    match limit {
+        Some(i) if i > 0 => i as usize,
+        _ => 20,
+    }
 }
 
 fn watch_internal() {

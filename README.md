@@ -169,6 +169,10 @@ max_events = 8192
 # matter what, you can set this to true. This way, hopefully, when you dismiss
 # a notification, the room won't change.
 respect_notification_close_reason = false
+
+# How many lines do we let a message span before we cut it off and make the
+# user view it in the external editor?
+message_line_limit = 20
 ```
 
 The config file is hot reloaded and can generally be found at
