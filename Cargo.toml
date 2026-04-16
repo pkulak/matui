@@ -32,6 +32,7 @@ regex = "1.12.2"
 ruma = "0.14.1"
 serde = { version = "1.0", features = ["derive"] }
 simple-logging = "2.0"
+termimad = "0.34.1"
 tempfile = "3"
 textwrap = "0.16.2"
 timeago = "0.5"

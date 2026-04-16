@@ -590,27 +590,45 @@ impl Message {
         sidecar.push(LineType::MessageStart(self.id.clone()));
 
         // the actual message
-        let wrapped = textwrap::wrap(body, width);
-        let message_overlap = wrapped.len() > 10;
+        if matches!(self.body, Text(_)) && self.search_term.get().is_none() {
+            let md_lines = crate::markdown::md_body_to_spans(body, width);
+            let message_overlap = md_lines.len() > 10;
 
-        for l in wrapped.into_iter().take(10) {
-            let trimmed = match l {
-                Cow::Borrowed(s) => Cow::Borrowed(s.trim()),
-                Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
-            };
+            for line_spans in md_lines.into_iter().take(10) {
+                lines.push(line_spans);
+                sidecar.push(LineType::MessageContent);
+            }
 
-            lines.push(self.highlight(trimmed));
-            sidecar.push(LineType::MessageContent);
-        }
+            if message_overlap || self.reactions.len() > 5 {
+                lines.push(vec![Span::styled(
+                    "* overflow: type \"v\" to view entire message",
+                    Style::default().fg(Color::Red),
+                )]);
 
-        // overflow warning
-        if message_overlap || self.reactions.len() > 5 {
-            lines.push(vec![Span::styled(
-                "* overflow: type \"v\" to view entire message",
-                Style::default().fg(Color::Red),
-            )]);
+                sidecar.push(LineType::MessageContent);
+            }
+        } else {
+            let wrapped = textwrap::wrap(body, width);
+            let message_overlap = wrapped.len() > 10;
 
-            sidecar.push(LineType::MessageContent);
+            for l in wrapped.into_iter().take(10) {
+                let trimmed = match l {
+                    Cow::Borrowed(s) => Cow::Borrowed(s.trim()),
+                    Cow::Owned(s) => Cow::Owned(s.trim().to_string()),
+                };
+
+                lines.push(self.highlight(trimmed));
+                sidecar.push(LineType::MessageContent);
+            }
+
+            if message_overlap || self.reactions.len() > 5 {
+                lines.push(vec![Span::styled(
+                    "* overflow: type \"v\" to view entire message",
+                    Style::default().fg(Color::Red),
+                )]);
+
+                sidecar.push(LineType::MessageContent);
+            }
         }
 
         // receipts
