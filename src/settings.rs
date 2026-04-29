@@ -1,7 +1,7 @@
 use config::Config;
 use log::{info, warn};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use ruma::RoomId;
+use matrix_sdk::ruma::RoomId;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::channel;

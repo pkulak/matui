@@ -19,20 +19,20 @@ use once_cell::unsync::OnceCell;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
-use ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
-use ruma::events::AnyMessageLikeEvent::RoomMessage;
-use ruma::events::AnyMessageLikeEvent::RoomRedaction;
-use ruma::events::AnyTimelineEvent;
-use ruma::events::AnyTimelineEvent::MessageLike;
-use ruma::events::MessageLikeEvent;
-use ruma::events::relation::{InReplyTo, Replacement};
-use ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
-use ruma::events::room::message::{
+use matrix_sdk::ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
+use matrix_sdk::ruma::events::AnyMessageLikeEvent::RoomMessage;
+use matrix_sdk::ruma::events::AnyMessageLikeEvent::RoomRedaction;
+use matrix_sdk::ruma::events::AnyTimelineEvent;
+use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
+use matrix_sdk::ruma::events::MessageLikeEvent;
+use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement};
+use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
+use matrix_sdk::ruma::events::room::message::{
     AudioMessageEventContent, FileMessageEventContent, ImageMessageEventContent, Relation,
     TextMessageEventContent, VideoMessageEventContent,
 };
-use ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
-use ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId};
+use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
+use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId};
 
 use super::receipts::Receipt;
 

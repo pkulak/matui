@@ -8,13 +8,13 @@ use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ruma::events::receipt::ReceiptEventContent;
-use ruma::OwnedUserId;
+use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
+use matrix_sdk::ruma::OwnedUserId;
 
 use crate::event::EventHandler;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
 use matrix_sdk::room::{Room, RoomMember};
-use ruma::events::AnyTimelineEvent;
+use matrix_sdk::ruma::events::AnyTimelineEvent;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]

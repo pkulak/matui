@@ -3,7 +3,7 @@ use log::warn;
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::Room;
 use once_cell::sync::OnceCell;
-use ruma::events::receipt::ReceiptEventContent;
+use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::mpsc::Sender;

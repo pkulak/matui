@@ -1,6 +1,6 @@
 use log::{error, info};
-use ruma::UserId;
-use ruma::{OwnedRoomId, events::AnyTimelineEvent};
+use matrix_sdk::ruma::UserId;
+use matrix_sdk::ruma::{OwnedRoomId, events::AnyTimelineEvent};
 use std::fs::OpenOptions;
 use std::sync::Arc;
 use std::{

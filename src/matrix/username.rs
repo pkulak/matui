@@ -1,7 +1,7 @@
 use core::fmt;
 
 use matrix_sdk::room::RoomMember;
-use ruma::OwnedUserId;
+use matrix_sdk::ruma::OwnedUserId;
 
 /// A way to store a user ID, with a display name that can be updated later.
 #[derive(Clone)]

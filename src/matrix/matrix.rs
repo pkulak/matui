@@ -1,4 +1,4 @@
-use ruma::events::room::message::MessageType::File;
+use matrix_sdk::ruma::events::room::message::MessageType::File;
 
 use crate::media::get_attachment_info;
 use crate::settings::blur_delay;
@@ -36,20 +36,20 @@ use matrix_sdk::RoomState;
 use matrix_sdk::{Client, LoopCtrl, ServerName};
 use once_cell::sync::OnceCell;
 use rand::rng;
-use rand::{distr::Alphanumeric, Rng};
-use ruma::events::key::verification::VerificationMethod;
-use ruma::events::reaction::ReactionEventContent;
+use rand::{distr::Alphanumeric, RngExt};
+use matrix_sdk::ruma::events::key::verification::VerificationMethod;
+use matrix_sdk::ruma::events::reaction::ReactionEventContent;
 
-use ruma::events::relation::Annotation;
-use ruma::events::room::message::MessageType::Audio;
-use ruma::events::room::message::MessageType::Image;
-use ruma::events::room::message::MessageType::Video;
-use ruma::events::room::message::{AddMentions, ForwardThread, RoomMessageEventContent};
-use ruma::events::{
+use matrix_sdk::ruma::events::relation::Annotation;
+use matrix_sdk::ruma::events::room::message::MessageType::Audio;
+use matrix_sdk::ruma::events::room::message::MessageType::Image;
+use matrix_sdk::ruma::events::room::message::MessageType::Video;
+use matrix_sdk::ruma::events::room::message::{AddMentions, ForwardThread, RoomMessageEventContent};
+use matrix_sdk::ruma::events::{
     AnyMessageLikeEvent, AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, AnyTimelineEvent,
     MessageLikeEvent, SyncEphemeralRoomEvent,
 };
-use ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, UInt};
+use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;

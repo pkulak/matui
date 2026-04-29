@@ -1,7 +1,7 @@
-use ruma::{MilliSecondsSinceUnixEpoch, OwnedUserId};
+use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedUserId};
 use std::collections::{btree_map::Entry, BTreeMap, BinaryHeap};
 
-use ruma::events::receipt::{ReceiptEventContent, ReceiptType};
+use matrix_sdk::ruma::events::receipt::{ReceiptEventContent, ReceiptType};
 
 /// A place to put and update read receipts.
 pub struct Receipts {

@@ -4,7 +4,7 @@ use matrix_sdk::attachment::{
     AttachmentInfo, BaseAudioInfo, BaseFileInfo, BaseImageInfo, BaseVideoInfo, Thumbnail,
 };
 use mime::{Mime, IMAGE_JPEG};
-use ruma::UInt;
+use matrix_sdk::ruma::UInt;
 
 pub fn get_attachment_info(
     path: &Path,

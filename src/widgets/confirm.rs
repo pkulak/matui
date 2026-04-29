@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
-use ruma::OwnedEventId;
+use matrix_sdk::ruma::OwnedEventId;
 
 use crate::widgets::button::Button;
 use crate::widgets::{focus_next, Focusable};

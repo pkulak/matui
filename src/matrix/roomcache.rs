@@ -4,10 +4,10 @@ use log::info;
 use matrix_sdk::room::{MessagesOptions, Room};
 
 use matrix_sdk::{Client, RoomDisplayName, RoomState};
-use ruma::api::Direction;
-use ruma::events::AnyTimelineEvent;
-use ruma::events::room::message::MessageType;
-use ruma::{MilliSecondsSinceUnixEpoch, RoomId};
+use matrix_sdk::ruma::api::Direction;
+use matrix_sdk::ruma::events::AnyTimelineEvent;
+use matrix_sdk::ruma::events::room::message::MessageType;
+use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, RoomId};
 use std::sync::Mutex;
 
 use crate::matrix::matrix::Matrix;
