@@ -1,8 +1,13 @@
+use crossterm::{
+    event::{DisableFocusChange, EnableFocusChange},
+    execute,
+};
 use log::LevelFilter;
 use matui::app::App;
 use matui::event::{Event, EventHandler};
 use matui::handler::{handle_app_event, handle_blur_event, handle_focus_event, handle_key_event};
 use matui::settings::watch_settings_forever;
+use std::io::stdout;
 
 fn main() -> anyhow::Result<()> {
     if cfg!(debug_assertions) {
@@ -14,6 +19,7 @@ fn main() -> anyhow::Result<()> {
 
     // Initialize the terminal user interface
     let mut terminal = ratatui::init();
+    execute!(stdout(), EnableFocusChange)?;
 
     // and the event system.
     let events = EventHandler::new(250);
@@ -55,6 +61,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Exit the user interface.
+    let _ = execute!(stdout(), DisableFocusChange);
     ratatui::restore();
 
     Ok(())

@@ -1,4 +1,5 @@
 use anyhow::{Context, bail};
+use crossterm::{event::EnableFocusChange, execute};
 use image::imageops::FilterType;
 use lazy_static::lazy_static;
 use linkify::LinkFinder;
@@ -9,7 +10,7 @@ use notify_rust::Hint;
 use regex::Regex;
 use std::env::var;
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, stdout};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tempfile::Builder;
@@ -49,6 +50,12 @@ pub fn spawn_editor(
 
     handler.park();
     let result = get_text(existing, suffix);
+
+    // External editors can change terminal modes too. Neovim, for example,
+    // enables focus reporting while it runs and disables it again on exit, so
+    // restore our own focus-reporting request before the event handler resumes.
+    let _ = execute!(stdout(), EnableFocusChange);
+
     handler.unpark();
 
     if let Some((m, r)) = matrix
