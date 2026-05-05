@@ -154,10 +154,6 @@ muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
 # Useful if your custom config is interfering with Enter key bindings
 clear_vim = false
 
-# If non-zero, send a "blur" event after that many seconds of inactivity,
-# useful when blur events aren't sent reliably by your terminal.
-blur_delay = 30
-
 # What's the limit on how far back to go, in events? This is mostly to
 # put a limit on how far back a search will look. If you know your
 # homeserver is okay with it (and you have unlimited memory in your machine),

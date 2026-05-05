@@ -179,9 +179,6 @@ pub fn handle_key_event(
         return Ok(());
     }
 
-    // consider any key event also a sign of "focus"
-    handle_focus_event(app);
-
     // give the popup first crack at the event
     let result = if let Some(w) = &mut app.popup {
         w.key_event(&key_event, handler)

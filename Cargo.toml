@@ -9,7 +9,6 @@ anyhow = { version = "1.0", features = ["backtrace"] }
 chrono = "0.4"
 crossterm = "0.29"
 config = { version = "0.15", features = ["toml"] }
-debounced = "0.2.0"
 dirs = "6.0"
 emojis = "0.8"
 futures = "0.3.32"
