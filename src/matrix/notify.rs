@@ -1,4 +1,6 @@
-use log::{error, info};
+use log::error;
+#[cfg(not(target_os = "macos"))]
+use log::info;
 use matrix_sdk::ruma::UserId;
 use matrix_sdk::ruma::{OwnedRoomId, events::AnyTimelineEvent};
 use std::fs::OpenOptions;
@@ -21,11 +23,15 @@ use matrix_sdk::{
     media::MediaFormat,
     room::{Room, RoomMember},
 };
+#[cfg(not(target_os = "macos"))]
 use notify_rust::{CloseReason, Hint};
 
 use crate::app::App;
+#[cfg(not(target_os = "macos"))]
 use crate::settings::respect_notification_close_reason;
-use crate::{handler::MatuiEvent, settings::is_muted, widgets::message::Message};
+#[cfg(not(target_os = "macos"))]
+use crate::handler::MatuiEvent;
+use crate::{settings::is_muted, widgets::message::Message};
 
 pub struct Notify {
     focus: AtomicBool,
@@ -98,15 +104,20 @@ impl Notify {
     pub fn room_visit_event(&self, room: Room) {
         let mut map = self.rooms.lock().expect("could not lock rooms");
 
+        #[cfg(not(target_os = "macos"))]
         if let Some(handle_id) = map.remove(room.room_id().as_str())
             && let Ok(handle) = notify_rust::Notification::new().id(handle_id).show()
         {
             handle.close();
         }
 
+        #[cfg(target_os = "macos")]
+        map.remove(room.room_id().as_str());
+
         *self.room_id.lock().unwrap() = Some(room.room_id().to_owned());
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn send_notification(
         &self,
         summary: &str,
@@ -168,6 +179,21 @@ impl Notify {
             }
         });
 
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn send_notification(
+        &self,
+        summary: &str,
+        body: &str,
+        _room: Room,
+        _image: Option<PathBuf>,
+    ) -> anyhow::Result<()> {
+        notify_rust::Notification::new()
+            .summary(summary)
+            .body(body)
+            .show()?;
         Ok(())
     }
 
