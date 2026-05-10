@@ -26,6 +26,7 @@ use matrix_sdk::{
 #[cfg(not(target_os = "macos"))]
 use notify_rust::{CloseReason, Hint};
 
+#[cfg(not(target_os = "macos"))]
 use crate::app::App;
 #[cfg(not(target_os = "macos"))]
 use crate::settings::respect_notification_close_reason;
