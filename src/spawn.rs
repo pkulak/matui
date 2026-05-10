@@ -1,18 +1,22 @@
 use anyhow::{Context, bail};
 use crossterm::{event::EnableFocusChange, execute};
-use image::imageops::FilterType;
 use lazy_static::lazy_static;
 use linkify::LinkFinder;
 use log::error;
 use matrix_sdk::media::MediaFileHandle;
 use native_dialog::DialogBuilder;
-use notify_rust::Hint;
 use regex::Regex;
+#[cfg(not(target_os = "macos"))]
+use image::imageops::FilterType;
 use std::env::var;
 use std::fs;
-use std::io::{Cursor, stdout};
+#[cfg(not(target_os = "macos"))]
+use std::io::Cursor;
+use std::io::stdout;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(not(target_os = "macos"))]
+use notify_rust::Hint;
 use tempfile::Builder;
 
 use crate::app::App;
@@ -195,6 +199,7 @@ pub fn view_text(text: &str) {
 }
 
 pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> anyhow::Result<()> {
+    #[cfg(not(target_os = "macos"))]
     if let Some(img) = image {
         let data = Cursor::new(img);
         let reader = image::ImageReader::new(data).with_guessed_format()?;
@@ -210,6 +215,15 @@ pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> a
             .show()?;
     } else {
         notify_rust::Notification::new().body(body).show()?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = image;
+        notify_rust::Notification::new()
+            .summary(summary)
+            .body(body)
+            .show()?;
     }
 
     Ok(())
