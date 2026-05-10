@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::error;
 use matrix_sdk::ruma::UserId;
 use matrix_sdk::ruma::{OwnedRoomId, events::AnyTimelineEvent};
 use std::fs::OpenOptions;
@@ -21,11 +21,7 @@ use matrix_sdk::{
     media::MediaFormat,
     room::{Room, RoomMember},
 };
-use notify_rust::{CloseReason, Hint};
-
-use crate::app::App;
-use crate::settings::respect_notification_close_reason;
-use crate::{handler::MatuiEvent, settings::is_muted, widgets::message::Message};
+use crate::{settings::is_muted, widgets::message::Message};
 
 pub struct Notify {
     focus: AtomicBool,
@@ -96,17 +92,26 @@ impl Notify {
     }
 
     pub fn room_visit_event(&self, room: Room) {
-        let mut map = self.rooms.lock().expect("could not lock rooms");
+        self.close_notification(room.room_id().as_str());
+        *self.room_id.lock().unwrap() = Some(room.room_id().to_owned());
+    }
 
-        if let Some(handle_id) = map.remove(room.room_id().as_str())
+    #[cfg(not(target_os = "macos"))]
+    fn close_notification(&self, room_id: &str) {
+        let mut map = self.rooms.lock().expect("could not lock rooms");
+        if let Some(handle_id) = map.remove(room_id)
             && let Ok(handle) = notify_rust::Notification::new().id(handle_id).show()
         {
             handle.close();
         }
-
-        *self.room_id.lock().unwrap() = Some(room.room_id().to_owned());
     }
 
+    #[cfg(target_os = "macos")]
+    fn close_notification(&self, room_id: &str) {
+        self.rooms.lock().expect("could not lock rooms").remove(room_id);
+    }
+
+    #[cfg(not(target_os = "macos"))]
     fn send_notification(
         &self,
         summary: &str,
@@ -114,6 +119,12 @@ impl Notify {
         room: Room,
         image: Option<PathBuf>,
     ) -> anyhow::Result<()> {
+        use crate::app::App;
+        use crate::handler::MatuiEvent;
+        use crate::settings::respect_notification_close_reason;
+        use log::info;
+        use notify_rust::{CloseReason, Hint};
+
         let mut notification = notify_rust::Notification::new();
 
         notification.summary(summary).body(body);
@@ -168,6 +179,21 @@ impl Notify {
             }
         });
 
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn send_notification(
+        &self,
+        summary: &str,
+        body: &str,
+        _room: Room,
+        _image: Option<PathBuf>,
+    ) -> anyhow::Result<()> {
+        notify_rust::Notification::new()
+            .summary(summary)
+            .body(body)
+            .show()?;
         Ok(())
     }
 

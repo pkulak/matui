@@ -1,16 +1,14 @@
 use anyhow::{Context, bail};
 use crossterm::{event::EnableFocusChange, execute};
-use image::imageops::FilterType;
 use lazy_static::lazy_static;
 use linkify::LinkFinder;
 use log::error;
 use matrix_sdk::media::MediaFileHandle;
 use native_dialog::DialogBuilder;
-use notify_rust::Hint;
 use regex::Regex;
 use std::env::var;
 use std::fs;
-use std::io::{Cursor, stdout};
+use std::io::stdout;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::Builder;
@@ -194,7 +192,12 @@ pub fn view_text(text: &str) {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> anyhow::Result<()> {
+    use image::imageops::FilterType;
+    use notify_rust::Hint;
+    use std::io::Cursor;
+
     if let Some(img) = image {
         let data = Cursor::new(img);
         let reader = image::ImageReader::new(data).with_guessed_format()?;
@@ -212,6 +215,15 @@ pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> a
         notify_rust::Notification::new().body(body).show()?;
     }
 
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn send_notification(summary: &str, body: &str, _image: Option<Vec<u8>>) -> anyhow::Result<()> {
+    notify_rust::Notification::new()
+        .summary(summary)
+        .body(body)
+        .show()?;
     Ok(())
 }
 
