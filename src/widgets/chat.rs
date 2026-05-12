@@ -18,11 +18,11 @@ use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use log::info;
 use matrix_sdk::room::{Room, RoomMember};
-use once_cell::sync::OnceCell;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
 use matrix_sdk::ruma::{OwnedEventId, OwnedUserId};
+use once_cell::sync::OnceCell;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -924,11 +924,8 @@ impl Widget for ChatWidget<'_> {
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(splits[0])[0];
 
-        let (p_content, p_color) = if self.chat.typing.is_some() {
-            (
-                self.chat.typing.as_ref().unwrap().to_string(),
-                Color::Yellow,
-            )
+        let (p_content, p_color) = if let Some(typing) = &self.chat.typing {
+            (typing.to_string(), Color::Yellow)
         } else if self.chat.fetching.get() {
             let term = if self.chat.search_term.is_empty() {
                 "Loading"

@@ -31,8 +31,8 @@ impl Username {
     }
 
     pub fn as_str(&self) -> &str {
-        if self.display_name.is_some() {
-            self.display_name.as_ref().unwrap().as_str()
+        if let Some(name) = &self.display_name {
+            name.as_str()
         } else {
             self.id.as_str()
         }

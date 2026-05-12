@@ -15,17 +15,13 @@ use crate::spawn::view_text;
 use crate::{limit_list, pretty_list};
 use chrono::offset::Local;
 use matrix_sdk::room::RoomMember;
-use once_cell::unsync::OnceCell;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::ListItem;
 use matrix_sdk::ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
 use matrix_sdk::ruma::events::AnyMessageLikeEvent::RoomMessage;
 use matrix_sdk::ruma::events::AnyMessageLikeEvent::RoomRedaction;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
 use matrix_sdk::ruma::events::MessageLikeEvent;
-use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement};
+use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement, Reply};
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
 use matrix_sdk::ruma::events::room::message::{
     AudioMessageEventContent, FileMessageEventContent, ImageMessageEventContent, Relation,
@@ -33,6 +29,10 @@ use matrix_sdk::ruma::events::room::message::{
 };
 use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
 use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId};
+use once_cell::unsync::OnceCell;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::ListItem;
 
 use super::receipts::Receipt;
 
@@ -262,9 +262,10 @@ impl Message {
             }
 
             // and replies (sometimes)
-            let in_reply_to = if let Some(Relation::Reply {
+            let in_reply_to = if let Some(Relation::Reply(Reply {
                 in_reply_to: InReplyTo { event_id: id, .. },
-            }) = c.content.relates_to
+                ..
+            })) = c.content.relates_to
             {
                 if !force {
                     return None;
@@ -322,9 +323,10 @@ impl Message {
                 }
             }
 
-            if let Some(Relation::Reply {
+            if let Some(Relation::Reply(Reply {
                 in_reply_to: InReplyTo { event_id: id, .. },
-            }) = event_content.relates_to
+                ..
+            })) = event_content.relates_to
             {
                 let mut found_index = None;
                 let mut sibling = None;
