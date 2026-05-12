@@ -12,7 +12,7 @@ use std::env::var;
 use std::fs;
 use std::io::{Cursor, stdout};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use tempfile::Builder;
 
 use crate::app::App;
@@ -188,11 +188,7 @@ pub fn view_text(text: &str) {
     let finder = LinkFinder::new();
 
     for link in finder.links(text) {
-        let mut command = open::commands(link.as_str()).into_iter().next().unwrap();
-        command.stdout(Stdio::piped());
-        command.stderr(Stdio::piped());
-
-        if let Err(e) = command.status() {
+        if let Err(e) = open::that_detached(link.as_str()) {
             error!("could not open link: {} {}", link.as_str(), e);
         }
     }
