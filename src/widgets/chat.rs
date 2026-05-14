@@ -760,7 +760,9 @@ impl Chat {
     // the message (or reply) currently selected by the UI
     fn selected_reply(&self) -> Option<&Message> {
         let bookmark = self.get_bookmark()?;
-        self.messages.iter().find(|&m| m.id == bookmark.message_id)
+        self.messages
+            .iter()
+            .find_map(|m| m.find_by_id(&bookmark.message_id))
     }
 
     // is the given selection in the middle of two messages?
@@ -1033,7 +1035,7 @@ fn make_message_list(
 
     // merge all the reactions
     for m in messages.iter_mut() {
-        m.reactions = Reaction::merge(&mut m.reactions);
+        m.merge_reactions();
     }
 
     // our message list is reversed because we start at the bottom of the

@@ -497,17 +497,23 @@ impl Message {
     }
 
     pub fn contains_id(&self, id: &OwnedEventId) -> bool {
+        self.find_by_id(id).is_some()
+    }
+
+    pub fn find_by_id(&self, id: &OwnedEventId) -> Option<&Message> {
         if &self.id == id {
-            return true;
+            return Some(self);
         }
 
-        for r in self.replies.iter() {
-            if r.contains_id(id) {
-                return true;
-            }
-        }
+        self.replies.iter().find_map(|r| r.find_by_id(id))
+    }
 
-        false
+    pub fn merge_reactions(&mut self) {
+        self.reactions = Reaction::merge(&mut self.reactions);
+
+        for reply in self.replies.iter_mut() {
+            reply.merge_reactions();
+        }
     }
 
     fn highlight<'a>(&self, line: Cow<'a, str>) -> Vec<Span<'a>> {
@@ -699,20 +705,13 @@ pub struct Reaction {
 impl Reaction {
     // drain the given reactions to create a merged version
     pub fn merge(reactions: &mut Vec<Reaction>) -> Vec<Reaction> {
-        let mut merged: Vec<Reaction> = vec![];
+        let mut merged: Vec<Reaction> = Vec::new();
 
-        for r in reactions {
-            let mut added = false;
-
-            for m in merged.iter_mut() {
-                if m.body == r.body {
-                    m.events.append(&mut r.events);
-                    added = true;
-                }
-            }
-
-            if !added {
-                merged.push(r.clone());
+        for mut reaction in std::mem::take(reactions) {
+            if let Some(existing) = merged.iter_mut().find(|r| r.body == reaction.body) {
+                existing.events.append(&mut reaction.events);
+            } else {
+                merged.push(reaction);
             }
         }
 
@@ -768,7 +767,78 @@ impl ReactionEvent {
 
 #[cfg(test)]
 mod tests {
-    use crate::widgets::message::Message;
+    use crate::matrix::username::Username;
+    use crate::widgets::message::{Message, Reaction, ReactionEvent};
+    use matrix_sdk::ruma::events::room::message::{MessageType::Text, TextMessageEventContent};
+    use matrix_sdk::ruma::{
+        MilliSecondsSinceUnixEpoch, OwnedEventId, owned_event_id, owned_room_id, owned_user_id,
+    };
+    use once_cell::unsync::OnceCell;
+
+    fn test_message(id: OwnedEventId) -> Message {
+        Message {
+            id,
+            in_reply_to: None,
+            room_id: owned_room_id!("!room:example.org"),
+            sent: MilliSecondsSinceUnixEpoch::now(),
+            body: Text(TextMessageEventContent::plain("body")),
+            history: Vec::new(),
+            sender: Username::new(owned_user_id!("@alice:example.org")),
+            reactions: Vec::new(),
+            replies: Vec::new(),
+            receipts: Vec::new(),
+            body_lower: OnceCell::new(),
+            search_term: OnceCell::new(),
+            display_cache: OnceCell::new(),
+        }
+    }
+
+    #[test]
+    fn finds_replies_recursively() {
+        let reply_id = owned_event_id!("$reply:example.org");
+        let mut message = test_message(owned_event_id!("$root:example.org"));
+        message.replies.push(test_message(reply_id.clone()));
+
+        assert_eq!(
+            message.find_by_id(&reply_id).map(|m| &m.id),
+            Some(&reply_id)
+        );
+        assert!(message.contains_id(&reply_id));
+    }
+
+    #[test]
+    fn merges_reply_reactions_recursively() {
+        let reply_id = owned_event_id!("$reply:example.org");
+        let mut message = test_message(owned_event_id!("$root:example.org"));
+        let mut reply = test_message(reply_id.clone());
+
+        reply.reactions = vec![
+            Reaction {
+                body: "👍".to_string(),
+                events: vec![ReactionEvent::new(
+                    owned_event_id!("$reaction1:example.org"),
+                    owned_user_id!("@alice:example.org"),
+                )],
+                list_view: OnceCell::new(),
+            },
+            Reaction {
+                body: "👍".to_string(),
+                events: vec![ReactionEvent::new(
+                    owned_event_id!("$reaction2:example.org"),
+                    owned_user_id!("@bob:example.org"),
+                )],
+                list_view: OnceCell::new(),
+            },
+        ];
+        message.replies.push(reply);
+
+        message.merge_reactions();
+
+        let reply = message.find_by_id(&reply_id).unwrap();
+        assert_eq!(reply.reactions.len(), 1);
+        assert_eq!(reply.reactions[0].body, "👍");
+        assert_eq!(reply.reactions[0].events.len(), 2);
+    }
 
     #[test]
     fn remove_matrix_headers() {
