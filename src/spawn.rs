@@ -6,17 +6,11 @@ use log::error;
 use matrix_sdk::media::MediaFileHandle;
 use native_dialog::DialogBuilder;
 use regex::Regex;
-#[cfg(not(target_os = "macos"))]
-use image::imageops::FilterType;
 use std::env::var;
 use std::fs;
-#[cfg(not(target_os = "macos"))]
-use std::io::Cursor;
 use std::io::stdout;
 use std::path::PathBuf;
 use std::process::Command;
-#[cfg(not(target_os = "macos"))]
-use notify_rust::Hint;
 use tempfile::Builder;
 
 use crate::app::App;
@@ -198,8 +192,12 @@ pub fn view_text(text: &str) {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> anyhow::Result<()> {
-    #[cfg(not(target_os = "macos"))]
+    use image::imageops::FilterType;
+    use notify_rust::Hint;
+    use std::io::Cursor;
+
     if let Some(img) = image {
         let data = Cursor::new(img);
         let reader = image::ImageReader::new(data).with_guessed_format()?;
@@ -217,15 +215,15 @@ pub fn send_notification(summary: &str, body: &str, image: Option<Vec<u8>>) -> a
         notify_rust::Notification::new().body(body).show()?;
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let _ = image;
-        notify_rust::Notification::new()
-            .summary(summary)
-            .body(body)
-            .show()?;
-    }
+    Ok(())
+}
 
+#[cfg(target_os = "macos")]
+pub fn send_notification(summary: &str, body: &str, _image: Option<Vec<u8>>) -> anyhow::Result<()> {
+    notify_rust::Notification::new()
+        .summary(summary)
+        .body(body)
+        .show()?;
     Ok(())
 }
 
