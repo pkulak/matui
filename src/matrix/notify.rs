@@ -188,12 +188,16 @@ impl Notify {
         summary: &str,
         body: &str,
         _room: Room,
-        _image: Option<PathBuf>,
+        image: Option<PathBuf>,
     ) -> anyhow::Result<()> {
-        notify_rust::Notification::new()
-            .summary(summary)
-            .body(body)
-            .show()?;
+        let mut notification = notify_rust::Notification::new();
+        notification.summary(summary).body(body);
+
+        if let Some(path) = image {
+            notification.image_path(path.to_str().unwrap());
+        }
+
+        notification.show()?;
         Ok(())
     }
 
