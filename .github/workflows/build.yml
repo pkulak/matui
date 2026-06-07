@@ -14,3 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - run: cargo build --release --locked
+      - name: Package binary
+        run: tar -czf matui-${{ matrix.os }}.tar.gz -C target/release matui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matui-${{ matrix.os }}
+          path: matui-${{ matrix.os }}.tar.gz
+          retention-days: 7
