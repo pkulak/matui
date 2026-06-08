@@ -177,7 +177,11 @@ message_line_limit = 20
 The config file is hot reloaded and can generally be found at
 ~/.config/matui/config.toml.
 
-# Windows/Mac Support
+# Macos Support
+
+There is a binary in releases.
+
+# Windows support
 
 There's nothing explicitly preventing this, but it's untested and Linux is
 currently assumed.
