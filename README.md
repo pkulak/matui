@@ -179,7 +179,7 @@ The config file is hot reloaded and can generally be found at
 
 # Macos Support
 
-There is a binary in releases.
+There is a binary in releases, although Matui does not currently support intel macs running macOS.
 
 # Windows support
 
