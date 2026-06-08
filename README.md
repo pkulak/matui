@@ -1,5 +1,8 @@
-# Matui
+<div align="center">
+  <img width="200" height="200" alt="ma TUI" src="https://github.com/user-attachments/assets/8379af93-b055-4b9b-ae13-9bd6daf6c378" />
+</div>
 
+<h1 align="center">Matui</h1>
 A very opinionated [Matrix](https://matrix.org/) TUI. The UI is kept as simple
 as possible and there's no mouse support (yet, at least). With the assumption
 that usually only the last couple messages actually matter, vertical space
