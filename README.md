@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="200" height="200" alt="ma TUI" src="https://github.com/user-attachments/assets/8379af93-b055-4b9b-ae13-9bd6daf6c378" />
+  <img src="./matui.png" alt="Screenshot" width="200">
 </div>
 
 <h1 align="center">Matui</h1>
