@@ -11,21 +11,12 @@ is not conserved at all.
 
 ![Matui](https://github.com/pkulak/matui/blob/main/screenshot.png?raw=true "The main chat window.")
 
-# Upgrade Notes
-
-The underlying Matrix SDK that Matui uses has recently switched from Sled to
-Sqlite. That's great, because it seems to have fixed the horrible data store
-bloat issues, but it also means the cache has to be re-built after you upgrade
-and there will be some garbage left over. If you'd like to reclaim some space,
-you can blow away the `matrx-sdk-state` folder in your cache
-(`.local/share/matui/{hash}/matrix-sdk-state`).
-
 # Who should use this client?
 
 Anyone who wants a very simple terminal Matrix client, but runs another client
 somewhere else for the missing features. There are some very basic actions
 that aren't supported at the moment, like joining rooms and moderation. Also,
-many events are still not suported, like threads (which are still shown, but
+many events are still not supported, like threads (which are still shown, but
 not formatted very well). Also, this project is very early, so you need to
 be tolerant of some bugs.
 
@@ -118,7 +109,7 @@ be set.
 
 ## File Viewing
 
-You will probably want to view attachements and should make sure xdg-open works
+You will probably want to view attachments and should make sure xdg-open works
 with all the files you care about. I recommend [mpv](https://mpv.io/) and
 [imv](https://sr.ht/~exec64/imv/) at a minimum.
 
@@ -181,7 +172,8 @@ The config file is hot reloaded and can generally be found at
 # Windows/Mac Support
 
 There's nothing explicitly preventing this, but it's untested and Linux is
-currently assumed.
+currently assumed. There's a mac bundle in the release, but that's just so
+I know it compiles. It's totally untested at the moment.
 
 # See Also
 

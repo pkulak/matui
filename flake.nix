@@ -20,25 +20,27 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs { inherit system overlays; };
-        rusttoolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+        rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
         sharedDeps = [
-          rusttoolchain
+          rustToolchain
           pkgs.pkg-config
         ]
         ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.darwin.apple_sdk.frameworks.Security ];
       in
-      rec {
-        # `nix build`
-        packages = {
+      {
+        packages = rec {
+
           matui = pkgs.rustPlatform.buildRustPackage {
             pname = cargoToml.package.name;
             inherit (cargoToml.package) version;
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
-            # won't be found by `openssl-sys` if it's in `nativeBuildInputs`
+            # Won't be found by `openssl-sys` if it's in `nativeBuildInputs`.
             buildInputs = with pkgs; [ openssl ];
             nativeBuildInputs =
               sharedDeps
@@ -47,10 +49,10 @@
                 sqlite
               ]);
           };
-          default = packages.matui;
+
+          default = matui;
         };
 
-        # `nix develop`
         devShells.default = pkgs.mkShell {
           buildInputs =
             sharedDeps
