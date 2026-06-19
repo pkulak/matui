@@ -1,9 +1,15 @@
 use anyhow::{Context, bail};
+#[cfg(target_os = "linux")]
+use ashpd::{
+    PortalError,
+    desktop::{ResponseError, file_chooser::SelectedFiles},
+};
 use crossterm::{event::EnableFocusChange, execute};
 use lazy_static::lazy_static;
 use linkify::LinkFinder;
 use log::error;
 use matrix_sdk::media::MediaFileHandle;
+#[cfg(not(target_os = "linux"))]
 use native_dialog::DialogBuilder;
 use regex::Regex;
 use std::env::var;
@@ -12,6 +18,8 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::Builder;
+#[cfg(target_os = "linux")]
+use url::Url;
 
 use crate::app::App;
 use crate::event::{Event, EventHandler};
@@ -23,6 +31,43 @@ lazy_static! {
     static ref FILE_RE: Regex = Regex::new(r"-([0-9]+)(\.|$)").unwrap();
 }
 
+#[cfg(target_os = "linux")]
+pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
+    let home = dirs::home_dir().context("no home directory")?;
+
+    let files = App::get_handle().block_on(async {
+        SelectedFiles::open_file()
+            .title("Upload files")
+            .accept_label("Upload")
+            .multiple(true)
+            .current_folder(home)?
+            .send()
+            .await?
+            .response()
+    });
+
+    match files {
+        Ok(files) => files.uris().iter().map(file_uri_to_path).collect(),
+        // Some portal backends report an empty/cancelled picker as `Other`.
+        Err(ashpd::Error::Response(ResponseError::Cancelled | ResponseError::Other))
+        | Err(ashpd::Error::Portal(PortalError::Cancelled(_))) => Ok(vec![]),
+        Err(err) => Err(err.into()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn file_uri_to_path(uri: &ashpd::Uri) -> anyhow::Result<PathBuf> {
+    let url = Url::parse(uri.as_str()).with_context(|| format!("invalid file URI: {uri}"))?;
+
+    if url.scheme() != "file" {
+        bail!("portal returned non-file URI: {uri}");
+    }
+
+    url.to_file_path()
+        .map_err(|_| anyhow::anyhow!("portal returned invalid file URI: {uri}"))
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
     let home = dirs::home_dir().context("no home directory")?;
 
