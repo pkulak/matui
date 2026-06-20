@@ -187,12 +187,66 @@ pub fn view_file(handle: MediaFileHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn save_file(handle: MediaFileHandle, file_name: &str) -> anyhow::Result<PathBuf> {
+#[cfg(target_os = "linux")]
+pub async fn save_file(
+    handle: MediaFileHandle,
+    file_name: &str,
+) -> anyhow::Result<Option<PathBuf>> {
+    let file_name = safe_file_name(file_name);
+    let mut request = SelectedFiles::save_file()
+        .title("Save attachment")
+        .accept_label("Save")
+        .current_name(file_name.as_str());
+
+    if let Some(download_dir) = dirs::download_dir() {
+        request = request.current_folder::<PathBuf>(Some(download_dir))?;
+    }
+
+    let files = request.send().await?.response();
+
+    let files = match files {
+        Ok(files) => files,
+        Err(ashpd::Error::Response(ResponseError::Cancelled | ResponseError::Other))
+        | Err(ashpd::Error::Portal(PortalError::Cancelled(_))) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+
+    let destination = files
+        .uris()
+        .first()
+        .context("portal returned no save location")
+        .and_then(file_uri_to_path)?;
+
+    tokio::fs::copy(handle.path(), &destination).await?;
+    Ok(Some(destination))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn save_file(
+    handle: MediaFileHandle,
+    file_name: &str,
+) -> anyhow::Result<Option<PathBuf>> {
     let mut destination = dirs::download_dir().context("no download directory")?;
-    destination.push(file_name);
+    destination.push(safe_file_name(file_name));
     let destination = make_unique(destination);
-    fs::copy(handle.path(), &destination)?;
-    Ok(destination)
+    tokio::fs::copy(handle.path(), &destination).await?;
+    Ok(Some(destination))
+}
+
+fn safe_file_name(file_name: &str) -> String {
+    let name = file_name
+        .trim_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .map(|ch| if ch.is_control() { '_' } else { ch })
+        .collect::<String>();
+
+    match name.trim() {
+        "" | "." | ".." => "attachment".to_string(),
+        trimmed => trimmed.to_string(),
+    }
 }
 
 pub fn make_unique(mut path: PathBuf) -> PathBuf {
@@ -295,5 +349,19 @@ mod tests {
     fn test_next_no_ext() {
         assert_eq!(next_file_name("image"), "image-1");
         assert_eq!(next_file_name("image-42"), "image-43");
+    }
+
+    #[test]
+    fn test_safe_file_name() {
+        assert_eq!(safe_file_name("image.jpg"), "image.jpg");
+        assert_eq!(safe_file_name("../../evil.jpg"), "evil.jpg");
+        assert_eq!(safe_file_name("/tmp/evil.jpg"), "evil.jpg");
+        assert_eq!(safe_file_name(".."), "attachment");
+        assert_eq!(safe_file_name(""), "attachment");
+    }
+
+    #[test]
+    fn test_safe_file_name_windows_separator() {
+        assert_eq!(safe_file_name(r"..\evil.jpg"), "evil.jpg");
     }
 }

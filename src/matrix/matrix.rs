@@ -421,9 +421,10 @@ impl Matrix {
                 AfterDownload::View => {
                     tokio::task::spawn_blocking(move || view_file(handle));
                 }
-                AfterDownload::Save => match save_file(handle, &file_name) {
+                AfterDownload::Save => match save_file(handle, &file_name).await {
                     Err(err) => App::send(Error(err.to_string())),
-                    Ok(path) => App::send(MatuiEvent::Confirm(
+                    Ok(None) => {}
+                    Ok(Some(path)) => App::send(MatuiEvent::Confirm(
                         "Download Complete".to_string(),
                         format!("Saved to {}", path.to_str().unwrap()),
                     )),

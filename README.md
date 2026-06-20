@@ -113,10 +113,11 @@ You will probably want to view attachments and should make sure xdg-open works
 with all the files you care about. I recommend [mpv](https://mpv.io/) and
 [imv](https://sr.ht/~exec64/imv/) at a minimum.
 
-## File Uploading
+## File Uploading and Downloads
 
 On Linux, an xdg-desktop-portal file chooser backend is required to show the
-file picker. FFMpeg is also required to create thumbnails if you upload videos.
+file picker and save downloaded files. FFMpeg is also required to create
+thumbnails if you upload videos.
 
 ## Search
 
