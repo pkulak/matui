@@ -339,7 +339,8 @@ impl Matrix {
         App::spawn(async move {
             match room.get_member(&id).await {
                 Ok(Some(member)) => App::send(MatuiEvent::RoomMember(room, member)),
-                _ => todo!(),
+                Ok(None) => info!("no such room member: {}", id),
+                Err(err) => error!("could not fetch room member {}: {}", id, err),
             }
         });
     }
