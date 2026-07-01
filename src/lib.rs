@@ -63,10 +63,18 @@ pub fn pretty_list(names: Vec<String>) -> String {
 }
 
 fn truncate(s: String, max_chars: usize) -> String {
-    match s.char_indices().nth(max_chars) {
-        None => s,
-        Some((idx, _)) => format!("{}…", &s[..(idx - 1)]),
+    if s.chars().count() <= max_chars {
+        return s;
     }
+
+    // cut a character early to leave room for the ellipsis
+    let end = s
+        .char_indices()
+        .nth(max_chars.saturating_sub(1))
+        .map(|(idx, _)| idx)
+        .unwrap_or_default();
+
+    format!("{}…", &s[..end])
 }
 
 struct KeyCombo {
@@ -122,7 +130,19 @@ impl KeyCombo {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use crate::KeyCombo;
+    use crate::{truncate, KeyCombo};
+
+    #[test]
+    fn it_truncates() {
+        assert_eq!(truncate("hello world".to_string(), 8), "hello w…");
+        assert_eq!(truncate("hello".to_string(), 5), "hello");
+        assert_eq!(truncate("".to_string(), 5), "");
+
+        // multibyte characters at the boundary must not panic
+        assert_eq!(truncate("😀😀😀😀".to_string(), 2), "😀…");
+        assert_eq!(truncate("héllo world".to_string(), 2), "h…");
+        assert_eq!(truncate("😀".to_string(), 0), "…");
+    }
 
     #[test]
     #[allow(clippy::bool_assert_comparison)]
