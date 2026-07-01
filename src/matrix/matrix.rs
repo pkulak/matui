@@ -253,7 +253,7 @@ impl Matrix {
         let sync_settings = build_sync_settings(None);
 
         App::spawn(async move {
-            client
+            let result = client
                 .sync_with_result_callback(sync_settings, |sync_result| async move {
                     let response = match sync_result {
                         Ok(resp) => resp,
@@ -272,8 +272,12 @@ impl Matrix {
 
                     Ok(LoopCtrl::Continue)
                 })
-                .await
-                .expect("could not sync");
+                .await;
+
+            if let Err(err) = result {
+                error!("sync loop ended: {}", err);
+                App::send(Error(format!("Sync failed: {}", err)));
+            }
         });
     }
 
@@ -319,9 +323,10 @@ impl Matrix {
             let unpacked: Vec<AnyTimelineEvent> = messages
                 .chunk
                 .iter()
-                .map(|te| {
+                .filter_map(|te| {
                     Matrix::deserialize_event(te, room.room_id().into())
-                        .expect("could not deserialize")
+                        .map_err(|err| error!("could not deserialize event: {}", err))
+                        .ok()
                 })
                 .collect();
 
