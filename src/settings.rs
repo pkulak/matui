@@ -106,10 +106,11 @@ pub fn max_events() -> usize {
     match max {
         Some(-1) => usize::MAX,
         Some(i) if i > 0 => i as usize,
-        _ => {
+        Some(_) => {
             warn!("invalid max_events; setting to 8192");
-            1024
+            8192
         }
+        None => 8192,
     }
 }
 
