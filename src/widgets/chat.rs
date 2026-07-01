@@ -802,7 +802,7 @@ impl Chat {
 
         for reaction in self.selected_reactions() {
             if reaction.body != body {
-                break;
+                continue;
             }
 
             for event in reaction.events {
