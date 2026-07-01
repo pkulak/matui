@@ -678,12 +678,18 @@ impl Chat {
     }
 
     fn next(&mut self, step: usize) {
+        let total = self.total_list_items();
+
+        if total == 0 {
+            return;
+        }
+
         let mut state = self.list_state.take();
 
         let mut i = match state.selected() {
             Some(i) => {
-                if i + step >= &self.total_list_items() - 1 {
-                    &self.total_list_items() - 1
+                if i + step >= total - 1 {
+                    total - 1
                 } else {
                     i + step
                 }
@@ -709,7 +715,7 @@ impl Chat {
             .unwrap_or_default();
 
         if self.invalid_selection(i) {
-            i -= 1;
+            i = i.saturating_sub(1);
         }
 
         state.select(Some(i));

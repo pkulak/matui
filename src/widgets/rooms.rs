@@ -86,11 +86,17 @@ impl Rooms {
     }
 
     fn next(&mut self) {
+        let len = self.filtered_rooms().len();
+
+        if len == 0 {
+            return;
+        }
+
         let mut state = self.list_state.take();
 
         let i = match state.selected() {
             Some(i) => {
-                if i >= self.filtered_rooms().len() - 1 {
+                if i >= len - 1 {
                     0
                 } else {
                     i + 1
@@ -104,12 +110,18 @@ impl Rooms {
     }
 
     fn previous(&mut self) {
+        let len = self.filtered_rooms().len();
+
+        if len == 0 {
+            return;
+        }
+
         let mut state = self.list_state.take();
 
         let i = match state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.filtered_rooms().len() - 1
+                    len - 1
                 } else {
                     i - 1
                 }
