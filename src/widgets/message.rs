@@ -101,10 +101,10 @@ impl Message {
                     if let Some(size) = info.size {
                         format!("Video: {} ({})", body, human_bytes(size))
                     } else {
-                        "no size".to_string()
+                        body.to_string()
                     }
                 } else {
-                    "no info".to_string()
+                    body.to_string()
                 }
             }
             Audio(AudioMessageEventContent { body, info, .. }) => {
