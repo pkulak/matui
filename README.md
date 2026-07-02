@@ -147,6 +147,10 @@ reactions = [ "❤️", "👍", "👎", "😂", "‼️", "❓️"]
 # Muted rooms. Use "*" to mute every room.
 muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
 
+# Should messages that mention you notify, even in muted rooms? With
+# muted = ["*"], this means you are only notified for mentions.
+mentions_override_mute = true
+
 # Useful if your custom config is interfering with Enter key bindings
 clear_vim = false
 

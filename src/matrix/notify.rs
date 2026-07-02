@@ -1,5 +1,6 @@
 use log::error;
 use matrix_sdk::ruma::UserId;
+use matrix_sdk::ruma::events::{AnyMessageLikeEvent, MessageLikeEvent};
 use matrix_sdk::ruma::{OwnedRoomId, events::AnyTimelineEvent};
 use std::fs::OpenOptions;
 use std::sync::Arc;
@@ -21,7 +22,8 @@ use matrix_sdk::{
     media::MediaFormat,
     room::{Room, RoomMember},
 };
-use crate::{settings::is_muted, widgets::message::Message};
+use crate::settings::{is_muted, mentions_override_mute};
+use crate::widgets::message::Message;
 
 pub struct Notify {
     focus: AtomicBool,
@@ -51,8 +53,11 @@ impl Notify {
                 return Ok(());
             }
 
-            // or when the room is muted
-            if is_muted(message.room_id.as_ref()) {
+            // or when the room is muted, unless it mentions us
+            if is_muted(message.room_id.as_ref())
+                && !(mentions_override_mute()
+                    && mentions_user(&event, client.user_id().unwrap()))
+            {
                 return Ok(());
             }
 
@@ -270,5 +275,61 @@ impl Notify {
         }
 
         Notify::get_room_image(&room).await
+    }
+}
+
+// does the event intentionally mention the given user (or the whole room)?
+fn mentions_user(event: &AnyTimelineEvent, me: &UserId) -> bool {
+    if let AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomMessage(
+        MessageLikeEvent::Original(c),
+    )) = event
+        && let Some(mentions) = &c.content.mentions
+    {
+        return mentions.room || mentions.user_ids.contains(me);
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mentions_user;
+    use matrix_sdk::ruma::events::AnyTimelineEvent;
+    use matrix_sdk::ruma::exports::serde_json::{Value, from_value, json};
+    use matrix_sdk::ruma::user_id;
+
+    fn message_event(mentions: Option<Value>) -> AnyTimelineEvent {
+        let mut content = json!({ "msgtype": "m.text", "body": "hey" });
+
+        if let Some(m) = mentions {
+            content["m.mentions"] = m;
+        }
+
+        from_value(json!({
+            "type": "m.room.message",
+            "event_id": "$event:example.org",
+            "sender": "@bob:example.org",
+            "origin_server_ts": 1_000,
+            "room_id": "!room:example.org",
+            "content": content,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn it_finds_mentions() {
+        let me = user_id!("@alice:example.org");
+
+        let event = message_event(Some(json!({ "user_ids": ["@alice:example.org"] })));
+        assert!(mentions_user(&event, me));
+
+        let event = message_event(Some(json!({ "user_ids": ["@carol:example.org"] })));
+        assert!(!mentions_user(&event, me));
+
+        let event = message_event(Some(json!({ "room": true })));
+        assert!(mentions_user(&event, me));
+
+        let event = message_event(None);
+        assert!(!mentions_user(&event, me));
     }
 }
