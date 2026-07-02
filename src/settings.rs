@@ -65,7 +65,7 @@ pub fn is_muted(room: &RoomId) -> bool {
     }
 
     let muted: Vec<String> = get_settings().get("muted").unwrap_or_default();
-    muted.contains(&room.to_string())
+    muted.iter().any(|m| m == "*" || m == room.as_str())
 }
 
 pub fn toggle_mute(room: &RoomId) {

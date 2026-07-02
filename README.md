@@ -144,7 +144,7 @@ a verification by passphrase.
 # All the reactions that will show up in the picker.
 reactions = [ "❤️", "👍", "👎", "😂", "‼️", "❓️"]
 
-# Muted rooms.
+# Muted rooms. Use "*" to mute every room.
 muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
 
 # Useful if your custom config is interfering with Enter key bindings
