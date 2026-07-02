@@ -26,6 +26,7 @@ use matrix_sdk::ruma::api::client::filter::{
 };
 use matrix_sdk::ruma::api::Direction;
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
+use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::UserId;
@@ -253,6 +254,11 @@ impl Matrix {
         let sync_settings = build_sync_settings(None);
 
         App::spawn(async move {
+            // prompt for any invites that arrived while we weren't running
+            for room in client.invited_rooms() {
+                send_invite_event(room).await;
+            }
+
             let result = client
                 .sync_with_result_callback(sync_settings, |sync_result| async move {
                     let response = match sync_result {
@@ -555,6 +561,40 @@ impl Matrix {
             }
 
             App::send(ProgressComplete);
+        });
+    }
+
+    pub fn join_room(&self, room: Room) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            App::send(ProgressStarted("Joining.".to_string(), 500));
+
+            match room.join().await {
+                Ok(_) => {
+                    matrix.room_cache.add_room(room.clone()).await;
+                    App::send(ProgressComplete);
+                    App::send(MatuiEvent::RoomSelected(room));
+                }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub fn leave_room(&self, room: Room) {
+        App::spawn(async move {
+            App::send(ProgressStarted("Declining.".to_string(), 500));
+
+            match room.leave().await {
+                Ok(_) => App::send(ProgressComplete),
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
         });
     }
 
@@ -894,6 +934,15 @@ fn add_default_handlers(client: Client) {
             .expect("could not send timeline event");
     });
 
+    client.add_event_handler(|ev: StrippedRoomMemberEvent, room: Room| async move {
+        if ev.content.membership == MembershipState::Invite
+            && ev.state_key == room.own_user_id()
+            && room.state() == RoomState::Invited
+        {
+            send_invite_event(room).await;
+        }
+    });
+
     client.add_event_handler(|event: AnySyncEphemeralRoomEvent, room: Room| async move {
         if room.state() != RoomState::Joined {
             return;
@@ -913,6 +962,26 @@ fn add_default_handlers(client: Client) {
             _ => {}
         };
     });
+}
+
+async fn send_invite_event(room: Room) {
+    let name = match room.display_name().await {
+        Ok(name) => name.to_string(),
+        Err(_) => room.room_id().to_string(),
+    };
+
+    let inviter = match room.invite_details().await {
+        Ok(invite) => invite
+            .inviter
+            .map(|m| m.name().to_string())
+            .unwrap_or_else(|| invite.inviter_id.to_string()),
+        Err(_) => "Someone".to_string(),
+    };
+
+    App::send(MatuiEvent::Invited(
+        room,
+        format!("{} invited you to {}. Join?", inviter, name),
+    ));
 }
 
 fn add_verification_handlers(client: Client) {

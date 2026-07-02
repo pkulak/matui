@@ -17,6 +17,7 @@ use super::{get_margin, EventResult};
 pub enum ConfirmBehavior {
     Verification,
     DeleteMessage(Room, OwnedEventId),
+    JoinRoom(Room),
 }
 
 pub struct Confirm {
@@ -63,7 +64,15 @@ impl Confirm {
                 focus_next(self.focus_order());
                 consumed!()
             }
-            KeyCode::Esc => close!(),
+            // an invite has to be popped off the queue even on escape, or the
+            // next tick will just show it again
+            KeyCode::Esc => match self.behavior {
+                ConfirmBehavior::JoinRoom(_) => EventResult::Consumed(Box::new(|app| {
+                    app.invites.pop_front();
+                    app.close_popup();
+                })),
+                _ => close!(),
+            },
             KeyCode::Enter => self.make_result(),
             _ => EventResult::Ignored,
         }
@@ -96,6 +105,18 @@ impl Confirm {
                 }))
             }
             ConfirmBehavior::DeleteMessage(_, _) => close!(),
+            ConfirmBehavior::JoinRoom(room) if focused => {
+                EventResult::Consumed(Box::new(|app| {
+                    app.invites.pop_front();
+                    app.matrix.join_room(room);
+                    app.close_popup();
+                }))
+            }
+            ConfirmBehavior::JoinRoom(room) => EventResult::Consumed(Box::new(|app| {
+                app.invites.pop_front();
+                app.matrix.leave_room(room);
+                app.close_popup();
+            })),
         }
     }
 }

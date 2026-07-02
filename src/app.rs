@@ -4,7 +4,8 @@ use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::Room;
 use once_cell::sync::OnceCell;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
-use std::collections::VecDeque;
+use matrix_sdk::ruma::OwnedRoomId;
+use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::sync::mpsc::Sender;
 use tokio::runtime::Handle;
@@ -15,7 +16,7 @@ use crate::matrix::matrix::Matrix;
 use crate::widgets::EventResult;
 use crate::widgets::chat::Chat;
 use crate::widgets::compose::Compose;
-use crate::widgets::confirm::Confirm;
+use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
@@ -48,6 +49,10 @@ pub struct App {
 
     /// Keep old read receipts around
     pub receipts: VecDeque<(Room, ReceiptEventContent)>,
+
+    /// Invites waiting to be shown, and every room we've already asked about
+    pub invites: VecDeque<(Room, String)>,
+    pub invites_seen: HashSet<OwnedRoomId>,
 }
 
 impl App {
@@ -66,6 +71,8 @@ impl App {
             matrix,
             sas: None,
             receipts: VecDeque::new(),
+            invites: VecDeque::new(),
+            invites_seen: HashSet::new(),
         }
     }
 
@@ -133,6 +140,22 @@ impl App {
         }
 
         let mut render = false;
+
+        // show the next pending invite whenever the popup slot is free; it
+        // stays at the front of the queue until answered, so a stomped popup
+        // comes right back
+        if self.popup.is_none()
+            && let Some((room, msg)) = self.invites.front().cloned()
+        {
+            self.set_popup(Popup::Confirm(Confirm::new(
+                "Invite".to_string(),
+                msg,
+                "Yes".to_string(),
+                "No".to_string(),
+                ConfirmBehavior::JoinRoom(room),
+            )));
+            render = true;
+        }
 
         // send out the ticks
         if let Some(w) = self.popup.as_mut() {

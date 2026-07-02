@@ -21,6 +21,7 @@ use matrix_sdk::ruma::events::AnyTimelineEvent;
 pub enum MatuiEvent {
     Confirm(String, String),
     Error(String),
+    Invited(Room, String),
     LoginComplete,
     LoginRequired,
     LoginStarted,
@@ -60,6 +61,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::Error(msg) => {
             app.set_popup(Popup::Error(Error::new(msg)));
+        }
+        MatuiEvent::Invited(room, msg) => {
+            // only prompt once per session, no matter how many times we hear
+            // about the invite
+            if app.invites_seen.insert(room.room_id().to_owned()) {
+                app.invites.push_back((room, msg));
+            }
         }
         MatuiEvent::LoginRequired => {
             app.set_popup(Popup::Signin(Signin::default()));

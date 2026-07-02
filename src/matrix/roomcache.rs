@@ -41,6 +41,16 @@ impl RoomCache {
         info!("room cache populated")
     }
 
+    pub async fn add_room(&self, room: Room) {
+        let decorated = DecoratedRoom::from_room(room).await;
+        let mut rooms = self.rooms.lock().expect("to unlock rooms");
+
+        // the next sync may have already inserted it as a wild room
+        if !rooms.iter().any(|r| r.inner.room_id() == decorated.room_id()) {
+            rooms.insert(0, decorated);
+        }
+    }
+
     pub fn get_rooms(&self) -> Vec<DecoratedRoom> {
         self.rooms.lock().expect("to unlock rooms").clone()
     }
