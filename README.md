@@ -92,7 +92,7 @@ complicated. Especially if you don't implement too many features.
 | c      | Edit the selected message in the external editor.      |
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |
-| Ctrl+Alt+r | Verify this client with your passphrase.           |
+| :verify | Verify this client with your passphrase.              |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room in the external editor.          |
 | u      | Upload a file.                                         |
@@ -135,7 +135,7 @@ full timeline. Use Shift+G to go back to the latest message.
 
 After login, a verification request is sent out to your other clients. If you
 don't have any other clients, or don't want to verify this way, you can
-cancel/ignore the request and hit Ctrl+Alt+r from the chat window to start
+cancel/ignore the request and type `:verify` from the chat window to start
 a verification by passphrase.
 
 # Configuration Example

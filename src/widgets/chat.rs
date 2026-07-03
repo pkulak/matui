@@ -10,7 +10,7 @@ use crate::widgets::compose::Compose;
 use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
-use crate::widgets::recover::Recover;
+use crate::widgets::command::Command;
 use crate::widgets::search::Search;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
@@ -273,14 +273,6 @@ impl Chat {
 
                 Ok(consumed!())
             }
-            KeyCode::Char('r')
-                if input.modifiers.contains(KeyModifiers::CONTROL)
-                    && input.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Recover(Recover::default()))
-                })))
-            }
             KeyCode::Char('R') => {
                 let message = match self.selected_reply() {
                     Some(m) => m,
@@ -355,6 +347,9 @@ impl Chat {
             }
             KeyCode::Char('/') => Ok(Consumed(Box::new(|app| {
                 app.set_popup(Popup::Search(Search::default()))
+            }))),
+            KeyCode::Char(':') => Ok(Consumed(Box::new(|app| {
+                app.set_popup(Popup::Command(Command::default()))
             }))),
             _ => Ok(EventResult::Ignored),
         }

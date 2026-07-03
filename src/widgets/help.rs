@@ -63,7 +63,7 @@ impl Widget for HelpWidget {
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(splits[0])[0];
 
-        let widths = &[Constraint::Length(6), Constraint::Percentage(90)];
+        let widths = &[Constraint::Length(7), Constraint::Percentage(90)];
 
         Table::new(
             vec![
@@ -90,7 +90,7 @@ impl Widget for HelpWidget {
                 Row::new(vec!["r", "React to the selected message."]),
                 Row::new(vec!["R", "Reply to the selected message."]),
                 Row::new(vec![
-                    "Ctrl+Alt+r",
+                    ":verify",
                     "Verify this client with your passphrase.",
                 ]),
                 Row::new(vec![

@@ -1,6 +1,7 @@
 use crate::app::App;
 use crate::widgets::EventResult::Ignored;
 
+pub mod command;
 pub mod error;
 pub mod progress;
 pub mod recover;

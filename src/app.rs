@@ -15,6 +15,7 @@ use crate::handler::MatuiEvent;
 use crate::matrix::matrix::Matrix;
 use crate::widgets::EventResult;
 use crate::widgets::chat::Chat;
+use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
@@ -188,6 +189,7 @@ impl App {
 // to give up before I lose it. PRs welcome if there's a better way!
 #[allow(clippy::large_enum_variant)]
 pub enum Popup {
+    Command(Command),
     Confirm(Confirm),
     Compose(Compose),
     Error(Error),
@@ -202,6 +204,7 @@ pub enum Popup {
 impl Popup {
     pub fn key_event(&mut self, event: &KeyEvent, handler: &EventHandler) -> EventResult {
         match self {
+            Popup::Command(w) => w.key_event(event),
             Popup::Confirm(w) => w.key_event(event),
             Popup::Compose(w) => w.key_event(event, handler),
             Popup::Error(w) => w.key_event(event),
@@ -225,6 +228,7 @@ impl Popup {
 
     pub fn render(&self, frame: &mut Frame) {
         match self {
+            Popup::Command(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Confirm(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Compose(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
