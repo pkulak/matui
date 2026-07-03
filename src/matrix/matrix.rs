@@ -584,12 +584,23 @@ impl Matrix {
         });
     }
 
-    pub fn leave_room(&self, room: Room) {
+    pub fn leave_room(&self, room: Room, forget: bool) {
+        let matrix = self.clone();
+
         App::spawn(async move {
-            App::send(ProgressStarted("Declining.".to_string(), 500));
+            App::send(ProgressStarted("Leaving.".to_string(), 500));
 
             match room.leave().await {
-                Ok(_) => App::send(ProgressComplete),
+                Ok(_) => {
+                    matrix.room_cache.remove_room(&room);
+                    App::send(ProgressComplete);
+
+                    if forget && let Err(err) = room.forget().await {
+                        App::send(Error(err.to_string()));
+                    }
+
+                    App::send(MatuiEvent::RoomLeft(room));
+                }
                 Err(err) => {
                     App::send(ProgressComplete);
                     App::send(Error(err.to_string()));

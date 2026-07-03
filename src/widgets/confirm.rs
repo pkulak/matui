@@ -114,7 +114,7 @@ impl Confirm {
             }
             ConfirmBehavior::JoinRoom(room) => EventResult::Consumed(Box::new(|app| {
                 app.invites.pop_front();
-                app.matrix.leave_room(room);
+                app.matrix.leave_room(room, false);
                 app.close_popup();
             })),
         }

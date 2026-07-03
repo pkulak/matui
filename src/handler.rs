@@ -29,6 +29,7 @@ pub enum MatuiEvent {
     ProgressComplete,
     Recover(String),
     Receipt(Room, ReceiptEventContent),
+    RoomLeft(Room),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
     Search(String),
@@ -88,6 +89,21 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 0,
             )));
             app.matrix.recover(&key);
+        }
+
+        // if we just left the room we're looking at, move to the top one
+        MatuiEvent::RoomLeft(room) => {
+            if let Some(c) = &app.chat
+                && c.room().room_id() == room.room_id()
+            {
+                let mut rooms = app.matrix.fetch_rooms();
+                sort_rooms(&mut rooms);
+
+                match rooms.first() {
+                    Some(next) => app.select_room(next.inner()),
+                    None => app.chat = None,
+                }
+            }
         }
 
         // Let the chat update when we learn about room membership

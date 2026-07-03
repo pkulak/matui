@@ -93,6 +93,11 @@ impl Widget for HelpWidget {
                     ":verify",
                     "Verify this client with your passphrase.",
                 ]),
+                Row::new(vec![":leave", "Leave the current room."]),
+                Row::new(vec![
+                    ":forget",
+                    "Leave the current room and forget its history.",
+                ]),
                 Row::new(vec![
                     "v",
                     "View the selected message in the external editor.",

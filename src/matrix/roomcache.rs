@@ -51,6 +51,11 @@ impl RoomCache {
         }
     }
 
+    pub fn remove_room(&self, room: &Room) {
+        let mut rooms = self.rooms.lock().expect("to unlock rooms");
+        rooms.retain(|r| r.inner.room_id() != room.room_id());
+    }
+
     pub fn get_rooms(&self) -> Vec<DecoratedRoom> {
         self.rooms.lock().expect("to unlock rooms").clone()
     }

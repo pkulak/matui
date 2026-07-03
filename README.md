@@ -93,6 +93,8 @@ complicated. Especially if you don't implement too many features.
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |
 | :verify | Verify this client with your passphrase.              |
+| :leave  | Leave the current room.                                |
+| :forget | Leave the current room and forget its history.         |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room in the external editor.          |
 | u      | Upload a file.                                         |

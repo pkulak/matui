@@ -41,6 +41,18 @@ impl Command {
                 "verify" => Consumed(Box::new(|app| {
                     app.set_popup(Popup::Recover(Recover::default()))
                 })),
+                "leave" => Consumed(Box::new(|app| {
+                    if let Some(chat) = &app.chat {
+                        app.matrix.leave_room(chat.room(), false);
+                    }
+                    app.close_popup();
+                })),
+                "forget" => Consumed(Box::new(|app| {
+                    if let Some(chat) = &app.chat {
+                        app.matrix.leave_room(chat.room(), true);
+                    }
+                    app.close_popup();
+                })),
                 cmd => {
                     let message = format!("Unknown command: {}", cmd);
 
