@@ -14,7 +14,8 @@ is not conserved at all.
 # Who should use this client?
 
 Anyone who wants a very simple terminal Matrix client. There are some actions
-that aren't supported at the moment, like moderation.
+that aren't supported at the moment, like editing room settings and power
+levels.
 
 # Installation
 
@@ -93,16 +94,19 @@ then typing the command name (without the colon) into the prompt.
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |
 | T      | Start (or open) a thread on the selected message.      |
-| U      | Open the command prompt with the selected message's sender. |
 | :verify | Verify this client with your passphrase.              |
 | :leave  | Leave the current room.                               |
 | :forget | Leave the current room and forget its history.        |
 | :invite | Invite a user to the current room (bob, or @bob:example.com). |
 | :create | Create a new room.                                    |
 | :dm     | Open a DM with a user (bob, or @bob:example.com); append "nocrypt" to skip encryption. |
+| :ban    | Ban a user from the current room, with an optional reason. |
+| :unban  | Lift a user's ban.                                     |
+| :kick   | Kick a user from the current room, with an optional reason. |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room in the external editor.          |
 | u      | Upload a file.                                         |
+| U      | Open the command prompt with the selected message's sender. |
 | m      | Mute or unmute the current room (until restart).       |
 | /      | Search the current room.                               |
 | ?      | Show this helper.                                      |

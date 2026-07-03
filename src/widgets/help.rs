@@ -34,7 +34,7 @@ impl Widget for HelpWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let area = Layout::default()
             .direction(Direction::Horizontal)
-            .vertical_margin(get_margin(area.height, 20))
+            .vertical_margin(get_margin(area.height, 38))
             .horizontal_margin(get_margin(area.width, 70))
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];
@@ -107,6 +107,9 @@ impl Widget for HelpWidget {
                 Row::new(vec![":invite", "Invite a user (bob, or @bob:example.com)."]),
                 Row::new(vec![":create", "Create a new room."]),
                 Row::new(vec![":dm", "Open a DM with a user. Add \"nocrypt\" to skip encryption."]),
+                Row::new(vec![":ban", "Ban a user from the room, with an optional reason."]),
+                Row::new(vec![":unban", "Lift a user's ban."]),
+                Row::new(vec![":kick", "Kick a user from the room, with an optional reason."]),
                 Row::new(vec![
                     "v",
                     "View the selected message in the external editor.",

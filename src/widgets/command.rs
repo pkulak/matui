@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use matrix_sdk::ruma::{IdParseError, OwnedUserId, UserId};
 
 use crate::app::{App, Popup};
+use crate::matrix::matrix::Moderation;
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::recover::Recover;
@@ -131,6 +132,45 @@ impl Command {
                                 ))),
                             }))
                         }
+                    }
+                    (action @ ("ban" | "unban" | "kick"), "") => {
+                        let message = format!("Usage: :{} <user> [reason]", action);
+
+                        Consumed(Box::new(move |app| {
+                            app.set_popup(Popup::Error(Error::new(message)))
+                        }))
+                    }
+                    (action @ ("ban" | "unban" | "kick"), arg) => {
+                        let action = match action {
+                            "ban" => Moderation::Ban,
+                            "unban" => Moderation::Unban,
+                            _ => Moderation::Kick,
+                        };
+
+                        // first token is the user, the rest is an optional reason
+                        let (user, reason) = match arg.split_once(char::is_whitespace) {
+                            Some((user, reason)) => {
+                                (user.to_string(), Some(reason.trim().to_string()))
+                            }
+                            None => (arg.to_string(), None),
+                        };
+
+                        Consumed(Box::new(move |app| {
+                            let Some(chat) = &app.chat else {
+                                app.close_popup();
+                                return;
+                            };
+
+                            match resolve_user(app, &user) {
+                                Ok(id) => {
+                                    app.matrix.moderate(chat.room(), action, id, reason);
+                                    app.close_popup();
+                                }
+                                Err(err) => app.set_popup(Popup::Error(Error::new(
+                                    format!("Invalid user ID: {}", err),
+                                ))),
+                            }
+                        }))
                     }
                     _ => {
                         let message = format!("Unknown command: {}", value);

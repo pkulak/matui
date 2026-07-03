@@ -82,6 +82,13 @@ pub enum AfterDownload {
     Save,
 }
 
+#[derive(Clone, Copy)]
+pub enum Moderation {
+    Ban,
+    Unban,
+    Kick,
+}
+
 impl Default for Matrix {
     fn default() -> Self {
         Matrix {
@@ -745,6 +752,44 @@ impl Matrix {
                     App::send(MatuiEvent::Confirm(
                         "Invited".to_string(),
                         format!("{} has been invited.", user_id),
+                    ));
+                }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub fn moderate(
+        &self,
+        room: Room,
+        action: Moderation,
+        user_id: OwnedUserId,
+        reason: Option<String>,
+    ) {
+        App::spawn(async move {
+            let (verb, past) = match action {
+                Moderation::Ban => ("Banning", "Banned"),
+                Moderation::Unban => ("Unbanning", "Unbanned"),
+                Moderation::Kick => ("Kicking", "Kicked"),
+            };
+
+            App::send(ProgressStarted(format!("{}.", verb), 500));
+
+            let result = match action {
+                Moderation::Ban => room.ban_user(&user_id, reason.as_deref()).await,
+                Moderation::Unban => room.unban_user(&user_id, reason.as_deref()).await,
+                Moderation::Kick => room.kick_user(&user_id, reason.as_deref()).await,
+            };
+
+            match result {
+                Ok(_) => {
+                    App::send(ProgressComplete);
+                    App::send(MatuiEvent::Confirm(
+                        past.to_string(),
+                        format!("{} has been {}.", user_id, past.to_lowercase()),
                     ));
                 }
                 Err(err) => {
