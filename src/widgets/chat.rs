@@ -18,10 +18,13 @@ use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use log::info;
 use matrix_sdk::room::{Room, RoomMember};
-use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
+use matrix_sdk::ruma::events::room::member::{MembershipChange, RoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
-use matrix_sdk::ruma::{OwnedEventId, OwnedUserId};
+use matrix_sdk::ruma::events::room::name::RoomNameEvent;
+use matrix_sdk::ruma::events::room::topic::RoomTopicEvent;
+use matrix_sdk::ruma::events::{AnyStateEvent, AnyTimelineEvent};
+use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId, UserId};
 use once_cell::sync::OnceCell;
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -32,6 +35,7 @@ use std::sync::Mutex;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{
     Block, BorderType, Borders, List, ListDirection, ListItem, ListState, Paragraph,
     StatefulWidget, Widget,
@@ -46,7 +50,7 @@ pub struct Chat {
     room: DecoratedRoom,
     events: BTreeSet<OrderedEvent>,
     receipts: Receipts,
-    messages: Vec<Message>,
+    messages: Vec<TimelineItem>,
     window: Range<usize>,
     read_to: Option<OwnedEventId>,
     react: Option<React>,
@@ -481,6 +485,11 @@ impl Chat {
 
     fn check_event_sender(&mut self, event: &AnyTimelineEvent) {
         self.check_sender(&event.sender().to_owned());
+
+        // member events also have a target
+        if let AnyTimelineEvent::State(AnyStateEvent::RoomMember(member)) = event {
+            self.check_sender(member.state_key());
+        }
     }
 
     fn set_messages(&mut self, force_bookmark: bool) {
@@ -500,19 +509,28 @@ impl Chat {
             return;
         }
 
+        let first_id = self.iter_messages().next().map(|m| m.id.clone());
+
         let mut bookmark = match self.get_bookmark() {
             Some(b) => b,
-            None => Bookmark {
-                message_id: self.messages.first().unwrap().id.clone(),
-                offset: 1,
-                window_offset: 0,
+            None => match first_id {
+                Some(message_id) => Bookmark {
+                    message_id,
+                    offset: 1,
+                    window_offset: 0,
+                },
+                None => {
+                    // nothing selectable at all; show everything
+                    self.window = 0..self.messages.len();
+                    return;
+                }
             },
         };
 
         let new_selected = self
             .messages
             .iter()
-            .position(|m| m.contains_id(&bookmark.message_id))
+            .position(|i| i.message().is_some_and(|m| m.contains_id(&bookmark.message_id)))
             .unwrap_or_default();
 
         // only keep a 100-long window around our index
@@ -539,6 +557,10 @@ impl Chat {
         }
 
         self.bookmark.set(Some(bookmark));
+    }
+
+    fn iter_messages(&self) -> impl Iterator<Item = &Message> {
+        self.messages.iter().filter_map(TimelineItem::message)
     }
 
     fn check_sender(&mut self, user_id: &OwnedUserId) {
@@ -568,7 +590,7 @@ impl Chat {
             return;
         }
 
-        let read_to = self.messages.first().map(|m| m.id.clone());
+        let read_to = self.iter_messages().next().map(|m| m.id.clone());
 
         if read_to == self.read_to {
             return;
@@ -682,18 +704,21 @@ impl Chat {
         let mut state = self.list_state.take();
 
         let mut i = match state.selected() {
-            Some(i) => {
-                if i + step >= total - 1 {
-                    total - 1
-                } else {
-                    i + step
-                }
-            }
+            Some(i) => (i + step).min(total - 1),
             None => 0,
         };
 
-        if self.invalid_selection(i) {
+        while i < total && self.invalid_selection(i) {
             i += 1;
+        }
+
+        // nothing selectable above us; walk back down
+        if i >= total {
+            i = total - 1;
+
+            while i > 0 && self.invalid_selection(i) {
+                i -= 1;
+            }
         }
 
         state.select(Some(i));
@@ -702,6 +727,12 @@ impl Chat {
     }
 
     fn previous(&mut self, step: usize) {
+        let total = self.total_list_items();
+
+        if total == 0 {
+            return;
+        }
+
         let mut state = self.list_state.take();
 
         let mut i = state
@@ -709,8 +740,13 @@ impl Chat {
             .map(|i| i.saturating_sub(step))
             .unwrap_or_default();
 
-        if self.invalid_selection(i) {
-            i = i.saturating_sub(1);
+        while i > 0 && self.invalid_selection(i) {
+            i -= 1;
+        }
+
+        // nothing selectable below us; walk back up
+        while i < total - 1 && self.invalid_selection(i) {
+            i += 1;
         }
 
         state.select(Some(i));
@@ -761,15 +797,16 @@ impl Chat {
     // the message (or reply) currently selected by the UI
     fn selected_reply(&self) -> Option<&Message> {
         let bookmark = self.get_bookmark()?;
-        self.messages
-            .iter()
+        self.iter_messages()
             .find_map(|m| m.find_by_id(&bookmark.message_id))
     }
 
     // is the given selection in the middle of two messages?
     fn invalid_selection(&self, selected: usize) -> bool {
-        let lines = self.line_types.lock().unwrap();
-        lines.get(selected).unwrap_or(&LineType::MessageContent) == &LineType::DeadSpace
+        matches!(
+            self.line_types.lock().unwrap().get(selected),
+            Some(LineType::DeadSpace | LineType::RoomEvent)
+        )
     }
 
     // the reactions on the currently selected message
@@ -974,6 +1011,18 @@ impl Widget for ChatWidget<'_> {
             *list_state.offset_mut() = offset;
         }
 
+        // never leave the cursor resting on a spacer or room-event line
+        if let Some(mut i) = list_state.selected() {
+            while matches!(
+                line_types.get(i),
+                Some(LineType::DeadSpace | LineType::RoomEvent)
+            ) {
+                i += 1;
+            }
+
+            *list_state.selected_mut() = Some(i.min(line_types.len().saturating_sub(1)));
+        }
+
         let list = List::new(items)
             .highlight_symbol("> ")
             .direction(ListDirection::BottomToTop);
@@ -1000,28 +1049,234 @@ fn find_bookmark(bookmark: &Bookmark, lines: &[LineType]) -> Option<usize> {
     None
 }
 
+#[allow(clippy::large_enum_variant)]
+pub enum TimelineItem {
+    Message(Message),
+    Events(RoomEvents),
+}
+
+impl TimelineItem {
+    fn message(&self) -> Option<&Message> {
+        match self {
+            TimelineItem::Message(m) => Some(m),
+            TimelineItem::Events(_) => None,
+        }
+    }
+
+    pub fn to_list_items(&self, width: usize, sidecar: &mut Vec<LineType>) -> Vec<ListItem<'_>> {
+        match self {
+            TimelineItem::Message(m) => m.to_list_items(width, sidecar),
+            TimelineItem::Events(e) => e.to_list_items(sidecar),
+        }
+    }
+}
+
+// a group of consecutive room state events, rendered as single gray lines
+pub struct RoomEvents {
+    ts: MilliSecondsSinceUnixEpoch,
+    lines: Vec<String>,
+}
+
+impl RoomEvents {
+    fn to_list_items(&self, sidecar: &mut Vec<LineType>) -> Vec<ListItem<'_>> {
+        // mirror Message::to_list_items: build top-down, then reverse
+        let mut items = vec![ListItem::new(" ")];
+        sidecar.push(LineType::DeadSpace);
+
+        for line in &self.lines {
+            items.push(ListItem::new(Span::styled(
+                line.as_str(),
+                Style::default().fg(Color::DarkGray),
+            )));
+
+            sidecar.push(LineType::RoomEvent);
+        }
+
+        sidecar.reverse();
+        items.reverse();
+        items
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum MemberKind {
+    Joined,
+    Left,
+    Invited,
+    Kicked,
+    Banned,
+    Unbanned,
+}
+
+enum StateEntry {
+    Member(MemberKind, String),
+    Line(String),
+}
+
+#[derive(Default)]
+struct PendingEvents {
+    entries: Vec<StateEntry>,
+    ts: Option<MilliSecondsSinceUnixEpoch>,
+}
+
+impl PendingEvents {
+    fn push(&mut self, entry: StateEntry, ts: MilliSecondsSinceUnixEpoch) {
+        self.entries.push(entry);
+        self.ts = Some(ts);
+    }
+
+    // combine runs of same-kind member entries into single lines
+    fn flush(&mut self) -> Option<RoomEvents> {
+        let ts = self.ts.take()?;
+        let mut lines = vec![];
+        let mut run: Option<(MemberKind, Vec<String>)> = None;
+
+        for entry in self.entries.drain(..) {
+            match entry {
+                StateEntry::Member(kind, name) => match &mut run {
+                    Some((k, names)) if *k == kind => {
+                        if !names.contains(&name) {
+                            names.push(name);
+                        }
+                    }
+                    _ => {
+                        if let Some((k, names)) = run.take() {
+                            lines.push(member_line(k, names));
+                        }
+
+                        run = Some((kind, vec![name]));
+                    }
+                },
+                StateEntry::Line(line) => {
+                    if let Some((k, names)) = run.take() {
+                        lines.push(member_line(k, names));
+                    }
+
+                    lines.push(line);
+                }
+            }
+        }
+
+        if let Some((k, names)) = run.take() {
+            lines.push(member_line(k, names));
+        }
+
+        Some(RoomEvents { ts, lines })
+    }
+}
+
+fn state_entry(event: &AnyTimelineEvent, members: &[RoomMember]) -> Option<StateEntry> {
+    let AnyTimelineEvent::State(state) = event else {
+        return None;
+    };
+
+    match state {
+        AnyStateEvent::RoomMember(RoomMemberEvent::Original(ev)) => {
+            let kind = match ev.membership_change() {
+                MembershipChange::Joined | MembershipChange::InvitationAccepted => {
+                    MemberKind::Joined
+                }
+                MembershipChange::Left => MemberKind::Left,
+                MembershipChange::Invited => MemberKind::Invited,
+                MembershipChange::Kicked => MemberKind::Kicked,
+                MembershipChange::Banned | MembershipChange::KickedAndBanned => MemberKind::Banned,
+                MembershipChange::Unbanned => MemberKind::Unbanned,
+                // profile changes, knocks, etc are just noise
+                _ => return None,
+            };
+
+            let name = display_name(&ev.state_key, ev.content.displayname.as_deref(), members);
+            Some(StateEntry::Member(kind, name))
+        }
+        AnyStateEvent::RoomName(RoomNameEvent::Original(ev)) => Some(StateEntry::Line(format!(
+            "{} changed the room name to {}.",
+            display_name(&ev.sender, None, members),
+            truncate(ev.content.name.clone(), 48),
+        ))),
+        AnyStateEvent::RoomTopic(RoomTopicEvent::Original(ev)) => Some(StateEntry::Line(format!(
+            "{} changed the topic to {}.",
+            display_name(&ev.sender, None, members),
+            truncate(ev.content.topic.clone(), 48),
+        ))),
+        _ => None,
+    }
+}
+
+fn display_name(id: &UserId, fallback: Option<&str>, members: &[RoomMember]) -> String {
+    members
+        .iter()
+        .find(|m| m.user_id() == id)
+        .and_then(|m| m.display_name())
+        .or(fallback)
+        .unwrap_or_else(|| id.localpart())
+        .to_string()
+}
+
+fn member_line(kind: MemberKind, names: Vec<String>) -> String {
+    let total = names.len();
+    let subject = pretty_list(limit_list(names.into_iter(), 3, total, None));
+
+    let verb = match (kind, total > 1) {
+        (MemberKind::Joined, _) => "joined the room",
+        (MemberKind::Left, _) => "left the room",
+        (MemberKind::Invited, false) => "was invited to the room",
+        (MemberKind::Invited, true) => "were invited to the room",
+        (MemberKind::Kicked, false) => "was kicked from the room",
+        (MemberKind::Kicked, true) => "were kicked from the room",
+        (MemberKind::Banned, false) => "was banned from the room",
+        (MemberKind::Banned, true) => "were banned from the room",
+        (MemberKind::Unbanned, false) => "was unbanned",
+        (MemberKind::Unbanned, true) => "were unbanned",
+    };
+
+    format!("{} {}.", subject, verb)
+}
+
+// merge adjacent groups; only possible when the message that separated
+// them was redacted
+fn push_group(items: &mut Vec<TimelineItem>, group: RoomEvents) {
+    if let Some(TimelineItem::Events(prev)) = items.last_mut() {
+        // the incoming group is older, so its lines go on top
+        let mut lines = group.lines;
+        lines.append(&mut prev.lines);
+        prev.lines = lines;
+    } else {
+        items.push(TimelineItem::Events(group));
+    }
+}
+
 fn make_message_list(
     timeline: &BTreeSet<OrderedEvent>,
     members: &Vec<RoomMember>,
     receipts: &Receipts,
     search_term: &str,
-) -> Vec<Message> {
+) -> Vec<TimelineItem> {
     // TODO: don't split these out
     let mut messages = vec![];
+    let mut groups: Vec<RoomEvents> = vec![];
+    let mut pending = PendingEvents::default();
 
-    // split everything into either a starting message, or something that
-    // modifies an existing message
+    // split everything into either a starting message, a room state event,
+    // or something that modifies an existing message
     for event in timeline.iter() {
         if let Some(message) = Message::try_from(event, false) {
+            groups.extend(pending.flush());
             messages.push(message);
+        } else if search_term.is_empty()
+            && let Some(entry) = state_entry(event, members)
+        {
+            pending.push(entry, event.origin_server_ts());
         } else if Message::apply_timeline_event(&mut messages, event, 0) == MergeResult::Missed {
             // the event needed to be merge, but couldn't for some reason;
             // force it into place, if possible
             if let Some(message) = Message::try_from(event, true) {
+                groups.extend(pending.flush());
                 messages.push(message);
             }
         }
     }
+
+    groups.extend(pending.flush());
 
     if !search_term.is_empty() {
         messages.retain(|m| m.contains_search_term(search_term));
@@ -1043,7 +1298,23 @@ fn make_message_list(
     // window and move up, like any good chat
     messages.reverse();
 
-    messages
+    // interleave the state event groups, newest first
+    let mut items = Vec::with_capacity(messages.len() + groups.len());
+    let mut groups = groups.into_iter().rev().peekable();
+
+    for message in messages {
+        while groups.peek().is_some_and(|g| g.ts > *message.sort_order()) {
+            push_group(&mut items, groups.next().unwrap());
+        }
+
+        items.push(TimelineItem::Message(message));
+    }
+
+    for group in groups {
+        push_group(&mut items, group);
+    }
+
+    items
 }
 
 const REPLY_TEMPLATE: &str = "<!--
@@ -1051,3 +1322,76 @@ const REPLY_TEMPLATE: &str = "<!--
 
 {}
 -->";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn member(kind: MemberKind, name: &str) -> StateEntry {
+        StateEntry::Member(kind, name.to_string())
+    }
+
+    fn flush(entries: Vec<StateEntry>) -> Vec<String> {
+        let mut pending = PendingEvents::default();
+
+        for entry in entries {
+            pending.push(entry, MilliSecondsSinceUnixEpoch::now());
+        }
+
+        pending.flush().unwrap().lines
+    }
+
+    #[test]
+    fn combines_runs_of_the_same_kind() {
+        let lines = flush(vec![
+            member(MemberKind::Joined, "Bob"),
+            member(MemberKind::Joined, "Alice"),
+            member(MemberKind::Left, "Jeff"),
+        ]);
+
+        assert_eq!(
+            lines,
+            vec!["Bob and Alice joined the room.", "Jeff left the room."]
+        );
+    }
+
+    #[test]
+    fn dedups_names_and_counts_overflow() {
+        let lines = flush(vec![
+            member(MemberKind::Left, "Bob"),
+            member(MemberKind::Left, "Bob"),
+            member(MemberKind::Left, "Alice"),
+            member(MemberKind::Left, "Jeff"),
+            member(MemberKind::Left, "Carol"),
+            member(MemberKind::Left, "Dave"),
+        ]);
+
+        assert_eq!(lines, vec!["Bob, Alice, Jeff and 2 others left the room."]);
+    }
+
+    #[test]
+    fn standalone_lines_break_runs() {
+        let lines = flush(vec![
+            member(MemberKind::Joined, "Bob"),
+            StateEntry::Line("Alice changed the topic to Fun.".to_string()),
+            member(MemberKind::Joined, "Jeff"),
+        ]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "Bob joined the room.",
+                "Alice changed the topic to Fun.",
+                "Jeff joined the room.",
+            ]
+        );
+    }
+
+    #[test]
+    fn singular_verbs_agree() {
+        assert_eq!(
+            member_line(MemberKind::Kicked, vec!["Bob".to_string()]),
+            "Bob was kicked from the room."
+        );
+    }
+}

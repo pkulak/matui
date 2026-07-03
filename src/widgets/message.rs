@@ -691,6 +691,7 @@ pub enum LineType {
     MessageStart(OwnedEventId),
     MessageContent,
     DeadSpace,
+    RoomEvent,
 }
 
 // A reaction is a single emoji. I may have 1 or more events, one for each
