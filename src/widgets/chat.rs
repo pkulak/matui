@@ -21,10 +21,11 @@ use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::events::room::member::{MembershipChange, RoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
+use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
 use matrix_sdk::ruma::events::room::name::RoomNameEvent;
 use matrix_sdk::ruma::events::room::topic::RoomTopicEvent;
 use matrix_sdk::ruma::events::{AnyStateEvent, AnyTimelineEvent};
-use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId, UserId};
+use matrix_sdk::ruma::{EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId, UserId};
 use once_cell::sync::OnceCell;
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -63,6 +64,7 @@ pub struct Chat {
     bookmark: Cell<Option<Bookmark>>,
     focus: bool,
     search_term: String,
+    thread_root: Option<OwnedEventId>,
     delete_combo: KeyCombo,
 
     members: Vec<RoomMember>,
@@ -94,11 +96,48 @@ impl Chat {
             bookmark: Cell::new(Option::None),
             focus: true,
             search_term: "".to_string(),
+            thread_root: None,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
             members: vec![],
             pretty_members: OnceCell::new(),
             in_flight: vec![],
         })
+    }
+
+    // a new chat viewing a single thread in this room, seeded with
+    // everything we've already loaded
+    pub fn thread(&self, root: OwnedEventId) -> Self {
+        let mut chat = Self {
+            matrix: self.matrix.clone(),
+            room: self.room.clone(),
+            events: self.events.clone(),
+            receipts: self.receipts.clone(),
+            messages: vec![],
+            window: (0..0),
+            read_to: None,
+            react: None,
+            typing: None,
+            list_state: Cell::new(ListState::default()),
+            next_cursor: self.next_cursor.clone(),
+            fetching: Cell::new(false),
+            height: Cell::new(20),
+            line_types: Mutex::new(vec![]),
+            bookmark: Cell::new(Option::None),
+            focus: true,
+            search_term: "".to_string(),
+            thread_root: Some(root),
+            delete_combo: KeyCombo::new(vec!['d', 'd']),
+            members: self.members.clone(),
+            pretty_members: OnceCell::new(),
+            in_flight: vec![],
+        };
+
+        let mut state = chat.list_state.take();
+        state.select(Some(0));
+        chat.list_state.set(state);
+
+        chat.set_messages(false);
+        chat
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -198,10 +237,21 @@ impl Chat {
                 if !self.search_term.is_empty() {
                     self.search_term = "".to_string();
                     self.set_messages(true);
-                } else if let Some(message) = &self.selected_reply() {
+                } else if let Some(message) = self.selected_reply() {
+                    // opening a thread gets its own window; everything else
+                    // opens the message itself
+                    if self.thread_root.is_none() && !message.thread.is_empty() {
+                        let thread = self.thread(message.id.clone());
+
+                        return Ok(Consumed(Box::new(move |app| app.thread = Some(thread))));
+                    }
+
                     message.open(self.matrix.clone())
                 }
                 Ok(consumed!())
+            }
+            KeyCode::Esc if self.thread_root.is_some() => {
+                Ok(Consumed(Box::new(|app| app.thread = None)))
             }
             KeyCode::Char('s') => {
                 if let Some(message) = &self.selected_reply() {
@@ -253,9 +303,10 @@ impl Chat {
             KeyCode::Char('i') => {
                 let room = self.room.clone();
                 let matrix = self.matrix.clone();
+                let thread = self.thread_target();
 
                 Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Compose(Compose::new(room, matrix)))
+                    app.set_popup(Popup::Compose(Compose::new(room, matrix, thread)))
                 })))
             }
             KeyCode::Char('I') => {
@@ -272,7 +323,15 @@ impl Chat {
                 if let Ok(Some(message)) = result
                     && !message.trim().is_empty()
                 {
-                    self.matrix.send_text_message(self.room(), message);
+                    match self.thread_target() {
+                        Some(target) => self.matrix.send_thread_message(
+                            self.room(),
+                            message,
+                            target,
+                            ReplyWithinThread::No,
+                        ),
+                        None => self.matrix.send_text_message(self.room(), message),
+                    }
                 }
 
                 Ok(consumed!())
@@ -298,8 +357,17 @@ impl Chat {
 
                 if let Ok(input) = result {
                     if let Some(input) = input {
-                        self.matrix
-                            .send_reply(self.room(), input, message.id.clone());
+                        if self.thread_root.is_some() {
+                            self.matrix.send_thread_message(
+                                self.room(),
+                                input,
+                                message.id.clone(),
+                                ReplyWithinThread::Yes,
+                            );
+                        } else {
+                            self.matrix
+                                .send_reply(self.room(), input, message.id.clone());
+                        }
                         Ok(consumed!())
                     } else {
                         bail!("Ignoring blank message.")
@@ -307,6 +375,23 @@ impl Chat {
                 } else {
                     bail!("Couldn't read from editor.")
                 }
+            }
+            KeyCode::Char('T') => {
+                // threads don't nest
+                if self.thread_root.is_some() {
+                    return Ok(EventResult::Ignored);
+                }
+
+                let message = match self.selected_reply() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                // open the thread view, empty or not; sending the first
+                // message is what actually creates the thread
+                let thread = self.thread(message.id.clone());
+
+                Ok(Consumed(Box::new(move |app| app.thread = Some(thread))))
             }
             KeyCode::Char('v') => {
                 let message = match self.selected_reply() {
@@ -465,8 +550,11 @@ impl Chat {
             self.list_state.set(state);
         }
 
-        if self.messages.len() > previous_count || (!self.search_term.is_empty() && batch_size > 0)
-        {
+        // searches and threads only surface a sliver of each batch, so any
+        // events at all count as progress there
+        let filtering = !self.search_term.is_empty() || self.thread_root.is_some();
+
+        if self.messages.len() > previous_count || (filtering && batch_size > 0) {
             self.try_fetch_previous();
         } else {
             info!("refusing to fetch more messages without making progress");
@@ -498,6 +586,7 @@ impl Chat {
             &self.members,
             &self.receipts,
             &self.search_term,
+            self.thread_root.as_deref(),
         );
 
         self.adjust_range(force_bookmark);
@@ -586,7 +675,9 @@ impl Chat {
     }
 
     fn set_fully_read(&mut self) {
-        if !self.focus {
+        // the thread view leaves the room's read marker alone; the room
+        // chat underneath keeps it current
+        if !self.focus || self.thread_root.is_some() {
             return;
         }
 
@@ -794,6 +885,12 @@ impl Chat {
         self.line_types.lock().unwrap().len()
     }
 
+    // when viewing a thread, new messages attach to the newest one
+    fn thread_target(&self) -> Option<OwnedEventId> {
+        self.thread_root.as_ref()?;
+        self.iter_messages().next().map(|m| m.id.clone())
+    }
+
     // the message (or reply) currently selected by the UI
     fn selected_reply(&self) -> Option<&Message> {
         let bookmark = self.get_bookmark()?;
@@ -866,6 +963,7 @@ pub struct Bookmark {
 }
 
 // a good PR would be to add Ord to AnyTimelineEvent
+#[derive(Clone)]
 pub struct OrderedEvent {
     inner: AnyTimelineEvent,
 }
@@ -941,7 +1039,13 @@ impl Widget for ChatWidget<'_> {
             .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
             .split(area);
 
-        let mut header_text = self.chat.room.name.to_string();
+        let mut header_text = match &self.chat.thread_root {
+            Some(_) => format!(
+                "Thread from: {} (esc to go back)",
+                truncate(self.chat.room.name.to_string(), 24)
+            ),
+            None => self.chat.room.name.to_string(),
+        };
 
         if self.chat.muted() {
             header_text.push_str(" (muted)")
@@ -1250,41 +1354,65 @@ fn make_message_list(
     members: &Vec<RoomMember>,
     receipts: &Receipts,
     search_term: &str,
+    thread_root: Option<&EventId>,
 ) -> Vec<TimelineItem> {
     // TODO: don't split these out
     let mut messages = vec![];
     let mut groups: Vec<RoomEvents> = vec![];
     let mut pending = PendingEvents::default();
 
-    // split everything into either a starting message, a room state event,
-    // or something that modifies an existing message
-    for event in timeline.iter() {
-        if let Some(message) = Message::try_from(event, false) {
-            groups.extend(pending.flush());
-            messages.push(message);
-        } else if search_term.is_empty()
-            && let Some(entry) = state_entry(event, members)
-        {
-            pending.push(entry, event.origin_server_ts());
-        } else if Message::apply_timeline_event(&mut messages, event, 0) == MergeResult::Missed {
-            // the event needed to be merge, but couldn't for some reason;
-            // force it into place, if possible
-            if let Some(message) = Message::try_from(event, true) {
-                groups.extend(pending.flush());
-                messages.push(message);
+    if let Some(root) = thread_root {
+        for event in timeline.iter() {
+            if event.event_id() == root {
+                if let Some(message) = Message::try_from(event, true) {
+                    messages.push(message);
+                }
+            } else {
+                // thread messages attach to the root; edits, reactions and
+                // redactions merge; everything else misses and drops
+                Message::apply_timeline_event(&mut messages, event, 0);
             }
         }
-    }
 
-    groups.extend(pending.flush());
+        // show the thread like a room: root first, then its messages
+        if let Some(root_message) = messages.first_mut() {
+            let thread = std::mem::take(&mut root_message.thread);
+            messages.extend(thread);
+        }
+    } else {
+        // split everything into either a starting message, a room state
+        // event, or something that modifies an existing message
+        for event in timeline.iter() {
+            if let Some(message) = Message::try_from(event, false) {
+                groups.extend(pending.flush());
+                messages.push(message);
+            } else if search_term.is_empty()
+                && let Some(entry) = state_entry(event, members)
+            {
+                pending.push(entry, event.origin_server_ts());
+            } else if Message::apply_timeline_event(&mut messages, event, 0) == MergeResult::Missed
+            {
+                // the event needed to be merge, but couldn't for some reason;
+                // force it into place, if possible
+                if let Some(message) = Message::try_from(event, true) {
+                    groups.extend(pending.flush());
+                    messages.push(message);
+                }
+            }
+        }
+
+        groups.extend(pending.flush());
+    }
 
     if !search_term.is_empty() {
         messages.retain(|m| m.contains_search_term(search_term));
         messages.iter().for_each(|m| m.set_search_term(search_term));
     }
 
-    // apply our read receipts
-    Message::apply_receipts(&mut messages, &mut receipts.get_all());
+    // apply our read receipts (they mark room positions, not thread ones)
+    if thread_root.is_none() {
+        Message::apply_receipts(&mut messages, &mut receipts.get_all());
+    }
 
     // update senders to friendly names
     messages.iter_mut().for_each(|m| m.update_senders(members));
@@ -1326,6 +1454,67 @@ const REPLY_TEMPLATE: &str = "<!--
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::widgets::message::tests::{reaction_event, text_event, thread_event};
+    use matrix_sdk::ruma::{owned_event_id, owned_user_id};
+
+    fn items(events: Vec<AnyTimelineEvent>, thread_root: Option<&EventId>) -> Vec<TimelineItem> {
+        let timeline: BTreeSet<OrderedEvent> = events.into_iter().map(OrderedEvent::new).collect();
+        let receipts = Receipts::new(owned_user_id!("@me:example.org"));
+
+        make_message_list(&timeline, &vec![], &receipts, "", thread_root)
+    }
+
+    #[test]
+    fn room_mode_groups_threads_under_the_root() {
+        let items = items(
+            vec![
+                text_event("$root:example.org", 1000, "root"),
+                text_event("$other:example.org", 1500, "other"),
+                thread_event("$t1:example.org", 2000, "$root:example.org", None),
+            ],
+            None,
+        );
+
+        assert_eq!(items.len(), 2);
+
+        // the root bounced to the bottom (newest first)
+        let root = items[0].message().unwrap();
+        assert_eq!(root.id.as_str(), "$root:example.org");
+        assert_eq!(root.thread.len(), 1);
+    }
+
+    #[test]
+    fn thread_mode_shows_only_the_thread() {
+        let root_id = owned_event_id!("$root:example.org");
+
+        let items = items(
+            vec![
+                text_event("$root:example.org", 1000, "root"),
+                text_event("$other:example.org", 1500, "other"),
+                thread_event("$t1:example.org", 2000, "$root:example.org", None),
+                thread_event(
+                    "$t2:example.org",
+                    3000,
+                    "$root:example.org",
+                    Some("$t1:example.org"),
+                ),
+                reaction_event("$r1:example.org", 4000, "$t1:example.org", "👍"),
+            ],
+            Some(&root_id),
+        );
+
+        // newest first: t1 (with t2 nested and a reaction), then the root;
+        // the unrelated message is gone
+        assert_eq!(items.len(), 2);
+
+        let newest = items[0].message().unwrap();
+        assert_eq!(newest.id.as_str(), "$t1:example.org");
+        assert_eq!(newest.replies.len(), 1);
+        assert_eq!(newest.replies[0].id.as_str(), "$t2:example.org");
+        assert_eq!(newest.reactions.len(), 1);
+
+        assert_eq!(items[1].message().unwrap().id.as_str(), "$root:example.org");
+    }
 
     fn member(kind: MemberKind, name: &str) -> StateEntry {
         StateEntry::Member(kind, name.to_string())

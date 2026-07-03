@@ -14,8 +14,7 @@ is not conserved at all.
 # Who should use this client?
 
 Anyone who wants a very simple terminal Matrix client. There are some actions
-that aren't supported at the moment, like moderation and threads, (which are
-still shown, but not formatted very well). 
+that aren't supported at the moment, like moderation.
 
 # Installation
 
@@ -87,11 +86,13 @@ then typing the command name (without the colon) into the prompt.
 | G      | Select latest message.                                 |
 | i      | Compose a new message.                                 |
 | I      | Create a new message directly in the external editor.  |
-| Enter  | Open the selected message (images, videos, urls, etc). |
+| Enter  | Open the selected message, or its thread if it has one. |
+| Esc    | Leave the thread view.                                 |
 | s      | Save the selected message (images and videos).         |
 | c      | Edit the selected message in the external editor.      |
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |
+| T      | Start (or open) a thread on the selected message.      |
 | :verify | Verify this client with your passphrase.              |
 | :leave  | Leave the current room.                               |
 | :forget | Leave the current room and forget its history.        |
@@ -114,6 +115,16 @@ arrives if it's running, or right after startup if not. "Yes" joins the room
 and takes you there, "No" declines the invite for good, and Esc puts it off
 until the next restart. If several invites are pending, they're shown one at
 a time.
+
+# Threads
+
+A message that starts a thread shows a gray "Thread: N messages" line.
+Hit Enter on that message to open the thread in its own view, and Esc to
+go right back to where you were in the room. Messages composed while
+viewing a thread are sent to the thread.
+
+To start a new thread, hit T on any message: it opens an empty thread
+view, and your first message there creates the thread.
 
 # External Applications
 

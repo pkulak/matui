@@ -4,6 +4,7 @@ use std::collections::{btree_map::Entry, BTreeMap, BinaryHeap};
 use matrix_sdk::ruma::events::receipt::{ReceiptEventContent, ReceiptType};
 
 /// A place to put and update read receipts.
+#[derive(Clone)]
 pub struct Receipts {
     markers: BTreeMap<OwnedUserId, MilliSecondsSinceUnixEpoch>,
     ignore: OwnedUserId,

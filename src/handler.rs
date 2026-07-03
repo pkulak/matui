@@ -93,6 +93,12 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
 
         // if we just left the room we're looking at, move to the top one
         MatuiEvent::RoomLeft(room) => {
+            if let Some(t) = &app.thread
+                && t.room().room_id() == room.room_id()
+            {
+                app.thread = None;
+            }
+
             if let Some(c) = &app.chat
                 && c.room().room_id() == room.room_id()
             {
@@ -108,13 +114,14 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
 
         // Let the chat update when we learn about room membership
         MatuiEvent::RoomMember(room, member) => {
-            if let Some(c) = &mut app.chat {
-                c.room_member_event(room, member);
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+                c.room_member_event(room.clone(), member.clone());
             }
         }
         MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::Search(search_term) => {
-            if let Some(c) = &mut app.chat {
+            // only the chat being looked at searches
+            if let Some(c) = app.thread.as_mut().or(app.chat.as_mut()) {
                 c.search_event(&search_term);
             }
         }
@@ -142,7 +149,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             }
         }
         MatuiEvent::Timeline(event) => {
-            if let Some(c) = &mut app.chat {
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.timeline_event(event.clone());
             }
 
@@ -151,17 +158,17 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.matrix.timeline_event(event)
         }
         MatuiEvent::TimelineBatch(batch) => {
-            if let Some(c) = &mut app.chat {
-                c.batch_event(batch);
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+                c.batch_event(batch.clone());
             }
         }
         MatuiEvent::Typing(room, ids) => {
-            if let Some(c) = &mut app.chat {
-                c.typing_event(room, ids);
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+                c.typing_event(room.clone(), ids.clone());
             }
         }
         MatuiEvent::Receipt(room, content) => {
-            if let Some(c) = &mut app.chat {
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.receipt_event(&room, &content);
             }
 
@@ -235,8 +242,8 @@ pub fn handle_key_event(
         _ => {}
     }
 
-    // and now pass it on to the chat.
-    let result = if let Some(w) = &mut app.chat {
+    // and now pass it on to the chat being looked at
+    let result = if let Some(w) = app.thread.as_mut().or(app.chat.as_mut()) {
         match w.key_event(&key_event, handler) {
             Ok(r) => r,
             Err(err) => {
@@ -264,12 +271,16 @@ pub fn handle_focus_event(app: &mut App) {
         app.matrix.clone().room_visit_event(chat.room());
         chat.focus_event();
     }
+
+    if let Some(thread) = &mut app.thread {
+        thread.focus_event();
+    }
 }
 
 pub fn handle_blur_event(app: &mut App) {
     app.matrix.blur_event();
 
-    if let Some(chat) = &mut app.chat {
+    for chat in app.chat.iter_mut().chain(app.thread.iter_mut()) {
         chat.blur_event();
     }
 }

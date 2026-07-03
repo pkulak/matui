@@ -28,7 +28,9 @@ use matrix_sdk::ruma::events::room::message::{
     TextMessageEventContent, VideoMessageEventContent,
 };
 use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
-use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId};
+use matrix_sdk::ruma::{
+    EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId,
+};
 use once_cell::unsync::OnceCell;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -49,6 +51,7 @@ pub struct Message {
     pub sender: Username,
     pub reactions: Vec<Reaction>,
     pub replies: Vec<Message>,
+    pub thread: Vec<Message>,
     pub receipts: Vec<Username>,
 
     body_lower: OnceCell<String>,
@@ -75,11 +78,17 @@ pub enum MergeResult {
 
 impl Message {
     pub fn sort_order(&self) -> &MilliSecondsSinceUnixEpoch {
-        if self.replies.is_empty() {
-            &self.sent
-        } else {
-            &self.replies.last().unwrap().sent
+        let mut ts = &self.sent;
+
+        if let Some(reply) = self.replies.last() {
+            ts = ts.max(&reply.sent);
         }
+
+        if let Some(message) = self.thread.last() {
+            ts = ts.max(&message.sent);
+        }
+
+        ts
     }
 
     fn display_body(body: &MessageType) -> String {
@@ -261,19 +270,31 @@ impl Message {
                 return None;
             }
 
-            // and replies (sometimes)
-            let in_reply_to = if let Some(Relation::Reply(Reply {
-                in_reply_to: InReplyTo { event_id: id, .. },
-                ..
-            })) = c.content.relates_to
-            {
-                if !force {
-                    return None;
-                }
+            // replies and thread messages are usually attached to another
+            // message instead of standing alone
+            let in_reply_to = match c.content.relates_to {
+                Some(Relation::Reply(Reply {
+                    in_reply_to: InReplyTo { event_id: id, .. },
+                    ..
+                })) => {
+                    if !force {
+                        return None;
+                    }
 
-                Some(id)
-            } else {
-                None
+                    Some(id)
+                }
+                Some(Relation::Thread(thread)) => {
+                    if !force {
+                        return None;
+                    }
+
+                    if thread.is_falling_back {
+                        None
+                    } else {
+                        thread.in_reply_to.map(|r| r.event_id)
+                    }
+                }
+                _ => None,
             };
 
             return Some(Message {
@@ -286,6 +307,7 @@ impl Message {
                 sender: Username::new(c.sender),
                 reactions: Vec::new(),
                 replies: Vec::new(),
+                thread: Vec::new(),
                 receipts: Vec::new(),
                 body_lower: OnceCell::new(),
                 search_term: OnceCell::new(),
@@ -321,6 +343,36 @@ impl Message {
                         return MergeResult::Consumed;
                     }
                 }
+            }
+
+            if let Some(Relation::Thread(thread)) = event_content.relates_to.clone() {
+                let target = if thread.is_falling_back {
+                    None
+                } else {
+                    thread.in_reply_to.map(|r| r.event_id)
+                };
+
+                let mut found_index = None;
+
+                for (i, message) in messages.iter_mut().enumerate() {
+                    if message.id == thread.event_id
+                        && let Some(reply) = Message::try_from(event, true)
+                    {
+                        message.push_thread_reply(reply, target.as_ref());
+                        found_index = Some(i);
+                        break;
+                    }
+                }
+
+                // we found the thread root, so move it to the end
+                if let Some(i) = found_index {
+                    let found = messages.remove(i);
+                    messages.push(found);
+                    return MergeResult::Consumed;
+                }
+
+                // we found a thread message, but its root isn't here
+                reply_result = MergeResult::Missed;
             }
 
             if let Some(Relation::Reply(Reply {
@@ -416,9 +468,42 @@ impl Message {
                     reply_result = result;
                 }
             }
+
+            if !message.thread.is_empty() {
+                let result = Message::apply_timeline_event(&mut message.thread, event, depth + 1);
+
+                if result != MergeResult::Missed {
+                    reply_result = result;
+                }
+            }
         }
 
         reply_result
+    }
+
+    // add a message to this message's thread; genuine replies nest under
+    // their target, like any reply
+    fn push_thread_reply(&mut self, reply: Message, target: Option<&OwnedEventId>) {
+        if let Some(target) = target
+            && let Some(i) = self.thread.iter().position(|m| m.contains_id(target))
+        {
+            let mut parent = self.thread.remove(i);
+            parent.find_by_id_mut(target).unwrap().replies.push(reply);
+            self.thread.push(parent);
+        } else {
+            self.thread.push(reply);
+        }
+    }
+
+    // the thread root, if this event is a message in a thread
+    pub fn thread_root(event: &AnyTimelineEvent) -> Option<&EventId> {
+        if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event
+            && let Some(Relation::Thread(thread)) = &c.content.relates_to
+        {
+            return Some(&thread.event_id);
+        }
+
+        None
     }
 
     /// Given a binary heap (priority queue) of Receipts, run through the
@@ -506,6 +591,19 @@ impl Message {
         }
 
         self.replies.iter().find_map(|r| r.find_by_id(id))
+    }
+
+    fn find_by_id_mut(&mut self, id: &OwnedEventId) -> Option<&mut Message> {
+        if &self.id == id {
+            return Some(self);
+        }
+
+        self.replies.iter_mut().find_map(|r| r.find_by_id_mut(id))
+    }
+
+    // how many messages are in this tree, including this one?
+    fn tree_len(&self) -> usize {
+        1 + self.replies.iter().map(Message::tree_len).sum::<usize>()
     }
 
     pub fn merge_reactions(&mut self) {
@@ -672,6 +770,19 @@ impl Message {
             sidecar.push(LineType::MessageContent);
         }
 
+        // the thread, if this message started one
+        if !self.thread.is_empty() {
+            let count: usize = self.thread.iter().map(Message::tree_len).sum();
+            let noun = if count == 1 { "reply" } else { "replies" };
+
+            lines.push(vec![Span::styled(
+                format!("{} {} (enter to view)", count, noun),
+                Style::default().fg(Color::DarkGray),
+            )]);
+
+            sidecar.push(LineType::MessageContent);
+        }
+
         // replies
         for (i, r) in self.replies.iter().enumerate() {
             let reply = r.display();
@@ -767,14 +878,73 @@ impl ReactionEvent {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::matrix::username::Username;
-    use crate::widgets::message::{Message, Reaction, ReactionEvent};
+    use crate::widgets::message::{MergeResult, Message, Reaction, ReactionEvent};
+    use matrix_sdk::ruma::events::AnyTimelineEvent;
     use matrix_sdk::ruma::events::room::message::{MessageType::Text, TextMessageEventContent};
+    use matrix_sdk::ruma::exports::serde_json::{self, json};
     use matrix_sdk::ruma::{
         MilliSecondsSinceUnixEpoch, OwnedEventId, owned_event_id, owned_room_id, owned_user_id,
     };
     use once_cell::unsync::OnceCell;
+
+    pub(crate) fn text_event(id: &str, ts: u64, body: &str) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.message",
+            "event_id": id,
+            "sender": "@alice:example.org",
+            "origin_server_ts": ts,
+            "room_id": "!room:example.org",
+            "content": { "msgtype": "m.text", "body": body }
+        }))
+        .unwrap()
+    }
+
+    // a message in a thread; a reply target makes it a genuine reply
+    pub(crate) fn thread_event(
+        id: &str,
+        ts: u64,
+        root: &str,
+        reply_to: Option<&str>,
+    ) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.message",
+            "event_id": id,
+            "sender": "@alice:example.org",
+            "origin_server_ts": ts,
+            "room_id": "!room:example.org",
+            "content": {
+                "msgtype": "m.text",
+                "body": "in the thread",
+                "m.relates_to": {
+                    "rel_type": "m.thread",
+                    "event_id": root,
+                    "is_falling_back": reply_to.is_none(),
+                    "m.in_reply_to": { "event_id": reply_to.unwrap_or(root) }
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    pub(crate) fn reaction_event(id: &str, ts: u64, target: &str, key: &str) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.reaction",
+            "event_id": id,
+            "sender": "@alice:example.org",
+            "origin_server_ts": ts,
+            "room_id": "!room:example.org",
+            "content": {
+                "m.relates_to": {
+                    "rel_type": "m.annotation",
+                    "event_id": target,
+                    "key": key
+                }
+            }
+        }))
+        .unwrap()
+    }
 
     fn test_message(id: OwnedEventId) -> Message {
         Message {
@@ -787,6 +957,7 @@ mod tests {
             sender: Username::new(owned_user_id!("@alice:example.org")),
             reactions: Vec::new(),
             replies: Vec::new(),
+            thread: Vec::new(),
             receipts: Vec::new(),
             body_lower: OnceCell::new(),
             search_term: OnceCell::new(),
@@ -839,6 +1010,72 @@ mod tests {
         assert_eq!(reply.reactions.len(), 1);
         assert_eq!(reply.reactions[0].body, "👍");
         assert_eq!(reply.reactions[0].events.len(), 2);
+    }
+
+    #[test]
+    fn threads_attach_to_the_root_and_bounce_it() {
+        let mut messages = vec![
+            Message::try_from(&text_event("$root:example.org", 1000, "root"), false).unwrap(),
+            Message::try_from(&text_event("$other:example.org", 2000, "other"), false).unwrap(),
+        ];
+
+        let result = Message::apply_timeline_event(
+            &mut messages,
+            &thread_event("$t1:example.org", 3000, "$root:example.org", None),
+            0,
+        );
+
+        assert!(result == MergeResult::Consumed);
+
+        let root = messages.last().unwrap();
+        assert_eq!(root.id.as_str(), "$root:example.org");
+        assert_eq!(root.thread.len(), 1);
+        assert_eq!(root.sort_order(), &root.thread[0].sent);
+    }
+
+    #[test]
+    fn genuine_thread_replies_nest_under_their_target() {
+        let mut messages =
+            vec![Message::try_from(&text_event("$root:example.org", 1000, "root"), false).unwrap()];
+
+        Message::apply_timeline_event(
+            &mut messages,
+            &thread_event("$t1:example.org", 2000, "$root:example.org", None),
+            0,
+        );
+
+        Message::apply_timeline_event(
+            &mut messages,
+            &thread_event(
+                "$t2:example.org",
+                3000,
+                "$root:example.org",
+                Some("$t1:example.org"),
+            ),
+            0,
+        );
+
+        let root = &messages[0];
+        assert_eq!(root.thread.len(), 1);
+        assert_eq!(root.thread[0].replies.len(), 1);
+        assert_eq!(root.thread[0].replies[0].id.as_str(), "$t2:example.org");
+
+        // and the meta line counts the whole tree
+        let count: usize = root.thread.iter().map(Message::tree_len).sum();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn threads_without_a_root_are_missed() {
+        let mut messages = vec![];
+
+        let result = Message::apply_timeline_event(
+            &mut messages,
+            &thread_event("$t1:example.org", 2000, "$root:example.org", None),
+            0,
+        );
+
+        assert!(result == MergeResult::Missed);
     }
 
     #[test]

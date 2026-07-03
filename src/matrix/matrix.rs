@@ -45,7 +45,9 @@ use matrix_sdk::ruma::events::relation::Annotation;
 use matrix_sdk::ruma::events::room::message::MessageType::Audio;
 use matrix_sdk::ruma::events::room::message::MessageType::Image;
 use matrix_sdk::ruma::events::room::message::MessageType::Video;
-use matrix_sdk::ruma::events::room::message::{AddMentions, ForwardThread, RoomMessageEventContent};
+use matrix_sdk::ruma::events::room::message::{
+    AddMentions, ForwardThread, ReplyWithinThread, RoomMessageEventContent,
+};
 use matrix_sdk::ruma::events::{
     AnyMessageLikeEvent, AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, AnyTimelineEvent,
     EmptyStateKey, InitialStateEvent, MessageLikeEvent, SyncEphemeralRoomEvent,
@@ -482,6 +484,42 @@ impl Matrix {
             let reply = RoomMessageEventContent::text_markdown(message).make_reply_to(
                 og_in_reply_to,
                 ForwardThread::Yes,
+                AddMentions::No,
+            );
+
+            if let Err(err) = room.send(reply).await {
+                App::send(Error(err.to_string()));
+            }
+
+            App::send(ProgressComplete);
+        });
+    }
+
+    pub fn send_thread_message(
+        &self,
+        room: Room,
+        message: String,
+        target: OwnedEventId,
+        is_reply: ReplyWithinThread,
+    ) {
+        App::spawn(async move {
+            App::send(ProgressStarted("Sending message.".to_string(), 500));
+
+            let target = match Matrix::get_room_event(&room, &target).await {
+                Some(e) => e,
+                None => {
+                    App::send(Error("Could not find thread event.".to_string()));
+                    return;
+                }
+            };
+
+            let Some(og_target) = target.as_original() else {
+                return;
+            };
+
+            let reply = RoomMessageEventContent::text_markdown(message).make_for_thread(
+                og_target,
+                is_reply,
                 AddMentions::No,
             );
 

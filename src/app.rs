@@ -39,9 +39,11 @@ pub struct App {
     /// How many ticks have passed?
     pub timestamp: usize,
 
-    /// Hold on to all our widgets
+    /// Hold on to all our widgets. The chat is always the room; a thread
+    /// renders on top of it while both keep receiving events.
     pub popup: Option<Popup>,
     pub chat: Option<Chat>,
+    pub thread: Option<Chat>,
 
     /// And our Matrix client
     pub matrix: Matrix,
@@ -70,6 +72,7 @@ impl App {
             timestamp: 0,
             popup: None,
             chat: None,
+            thread: None,
             matrix,
             sas: None,
             receipts: VecDeque::new(),
@@ -106,6 +109,9 @@ impl App {
         {
             return;
         }
+
+        // a new room means any open thread is stale
+        self.thread = None;
 
         let mut chat = Chat::try_new(self.matrix.clone(), room.clone());
 
@@ -175,7 +181,9 @@ impl App {
 
     /// Renders the user interface widgets.
     pub fn render(&mut self, frame: &mut Frame) {
-        if let Some(c) = &self.chat {
+        if let Some(t) = &self.thread {
+            frame.render_widget(t.widget(), frame.area());
+        } else if let Some(c) = &self.chat {
             frame.render_widget(c.widget(), frame.area());
         }
 

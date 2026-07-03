@@ -80,8 +80,9 @@ impl Widget for HelpWidget {
                 ]),
                 Row::new(vec![
                     "Enter",
-                    "Open the selected message (images, videos, audio, urls, etc).",
+                    "Open the selected message, or its thread if it has one.",
                 ]),
+                Row::new(vec!["Esc", "Leave the thread view."]),
                 Row::new(vec!["s", "Save the selected message (images, videos and audio)."]),
                 Row::new(vec![
                     "c",
@@ -89,6 +90,7 @@ impl Widget for HelpWidget {
                 ]),
                 Row::new(vec!["r", "React to the selected message."]),
                 Row::new(vec!["R", "Reply to the selected message."]),
+                Row::new(vec!["T", "Start (or open) a thread on the selected message."]),
                 Row::new(vec![
                     ":verify",
                     "Verify this client with your passphrase.",

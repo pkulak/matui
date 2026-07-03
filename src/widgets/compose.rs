@@ -1,5 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::Room;
+use matrix_sdk::ruma::OwnedEventId;
+use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -17,17 +19,19 @@ use crate::{KeyCombo, consumed};
 pub struct Compose {
     input: TextInput,
     room: DecoratedRoom,
+    thread: Option<OwnedEventId>,
     combo: KeyCombo,
     matrix: Matrix,
 }
 
 impl Compose {
-    pub fn new(room: DecoratedRoom, matrix: Matrix) -> Self {
+    pub fn new(room: DecoratedRoom, matrix: Matrix, thread: Option<OwnedEventId>) -> Self {
         let input = TextInput::new("Message".to_string(), true, false);
 
         Self {
             input,
             room,
+            thread,
             combo: KeyCombo::new(vec!['j', 'j']),
             matrix,
         }
@@ -35,6 +39,18 @@ impl Compose {
 
     fn room(&self) -> Room {
         self.room.inner.clone()
+    }
+
+    fn send(&self, message: String) {
+        match &self.thread {
+            Some(target) => self.matrix.send_thread_message(
+                self.room(),
+                message,
+                target.clone(),
+                ReplyWithinThread::No,
+            ),
+            None => self.matrix.send_text_message(self.room(), message),
+        }
     }
 
     pub fn widget(&self) -> ComposeWidget<'_> {
@@ -62,7 +78,7 @@ impl Compose {
                 if message.trim().is_empty() {
                     self.input.value = "".to_string();
                 } else {
-                    self.matrix.send_text_message(self.room(), message);
+                    self.send(message);
 
                     return Consumed(Box::new(move |app| {
                         app.close_popup();
@@ -88,7 +104,7 @@ impl Compose {
                 let message = self.input.value.clone();
 
                 if !message.trim().is_empty() {
-                    self.matrix.send_text_message(self.room(), message);
+                    self.send(message);
                 }
 
                 Consumed(Box::new(move |app| {
