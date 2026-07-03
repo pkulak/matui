@@ -13,12 +13,9 @@ is not conserved at all.
 
 # Who should use this client?
 
-Anyone who wants a very simple terminal Matrix client, but runs another client
-somewhere else for the missing features. There are some very basic actions
-that aren't supported at the moment, like joining rooms and moderation. Also,
-many events are still not supported, like threads (which are still shown, but
-not formatted very well). Also, this project is very early, so you need to
-be tolerant of some bugs.
+Anyone who wants a very simple terminal Matrix client. There are some actions
+that aren't supported at the moment, like moderation and threads, (which are
+still shown, but not formatted very well). 
 
 # Installation
 
@@ -77,6 +74,9 @@ There is a `flake.nix` that can be used run temporarily locally, or to install o
 Modal UIs can be a bit overwhelming, but thankfully chat isn't terribly
 complicated. Especially if you don't implement too many features.
 
+Commands starting with `:` are entered by pressing `:` in the chat window,
+then typing the command name (without the colon) into the prompt.
+
 | Key    | Description                                            |
 |--------|--------------------------------------------------------|
 | Space  | Show the room switcher.                                |
@@ -93,10 +93,10 @@ complicated. Especially if you don't implement too many features.
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |
 | :verify | Verify this client with your passphrase.              |
-| :leave  | Leave the current room.                                |
-| :forget | Leave the current room and forget its history.         |
+| :leave  | Leave the current room.                               |
+| :forget | Leave the current room and forget its history.        |
 | :invite | Invite a user to the current room (bob, or @bob:example.com). |
-| :create | Create a new room.                                     |
+| :create | Create a new room.                                    |
 | :dm     | Open a DM with a user (bob, or @bob:example.com); append "nocrypt" to skip encryption. |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room in the external editor.          |
@@ -106,6 +106,14 @@ complicated. Especially if you don't implement too many features.
 | ?      | Show this helper.                                      |
 
 \* arrow keys are fine too
+
+# Invites
+
+When you're invited to a room, Matui pops up a prompt: as soon as the invite
+arrives if it's running, or right after startup if not. "Yes" joins the room
+and takes you there, "No" declines the invite for good, and Esc puts it off
+until the next restart. If several invites are pending, they're shown one at
+a time.
 
 # External Applications
 
