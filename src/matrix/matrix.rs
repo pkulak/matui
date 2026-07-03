@@ -609,6 +609,26 @@ impl Matrix {
         });
     }
 
+    pub fn invite_user(&self, room: Room, user_id: OwnedUserId) {
+        App::spawn(async move {
+            App::send(ProgressStarted("Inviting.".to_string(), 500));
+
+            match room.invite_user_by_id(&user_id).await {
+                Ok(_) => {
+                    App::send(ProgressComplete);
+                    App::send(MatuiEvent::Confirm(
+                        "Invited".to_string(),
+                        format!("{} has been invited.", user_id),
+                    ));
+                }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
     async fn get_room_event(
         room: &Room,
         id: &OwnedEventId,

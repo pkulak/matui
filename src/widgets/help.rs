@@ -98,6 +98,7 @@ impl Widget for HelpWidget {
                     ":forget",
                     "Leave the current room and forget its history.",
                 ]),
+                Row::new(vec![":invite", "Invite a user (bob, or @bob:example.com)."]),
                 Row::new(vec![
                     "v",
                     "View the selected message in the external editor.",

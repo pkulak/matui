@@ -4,6 +4,8 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
+use matrix_sdk::ruma::UserId;
+
 use crate::app::Popup;
 use crate::widgets::error::Error;
 use crate::widgets::recover::Recover;
@@ -36,31 +38,76 @@ impl Command {
 
         match input.code {
             KeyCode::Esc => close!(),
-            KeyCode::Enter => match self.input.value.trim() {
-                "" => close!(),
-                "verify" => Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Recover(Recover::default()))
-                })),
-                "leave" => Consumed(Box::new(|app| {
-                    if let Some(chat) = &app.chat {
-                        app.matrix.leave_room(chat.room(), false);
-                    }
-                    app.close_popup();
-                })),
-                "forget" => Consumed(Box::new(|app| {
-                    if let Some(chat) = &app.chat {
-                        app.matrix.leave_room(chat.room(), true);
-                    }
-                    app.close_popup();
-                })),
-                cmd => {
-                    let message = format!("Unknown command: {}", cmd);
+            KeyCode::Enter => {
+                let value = self.input.value.trim().to_string();
 
-                    Consumed(Box::new(move |app| {
-                        app.set_popup(Popup::Error(Error::new(message)))
-                    }))
+                let (cmd, arg) = match value.split_once(char::is_whitespace) {
+                    Some((cmd, arg)) => (cmd, arg.trim()),
+                    None => (value.as_str(), ""),
+                };
+
+                match (cmd, arg) {
+                    ("", _) => close!(),
+                    ("verify", _) => Consumed(Box::new(|app| {
+                        app.set_popup(Popup::Recover(Recover::default()))
+                    })),
+                    ("leave", _) => Consumed(Box::new(|app| {
+                        if let Some(chat) = &app.chat {
+                            app.matrix.leave_room(chat.room(), false);
+                        }
+                        app.close_popup();
+                    })),
+                    ("forget", _) => Consumed(Box::new(|app| {
+                        if let Some(chat) = &app.chat {
+                            app.matrix.leave_room(chat.room(), true);
+                        }
+                        app.close_popup();
+                    })),
+                    ("invite", "") => Consumed(Box::new(|app| {
+                        app.set_popup(Popup::Error(Error::new(
+                            "Usage: :invite <user>".to_string(),
+                        )))
+                    })),
+                    ("invite", user) => {
+                        let user = user.to_string();
+
+                        Consumed(Box::new(move |app| {
+                            let Some(chat) = &app.chat else {
+                                app.close_popup();
+                                return;
+                            };
+
+                            // a bare name is assumed to be on our homeserver
+                            let id = if user.starts_with('@') {
+                                UserId::parse(&user)
+                            } else {
+                                UserId::parse(format!(
+                                    "@{}:{}",
+                                    user,
+                                    app.matrix.me().server_name()
+                                ))
+                            };
+
+                            match id {
+                                Ok(id) => {
+                                    app.matrix.invite_user(chat.room(), id);
+                                    app.close_popup();
+                                }
+                                Err(err) => app.set_popup(Popup::Error(Error::new(
+                                    format!("Invalid user ID: {}", err),
+                                ))),
+                            }
+                        }))
+                    }
+                    _ => {
+                        let message = format!("Unknown command: {}", value);
+
+                        Consumed(Box::new(move |app| {
+                            app.set_popup(Popup::Error(Error::new(message)))
+                        }))
+                    }
                 }
-            },
+            }
             _ => Ignored,
         }
     }
