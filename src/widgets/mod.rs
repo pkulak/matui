@@ -1,7 +1,9 @@
 use crate::app::App;
 use crate::widgets::EventResult::Ignored;
 
+pub mod checkbox;
 pub mod command;
+pub mod create;
 pub mod error;
 pub mod progress;
 pub mod recover;

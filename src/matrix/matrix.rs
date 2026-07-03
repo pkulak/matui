@@ -24,8 +24,11 @@ use matrix_sdk::room::{MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
+use matrix_sdk::ruma::api::client::room::create_room::v3::RoomPreset;
+use matrix_sdk::ruma::api::client::room::{create_room, Visibility};
 use matrix_sdk::ruma::api::Direction;
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
+use matrix_sdk::ruma::events::room::encryption::RoomEncryptionEventContent;
 use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
@@ -45,7 +48,7 @@ use matrix_sdk::ruma::events::room::message::MessageType::Video;
 use matrix_sdk::ruma::events::room::message::{AddMentions, ForwardThread, RoomMessageEventContent};
 use matrix_sdk::ruma::events::{
     AnyMessageLikeEvent, AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, AnyTimelineEvent,
-    MessageLikeEvent, SyncEphemeralRoomEvent,
+    EmptyStateKey, InitialStateEvent, MessageLikeEvent, SyncEphemeralRoomEvent,
 };
 use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, UInt};
 use serde::{Deserialize, Serialize};
@@ -600,6 +603,53 @@ impl Matrix {
                     }
 
                     App::send(MatuiEvent::RoomLeft(room));
+                }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub fn create_room(
+        &self,
+        name: Option<String>,
+        topic: Option<String>,
+        alias: Option<String>,
+        encrypted: bool,
+        private: bool,
+    ) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            App::send(ProgressStarted("Creating.".to_string(), 500));
+
+            let mut request = create_room::v3::Request::new();
+            request.name = name;
+            request.topic = topic;
+            request.room_alias_name = alias;
+
+            if private {
+                request.preset = Some(RoomPreset::PrivateChat);
+            } else {
+                request.preset = Some(RoomPreset::PublicChat);
+                request.visibility = Visibility::Public;
+            }
+
+            if encrypted {
+                request.initial_state = vec![InitialStateEvent::new(
+                    EmptyStateKey,
+                    RoomEncryptionEventContent::with_recommended_defaults(),
+                )
+                .to_raw_any()];
+            }
+
+            match matrix.client().create_room(request).await {
+                Ok(room) => {
+                    matrix.room_cache.add_room(room.clone()).await;
+                    App::send(ProgressComplete);
+                    App::send(MatuiEvent::RoomSelected(room));
                 }
                 Err(err) => {
                     App::send(ProgressComplete);

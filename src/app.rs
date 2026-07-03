@@ -18,6 +18,7 @@ use crate::widgets::chat::Chat;
 use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
+use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
@@ -192,6 +193,7 @@ pub enum Popup {
     Command(Command),
     Confirm(Confirm),
     Compose(Compose),
+    Create(Create),
     Error(Error),
     Progress(Progress),
     Recover(Recover),
@@ -207,6 +209,7 @@ impl Popup {
             Popup::Command(w) => w.key_event(event),
             Popup::Confirm(w) => w.key_event(event),
             Popup::Compose(w) => w.key_event(event, handler),
+            Popup::Create(w) => w.key_event(event),
             Popup::Error(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Recover(w) => w.key_event(event),
@@ -231,6 +234,7 @@ impl Popup {
             Popup::Command(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Confirm(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Compose(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Create(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),

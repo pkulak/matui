@@ -96,6 +96,7 @@ complicated. Especially if you don't implement too many features.
 | :leave  | Leave the current room.                                |
 | :forget | Leave the current room and forget its history.         |
 | :invite | Invite a user to the current room (bob, or @bob:example.com). |
+| :create | Create a new room.                                     |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room in the external editor.          |
 | u      | Upload a file.                                         |

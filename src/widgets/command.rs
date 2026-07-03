@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use matrix_sdk::ruma::UserId;
 
 use crate::app::Popup;
+use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::recover::Recover;
 use crate::widgets::textinput::TextInput;
@@ -62,6 +63,9 @@ impl Command {
                             app.matrix.leave_room(chat.room(), true);
                         }
                         app.close_popup();
+                    })),
+                    ("create", _) => Consumed(Box::new(|app| {
+                        app.set_popup(Popup::Create(Create::default()))
                     })),
                     ("invite", "") => Consumed(Box::new(|app| {
                         app.set_popup(Popup::Error(Error::new(
