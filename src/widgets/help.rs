@@ -92,6 +92,10 @@ impl Widget for HelpWidget {
                 Row::new(vec!["R", "Reply to the selected message."]),
                 Row::new(vec!["T", "Start (or open) a thread on the selected message."]),
                 Row::new(vec![
+                    "U",
+                    "Open the command prompt with the selected message's sender.",
+                ]),
+                Row::new(vec![
                     ":verify",
                     "Verify this client with your passphrase.",
                 ]),

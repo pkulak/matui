@@ -440,6 +440,18 @@ impl Chat {
             KeyCode::Char(':') => Ok(Consumed(Box::new(|app| {
                 app.set_popup(Popup::Command(Command::default()))
             }))),
+            KeyCode::Char('U') => {
+                let message = match self.selected_reply() {
+                    Some(m) => m,
+                    None => return Ok(EventResult::Ignored),
+                };
+
+                let sender = message.sender.id.clone();
+
+                Ok(Consumed(Box::new(move |app| {
+                    app.set_popup(Popup::Command(Command::with_user(&sender)))
+                })))
+            }
             _ => Ok(EventResult::Ignored),
         }
     }

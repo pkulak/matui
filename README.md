@@ -93,6 +93,7 @@ then typing the command name (without the colon) into the prompt.
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |
 | T      | Start (or open) a thread on the selected message.      |
+| U      | Open the command prompt with the selected message's sender. |
 | :verify | Verify this client with your passphrase.              |
 | :leave  | Leave the current room.                               |
 | :forget | Leave the current room and forget its history.        |

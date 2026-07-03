@@ -28,6 +28,14 @@ impl Default for Command {
 }
 
 impl Command {
+    /// Prefill with a user ID, cursor at the front, so all that's left
+    /// to type is the command name.
+    pub fn with_user(user: &UserId) -> Self {
+        let mut command = Self::default();
+        command.input.value = format!(" {}", user);
+        command
+    }
+
     pub fn widget(&self) -> CommandWidget<'_> {
         CommandWidget { command: self }
     }
@@ -187,5 +195,23 @@ impl Widget for CommandWidget<'_> {
         self.command.input.widget().render(splits[0], buf);
 
         Paragraph::new("Esc to cancel, Enter to run").render(splits[1], buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+    use matrix_sdk::ruma::user_id;
+
+    #[test]
+    fn with_user_leaves_the_cursor_at_the_front() {
+        let mut command = Command::with_user(user_id!("@bob:example.com"));
+
+        for c in "dm".chars() {
+            command.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        assert_eq!(command.input.value, "dm @bob:example.com");
     }
 }
