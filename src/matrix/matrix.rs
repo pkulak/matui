@@ -659,6 +659,44 @@ impl Matrix {
         });
     }
 
+    pub fn create_dm(&self, user_id: OwnedUserId, encrypted: bool) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            // if we already have a DM with this user, just open it
+            if let Some(room) = matrix.client().get_dm_room(&user_id) {
+                App::send(MatuiEvent::RoomSelected(room));
+                return;
+            }
+
+            App::send(ProgressStarted("Creating.".to_string(), 500));
+
+            let result = if encrypted {
+                matrix.client().create_dm(&user_id).await
+            } else {
+                // create_dm, minus the encryption state event
+                let mut request = create_room::v3::Request::new();
+                request.invite = vec![user_id.clone()];
+                request.is_direct = true;
+                request.preset = Some(RoomPreset::TrustedPrivateChat);
+
+                matrix.client().create_room(request).await
+            };
+
+            match result {
+                Ok(room) => {
+                    matrix.room_cache.add_room(room.clone()).await;
+                    App::send(ProgressComplete);
+                    App::send(MatuiEvent::RoomSelected(room));
+                }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
     pub fn invite_user(&self, room: Room, user_id: OwnedUserId) {
         App::spawn(async move {
             App::send(ProgressStarted("Inviting.".to_string(), 500));

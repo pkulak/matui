@@ -100,6 +100,7 @@ impl Widget for HelpWidget {
                 ]),
                 Row::new(vec![":invite", "Invite a user (bob, or @bob:example.com)."]),
                 Row::new(vec![":create", "Create a new room."]),
+                Row::new(vec![":dm", "Open a DM with a user. Add \"nocrypt\" to skip encryption."]),
                 Row::new(vec![
                     "v",
                     "View the selected message in the external editor.",

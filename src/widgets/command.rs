@@ -4,9 +4,9 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use matrix_sdk::ruma::UserId;
+use matrix_sdk::ruma::{IdParseError, OwnedUserId, UserId};
 
-use crate::app::Popup;
+use crate::app::{App, Popup};
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::recover::Recover;
@@ -81,18 +81,7 @@ impl Command {
                                 return;
                             };
 
-                            // a bare name is assumed to be on our homeserver
-                            let id = if user.starts_with('@') {
-                                UserId::parse(&user)
-                            } else {
-                                UserId::parse(format!(
-                                    "@{}:{}",
-                                    user,
-                                    app.matrix.me().server_name()
-                                ))
-                            };
-
-                            match id {
+                            match resolve_user(app, &user) {
                                 Ok(id) => {
                                     app.matrix.invite_user(chat.room(), id);
                                     app.close_popup();
@@ -102,6 +91,38 @@ impl Command {
                                 ))),
                             }
                         }))
+                    }
+                    ("dm", "") => Consumed(Box::new(|app| {
+                        app.set_popup(Popup::Error(Error::new(
+                            "Usage: :dm <user> [nocrypt]".to_string(),
+                        )))
+                    })),
+                    ("dm", arg) => {
+                        let (user, flag) = match arg.split_once(char::is_whitespace) {
+                            Some((user, flag)) => (user, flag.trim()),
+                            None => (arg, ""),
+                        };
+
+                        if !flag.is_empty() && flag != "nocrypt" {
+                            let message = format!("Unknown flag: {}", flag);
+
+                            Consumed(Box::new(move |app| {
+                                app.set_popup(Popup::Error(Error::new(message)))
+                            }))
+                        } else {
+                            let encrypted = flag.is_empty();
+                            let user = user.to_string();
+
+                            Consumed(Box::new(move |app| match resolve_user(app, &user) {
+                                Ok(id) => {
+                                    app.matrix.create_dm(id, encrypted);
+                                    app.close_popup();
+                                }
+                                Err(err) => app.set_popup(Popup::Error(Error::new(
+                                    format!("Invalid user ID: {}", err),
+                                ))),
+                            }))
+                        }
                     }
                     _ => {
                         let message = format!("Unknown command: {}", value);
@@ -114,6 +135,15 @@ impl Command {
             }
             _ => Ignored,
         }
+    }
+}
+
+// a bare name is assumed to be on our homeserver
+fn resolve_user(app: &App, user: &str) -> Result<OwnedUserId, IdParseError> {
+    if user.starts_with('@') {
+        UserId::parse(user)
+    } else {
+        UserId::parse(format!("@{}:{}", user, app.matrix.me().server_name()))
     }
 }
 
