@@ -175,6 +175,28 @@ impl Command {
                             }
                         }))
                     }
+                    (action @ ("ignore" | "unignore"), "") => {
+                        let message = format!("Usage: :{} <user>", action);
+
+                        Consumed(Box::new(move |app| {
+                            app.set_popup(Popup::Error(Error::new(message)))
+                        }))
+                    }
+                    (action @ ("ignore" | "unignore"), user) => {
+                        let ignore = action == "ignore";
+                        let user = user.to_string();
+
+                        Consumed(Box::new(move |app| match resolve_user(app, &user) {
+                            Ok(id) => {
+                                app.matrix.ignore_user(id, ignore);
+                                app.close_popup();
+                            }
+                            Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                                "Invalid user ID: {}",
+                                err
+                            )))),
+                        }))
+                    }
                     ("join", "") => Consumed(Box::new(|app| {
                         app.set_popup(Popup::Error(Error::new(
                             "Usage: :join <#alias, !id, or name>".to_string(),

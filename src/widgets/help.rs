@@ -34,7 +34,7 @@ impl Widget for HelpWidget {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let area = Layout::default()
             .direction(Direction::Horizontal)
-            .vertical_margin(get_margin(area.height, 39))
+            .vertical_margin(get_margin(area.height, 41))
             .horizontal_margin(get_margin(area.width, 70))
             .constraints([Constraint::Percentage(100)].as_ref())
             .split(area)[0];
@@ -126,6 +126,11 @@ impl Widget for HelpWidget {
                     ":kick",
                     "Kick a user from the room, with an optional reason.",
                 ]),
+                Row::new(vec![
+                    ":ignore",
+                    "Hide a user's messages, everywhere, from now on.",
+                ]),
+                Row::new(vec![":unignore", "Stop ignoring a user."]),
                 Row::new(vec![
                     "v",
                     "View the selected message in the external editor.",

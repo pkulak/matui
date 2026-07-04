@@ -13,9 +13,8 @@ is not conserved at all.
 
 # Who should use this client?
 
-Anyone who wants a very simple terminal Matrix client. There are some actions
-that aren't supported at the moment, like editing room settings and power
-levels.
+Anyone who wants a very simple terminal Matrix client. Room administration
+beyond moderation (settings, power levels) is left to other clients.
 
 # Installation
 
@@ -104,6 +103,8 @@ then typing the command name (without the colon) into the prompt.
 | :ban    | Ban a user from the current room, with an optional reason. |
 | :unban  | Lift a user's ban.                                     |
 | :kick   | Kick a user from the current room, with an optional reason. |
+| :ignore | Hide a user's messages, everywhere, from now on.       |
+| :unignore | Stop ignoring a user.                                |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room, with its full member list, in the external editor. |
 | u      | Upload a file.                                         |

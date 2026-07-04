@@ -870,6 +870,42 @@ impl Matrix {
         });
     }
 
+    pub fn ignore_user(&self, user_id: OwnedUserId, ignore: bool) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            let (verb, past) = if ignore {
+                ("Ignoring", "Ignored")
+            } else {
+                ("Unignoring", "Unignored")
+            };
+
+            App::send(ProgressStarted(format!("{}.", verb), 500));
+
+            let account = matrix.client().account();
+
+            let result = if ignore {
+                account.ignore_user(&user_id).await
+            } else {
+                account.unignore_user(&user_id).await
+            };
+
+            match result {
+                Ok(_) => {
+                    App::send(ProgressComplete);
+                    App::send(MatuiEvent::Confirm(
+                        past.to_string(),
+                        format!("{} has been {}.", user_id, past.to_lowercase()),
+                    ));
+                }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
     async fn get_room_event(
         room: &Room,
         id: &OwnedEventId,
