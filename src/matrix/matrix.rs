@@ -24,6 +24,7 @@ use matrix_sdk::room::{MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
+use matrix_sdk::ruma::api::client::directory::get_public_rooms_filtered;
 use matrix_sdk::ruma::api::client::room::create_room::v3::RoomPreset;
 use matrix_sdk::ruma::api::client::room::{create_room, Visibility};
 use matrix_sdk::ruma::api::Direction;
@@ -52,7 +53,9 @@ use matrix_sdk::ruma::events::{
     AnyMessageLikeEvent, AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, AnyTimelineEvent,
     EmptyStateKey, InitialStateEvent, MessageLikeEvent, SyncEphemeralRoomEvent,
 };
-use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId, OwnedUserId, UInt};
+use matrix_sdk::ruma::{
+    OwnedEventId, OwnedRoomId, OwnedRoomOrAliasId, OwnedUserId, RoomOrAliasId, UInt,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
@@ -624,6 +627,71 @@ impl Matrix {
                     App::send(ProgressComplete);
                     App::send(MatuiEvent::RoomSelected(room));
                 }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub fn join_room_by_target(&self, target: OwnedRoomOrAliasId) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            App::send(ProgressStarted("Joining.".to_string(), 500));
+
+            match matrix.client().join_room_by_id_or_alias(&target, &[]).await {
+                Ok(room) => {
+                    matrix.room_cache.add_room(room.clone()).await;
+                    App::send(ProgressComplete);
+                    App::send(MatuiEvent::RoomSelected(room));
+                }
+                Err(err) => {
+                    App::send(ProgressComplete);
+                    App::send(Error(err.to_string()));
+                }
+            }
+        });
+    }
+
+    pub fn join_room_by_name(&self, name: String) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            App::send(ProgressStarted("Joining.".to_string(), 500));
+
+            // a single token might be an alias on our own server
+            if !name.contains(char::is_whitespace)
+                && let Ok(alias) =
+                    RoomOrAliasId::parse(format!("#{}:{}", name, matrix.me().server_name()))
+                && let Ok(room) = matrix.client().join_room_by_id_or_alias(&alias, &[]).await
+            {
+                matrix.room_cache.add_room(room.clone()).await;
+                App::send(ProgressComplete);
+                App::send(MatuiEvent::RoomSelected(room));
+                return;
+            }
+
+            // otherwise, let the server search its public room directory
+            let mut request = get_public_rooms_filtered::v3::Request::new();
+            request.limit = Some(1u32.into());
+            request.filter.generic_search_term = Some(name.clone());
+
+            match matrix.client().public_rooms_filtered(request).await {
+                Ok(response) => match response.chunk.into_iter().next() {
+                    Some(chunk) => {
+                        App::send(ProgressComplete);
+                        App::send(MatuiEvent::RoomFound(chunk));
+                    }
+                    None => {
+                        App::send(ProgressComplete);
+                        App::send(Error(format!(
+                            "No public room found matching \"{}\".",
+                            name
+                        )));
+                    }
+                },
                 Err(err) => {
                     App::send(ProgressComplete);
                     App::send(Error(err.to_string()));

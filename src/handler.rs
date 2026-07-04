@@ -8,8 +8,9 @@ use crate::widgets::rooms::{sort_rooms, Rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::EventResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use matrix_sdk::ruma::directory::PublicRoomsChunk;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
-use matrix_sdk::ruma::OwnedUserId;
+use matrix_sdk::ruma::{OwnedRoomOrAliasId, OwnedUserId};
 
 use crate::event::EventHandler;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
@@ -29,6 +30,7 @@ pub enum MatuiEvent {
     ProgressComplete,
     Recover(String),
     Receipt(Room, ReceiptEventContent),
+    RoomFound(PublicRoomsChunk),
     RoomLeft(Room),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
@@ -117,6 +119,25 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.room_member_event(room.clone(), member.clone());
             }
+        }
+        MatuiEvent::RoomFound(chunk) => {
+            let name = chunk.name.clone().unwrap_or_else(|| "Unnamed".to_string());
+            let target: OwnedRoomOrAliasId = match &chunk.canonical_alias {
+                Some(alias) => alias.clone().into(),
+                None => chunk.room_id.clone().into(),
+            };
+            let message = format!(
+                "Join {} ({})? {} members.",
+                name, target, chunk.num_joined_members
+            );
+
+            app.set_popup(Popup::Confirm(Confirm::new(
+                "Room Found".to_string(),
+                message,
+                "Join".to_string(),
+                "Cancel".to_string(),
+                ConfirmBehavior::JoinPublicRoom(target),
+            )));
         }
         MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::Search(search_term) => {

@@ -99,6 +99,7 @@ then typing the command name (without the colon) into the prompt.
 | :forget | Leave the current room and forget its history.        |
 | :invite | Invite a user to the current room (bob, or @bob:example.com). |
 | :create | Create a new room.                                    |
+| :join   | Join a room: #alias, !id, or a name to search the server directory for. |
 | :dm     | Open a DM with a user (bob, or @bob:example.com); append "nocrypt" to skip encryption. |
 | :ban    | Ban a user from the current room, with an optional reason. |
 | :unban  | Lift a user's ban.                                     |

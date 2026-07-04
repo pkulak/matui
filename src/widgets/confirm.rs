@@ -5,7 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
-use matrix_sdk::ruma::OwnedEventId;
+use matrix_sdk::ruma::{OwnedEventId, OwnedRoomOrAliasId};
 
 use crate::widgets::button::Button;
 use crate::widgets::{focus_next, Focusable};
@@ -18,6 +18,7 @@ pub enum ConfirmBehavior {
     Verification,
     DeleteMessage(Room, OwnedEventId),
     JoinRoom(Room),
+    JoinPublicRoom(OwnedRoomOrAliasId),
 }
 
 pub struct Confirm {
@@ -117,6 +118,13 @@ impl Confirm {
                 app.matrix.leave_room(room, false);
                 app.close_popup();
             })),
+            ConfirmBehavior::JoinPublicRoom(target) if focused => {
+                EventResult::Consumed(Box::new(|app| {
+                    app.matrix.join_room_by_target(target);
+                    app.close_popup();
+                }))
+            }
+            ConfirmBehavior::JoinPublicRoom(_) => close!(),
         }
     }
 }

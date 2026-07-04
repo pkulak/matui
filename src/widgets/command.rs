@@ -4,7 +4,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use matrix_sdk::ruma::{IdParseError, OwnedUserId, UserId};
+use matrix_sdk::ruma::{IdParseError, OwnedUserId, RoomOrAliasId, UserId};
 
 use crate::app::{App, Popup};
 use crate::matrix::matrix::Moderation;
@@ -170,6 +170,34 @@ impl Command {
                                     format!("Invalid user ID: {}", err),
                                 ))),
                             }
+                        }))
+                    }
+                    ("join", "") => Consumed(Box::new(|app| {
+                        app.set_popup(Popup::Error(Error::new(
+                            "Usage: :join <#alias, !id, or name>".to_string(),
+                        )))
+                    })),
+                    ("join", arg) if arg.starts_with('#') || arg.starts_with('!') => {
+                        match RoomOrAliasId::parse(arg) {
+                            Ok(target) => Consumed(Box::new(move |app| {
+                                app.matrix.join_room_by_target(target);
+                                app.close_popup();
+                            })),
+                            Err(err) => {
+                                let message = format!("Invalid room: {}", err);
+
+                                Consumed(Box::new(move |app| {
+                                    app.set_popup(Popup::Error(Error::new(message)))
+                                }))
+                            }
+                        }
+                    }
+                    ("join", name) => {
+                        let name = name.to_string();
+
+                        Consumed(Box::new(move |app| {
+                            app.matrix.join_room_by_name(name);
+                            app.close_popup();
                         }))
                     }
                     _ => {
