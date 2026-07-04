@@ -105,7 +105,7 @@ then typing the command name (without the colon) into the prompt.
 | :unban  | Lift a user's ban.                                     |
 | :kick   | Kick a user from the current room, with an optional reason. |
 | v      | View the selected message in the external editor.      |
-| V      | View the current room in the external editor.          |
+| V      | View the current room, with its full member list, in the external editor. |
 | u      | Upload a file.                                         |
 | U      | Open the command prompt with the selected message's sender. |
 | m      | Mute or unmute the current room (until restart).       |

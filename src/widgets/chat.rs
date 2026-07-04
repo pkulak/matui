@@ -17,12 +17,14 @@ use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use log::info;
+use matrix_sdk::RoomMemberships;
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::events::room::member::{MembershipChange, RoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
 use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
 use matrix_sdk::ruma::events::room::name::RoomNameEvent;
+use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 use matrix_sdk::ruma::events::room::topic::RoomTopicEvent;
 use matrix_sdk::ruma::events::{AnyStateEvent, AnyTimelineEvent};
 use matrix_sdk::ruma::{EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId, UserId};
@@ -404,7 +406,7 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('V') => {
-                spawn_editor(handler, None, Some(&self.display_full()), None)?;
+                spawn_editor(handler, None, Some(&self.display_full()?), None)?;
 
                 Ok(consumed!())
             }
@@ -708,20 +710,38 @@ impl Chat {
         }
     }
 
-    fn display_full(&self) -> String {
+    fn display_full(&self) -> anyhow::Result<String> {
+        // normally a local store read; the app syncs the full member
+        // list the first time a room's senders are resolved
+        let mut members = App::get_handle()
+            .block_on(async { self.room().members(RoomMemberships::JOIN).await })?;
+
+        members.sort_by_key(|m| {
+            m.display_name()
+                .unwrap_or(m.user_id().as_str())
+                .to_lowercase()
+        });
+
         let mut ret = format!("{} ({})\n\n", self.room.name, self.room.room_id());
 
-        ret.push_str("# Members\n\n");
+        ret.push_str(&format!("# Members ({})\n\n", members.len()));
 
-        for m in &self.members {
+        for m in &members {
+            let power = match m.power_level() {
+                UserPowerLevel::Infinite => " — creator".to_string(),
+                UserPowerLevel::Int(n) if i64::from(n) != 0 => format!(" — {}", n),
+                _ => String::new(),
+            };
+
             ret.push_str(&format!(
-                "* {} ({})\n",
+                "* {} ({}){}\n",
                 m.display_name().unwrap_or(m.user_id().as_str()),
-                m.user_id()
+                m.user_id(),
+                power
             ));
         }
 
-        ret
+        Ok(ret)
     }
 
     pub fn room(&self) -> Room {

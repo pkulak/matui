@@ -130,7 +130,10 @@ impl Widget for HelpWidget {
                     "v",
                     "View the selected message in the external editor.",
                 ]),
-                Row::new(vec!["V", "View the current room in the external editor."]),
+                Row::new(vec![
+                    "V",
+                    "View the current room, with its full member list, in the external editor.",
+                ]),
                 Row::new(vec!["u", "Upload a file."]),
                 Row::new(vec![
                     "m",
