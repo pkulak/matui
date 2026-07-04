@@ -6,11 +6,11 @@ use crate::matrix::roomcache::DecoratedRoom;
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
+use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
 use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
-use crate::widgets::command::Command;
 use crate::widgets::search::Search;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
@@ -631,7 +631,10 @@ impl Chat {
         let new_selected = self
             .messages
             .iter()
-            .position(|i| i.message().is_some_and(|m| m.contains_id(&bookmark.message_id)))
+            .position(|i| {
+                i.message()
+                    .is_some_and(|m| m.contains_id(&bookmark.message_id))
+            })
             .unwrap_or_default();
 
         // only keep a 100-long window around our index

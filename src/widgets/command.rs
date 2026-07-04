@@ -8,12 +8,12 @@ use matrix_sdk::ruma::{IdParseError, OwnedUserId, RoomOrAliasId, UserId};
 
 use crate::app::{App, Popup};
 use crate::matrix::matrix::Moderation;
+use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::recover::Recover;
 use crate::widgets::textinput::TextInput;
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{get_margin, EventResult};
+use crate::widgets::{EventResult, get_margin};
 use crate::{close, consumed};
 
 pub struct Command {
@@ -95,9 +95,10 @@ impl Command {
                                     app.matrix.invite_user(chat.room(), id);
                                     app.close_popup();
                                 }
-                                Err(err) => app.set_popup(Popup::Error(Error::new(
-                                    format!("Invalid user ID: {}", err),
-                                ))),
+                                Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                                    "Invalid user ID: {}",
+                                    err
+                                )))),
                             }
                         }))
                     }
@@ -127,9 +128,10 @@ impl Command {
                                     app.matrix.create_dm(id, encrypted);
                                     app.close_popup();
                                 }
-                                Err(err) => app.set_popup(Popup::Error(Error::new(
-                                    format!("Invalid user ID: {}", err),
-                                ))),
+                                Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                                    "Invalid user ID: {}",
+                                    err
+                                )))),
                             }))
                         }
                     }
@@ -166,9 +168,10 @@ impl Command {
                                     app.matrix.moderate(chat.room(), action, id, reason);
                                     app.close_popup();
                                 }
-                                Err(err) => app.set_popup(Popup::Error(Error::new(
-                                    format!("Invalid user ID: {}", err),
-                                ))),
+                                Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                                    "Invalid user ID: {}",
+                                    err
+                                )))),
                             }
                         }))
                     }

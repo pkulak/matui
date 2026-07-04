@@ -3,15 +3,15 @@ use crate::widgets::EventResult::Ignored;
 
 pub mod checkbox;
 pub mod command;
+pub mod compose;
 pub mod create;
 pub mod error;
+pub mod help;
 pub mod progress;
 pub mod recover;
-pub mod compose;
 pub mod rooms;
-pub mod signin;
 pub mod search;
-pub mod help;
+pub mod signin;
 
 pub mod button;
 pub mod chat;

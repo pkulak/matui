@@ -4,43 +4,43 @@ use crate::media::get_attachment_info;
 use std::{fs, thread};
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Sender, TryRecvError};
 use std::sync::Arc;
+use std::sync::mpsc::{Sender, TryRecvError, channel};
 use std::time::Duration;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use futures::stream::StreamExt;
 use log::{error, info};
+use matrix_sdk::RoomState;
 use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::authentication::matrix::MatrixSession;
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
+use matrix_sdk::encryption::EncryptionSettings;
 use matrix_sdk::encryption::verification::{
     Emoji, SasState, SasVerification, Verification, VerificationRequest, VerificationRequestState,
 };
-use matrix_sdk::encryption::EncryptionSettings;
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
 use matrix_sdk::room::{MessagesOptions, Receipts, Room};
+use matrix_sdk::ruma::UserId;
+use matrix_sdk::ruma::api::Direction;
+use matrix_sdk::ruma::api::client::directory::get_public_rooms_filtered;
 use matrix_sdk::ruma::api::client::filter::{
     FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
 };
-use matrix_sdk::ruma::api::client::directory::get_public_rooms_filtered;
 use matrix_sdk::ruma::api::client::room::create_room::v3::RoomPreset;
-use matrix_sdk::ruma::api::client::room::{create_room, Visibility};
-use matrix_sdk::ruma::api::Direction;
+use matrix_sdk::ruma::api::client::room::{Visibility, create_room};
+use matrix_sdk::ruma::events::key::verification::VerificationMethod;
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
+use matrix_sdk::ruma::events::reaction::ReactionEventContent;
 use matrix_sdk::ruma::events::room::encryption::RoomEncryptionEventContent;
 use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
-use matrix_sdk::ruma::UserId;
-use matrix_sdk::RoomState;
 use matrix_sdk::{Client, LoopCtrl, ServerName};
 use once_cell::sync::OnceCell;
 use rand::rng;
-use rand::{distr::Alphanumeric, RngExt};
-use matrix_sdk::ruma::events::key::verification::VerificationMethod;
-use matrix_sdk::ruma::events::reaction::ReactionEventContent;
+use rand::{RngExt, distr::Alphanumeric};
 
 use matrix_sdk::ruma::events::relation::Annotation;
 use matrix_sdk::ruma::events::room::message::MessageType::Audio;
@@ -751,11 +751,13 @@ impl Matrix {
             }
 
             if encrypted {
-                request.initial_state = vec![InitialStateEvent::new(
-                    EmptyStateKey,
-                    RoomEncryptionEventContent::with_recommended_defaults(),
-                )
-                .to_raw_any()];
+                request.initial_state = vec![
+                    InitialStateEvent::new(
+                        EmptyStateKey,
+                        RoomEncryptionEventContent::with_recommended_defaults(),
+                    )
+                    .to_raw_any(),
+                ];
             }
 
             match matrix.client().create_room(request).await {

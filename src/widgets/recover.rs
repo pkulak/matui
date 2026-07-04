@@ -8,9 +8,9 @@ use crate::app::App;
 use crate::consumed;
 use crate::event::Event;
 use crate::handler::MatuiEvent;
-use crate::widgets::textinput::TextInput;
 use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{get_margin, EventResult};
+use crate::widgets::textinput::TextInput;
+use crate::widgets::{EventResult, get_margin};
 
 pub struct Recover {
     input: TextInput,

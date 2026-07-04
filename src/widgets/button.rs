@@ -5,7 +5,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::consumed;
-use crate::widgets::{get_margin, Focusable};
+use crate::widgets::{Focusable, get_margin};
 
 use super::EventResult;
 

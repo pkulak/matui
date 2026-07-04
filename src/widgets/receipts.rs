@@ -1,5 +1,5 @@
 use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedUserId};
-use std::collections::{btree_map::Entry, BTreeMap, BinaryHeap};
+use std::collections::{BTreeMap, BinaryHeap, btree_map::Entry};
 
 use matrix_sdk::ruma::events::receipt::{ReceiptEventContent, ReceiptType};
 

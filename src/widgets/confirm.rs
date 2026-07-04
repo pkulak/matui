@@ -1,17 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use matrix_sdk::room::Room;
+use matrix_sdk::ruma::{OwnedEventId, OwnedRoomOrAliasId};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
-use matrix_sdk::ruma::{OwnedEventId, OwnedRoomOrAliasId};
 
 use crate::widgets::button::Button;
-use crate::widgets::{focus_next, Focusable};
+use crate::widgets::{Focusable, focus_next};
 use crate::{close, consumed};
 
-use super::{get_margin, EventResult};
+use super::{EventResult, get_margin};
 
 #[derive(Clone)]
 pub enum ConfirmBehavior {
@@ -106,13 +106,11 @@ impl Confirm {
                 }))
             }
             ConfirmBehavior::DeleteMessage(_, _) => close!(),
-            ConfirmBehavior::JoinRoom(room) if focused => {
-                EventResult::Consumed(Box::new(|app| {
-                    app.invites.pop_front();
-                    app.matrix.join_room(room);
-                    app.close_popup();
-                }))
-            }
+            ConfirmBehavior::JoinRoom(room) if focused => EventResult::Consumed(Box::new(|app| {
+                app.invites.pop_front();
+                app.matrix.join_room(room);
+                app.close_popup();
+            })),
             ConfirmBehavior::JoinRoom(room) => EventResult::Consumed(Box::new(|app| {
                 app.invites.pop_front();
                 app.matrix.leave_room(room, false);

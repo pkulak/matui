@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use mime::{Mime, APPLICATION_OCTET_STREAM};
+use mime::{APPLICATION_OCTET_STREAM, Mime};
 
 /// keep around a few important, chat-related formats
 /// everything else can be an octet stream

@@ -17,13 +17,13 @@ use std::{
 
 use image::imageops::FilterType;
 
+use crate::settings::{is_muted, mentions_override_mute};
+use crate::widgets::message::Message;
 use matrix_sdk::{
     Client,
     media::MediaFormat,
     room::{Room, RoomMember},
 };
-use crate::settings::{is_muted, mentions_override_mute};
-use crate::widgets::message::Message;
 
 pub struct Notify {
     focus: AtomicBool,
@@ -55,8 +55,7 @@ impl Notify {
 
             // or when the room is muted, unless it mentions us
             if is_muted(message.room_id.as_ref())
-                && !(mentions_override_mute()
-                    && mentions_user(&event, client.user_id().unwrap()))
+                && !(mentions_override_mute() && mentions_user(&event, client.user_id().unwrap()))
             {
                 return Ok(());
             }
@@ -113,7 +112,10 @@ impl Notify {
 
     #[cfg(target_os = "macos")]
     fn close_notification(&self, room_id: &str) {
-        self.rooms.lock().expect("could not lock rooms").remove(room_id);
+        self.rooms
+            .lock()
+            .expect("could not lock rooms")
+            .remove(room_id);
     }
 
     #[cfg(not(target_os = "macos"))]

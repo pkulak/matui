@@ -3,11 +3,11 @@ use futures::future::join_all;
 use log::info;
 use matrix_sdk::room::{MessagesOptions, Room};
 
-use matrix_sdk::{Client, RoomDisplayName, RoomState};
 use matrix_sdk::ruma::api::Direction;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, RoomId};
+use matrix_sdk::{Client, RoomDisplayName, RoomState};
 use std::sync::Mutex;
 
 use crate::matrix::matrix::Matrix;
@@ -46,7 +46,10 @@ impl RoomCache {
         let mut rooms = self.rooms.lock().expect("to unlock rooms");
 
         // the next sync may have already inserted it as a wild room
-        if !rooms.iter().any(|r| r.inner.room_id() == decorated.room_id()) {
+        if !rooms
+            .iter()
+            .any(|r| r.inner.room_id() == decorated.room_id())
+        {
             rooms.insert(0, decorated);
         }
     }

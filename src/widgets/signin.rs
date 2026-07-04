@@ -5,10 +5,10 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
 use crate::consumed;
+use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::button::Button;
 use crate::widgets::textinput::TextInput;
-use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::{focus_next, focus_prev, get_margin, EventResult, Focusable};
+use crate::widgets::{EventResult, Focusable, focus_next, focus_prev, get_margin};
 
 pub struct Signin {
     pub id: TextInput,

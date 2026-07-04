@@ -83,22 +83,25 @@ impl Widget for HelpWidget {
                     "Open the selected message, or its thread if it has one.",
                 ]),
                 Row::new(vec!["Esc", "Leave the thread view."]),
-                Row::new(vec!["s", "Save the selected message (images, videos and audio)."]),
+                Row::new(vec![
+                    "s",
+                    "Save the selected message (images, videos and audio).",
+                ]),
                 Row::new(vec![
                     "c",
                     "Edit the selected message in the external editor.",
                 ]),
                 Row::new(vec!["r", "React to the selected message."]),
                 Row::new(vec!["R", "Reply to the selected message."]),
-                Row::new(vec!["T", "Start (or open) a thread on the selected message."]),
+                Row::new(vec![
+                    "T",
+                    "Start (or open) a thread on the selected message.",
+                ]),
                 Row::new(vec![
                     "U",
                     "Open the command prompt with the selected message's sender.",
                 ]),
-                Row::new(vec![
-                    ":verify",
-                    "Verify this client with your passphrase.",
-                ]),
+                Row::new(vec![":verify", "Verify this client with your passphrase."]),
                 Row::new(vec![":leave", "Leave the current room."]),
                 Row::new(vec![
                     ":forget",
@@ -106,11 +109,23 @@ impl Widget for HelpWidget {
                 ]),
                 Row::new(vec![":invite", "Invite a user (bob, or @bob:example.com)."]),
                 Row::new(vec![":create", "Create a new room."]),
-                Row::new(vec![":join", "Join a room: #alias, !id, or a name to search for."]),
-                Row::new(vec![":dm", "Open a DM with a user. Add \"nocrypt\" to skip encryption."]),
-                Row::new(vec![":ban", "Ban a user from the room, with an optional reason."]),
+                Row::new(vec![
+                    ":join",
+                    "Join a room: #alias, !id, or a name to search for.",
+                ]),
+                Row::new(vec![
+                    ":dm",
+                    "Open a DM with a user. Add \"nocrypt\" to skip encryption.",
+                ]),
+                Row::new(vec![
+                    ":ban",
+                    "Ban a user from the room, with an optional reason.",
+                ]),
                 Row::new(vec![":unban", "Lift a user's ban."]),
-                Row::new(vec![":kick", "Kick a user from the room, with an optional reason."]),
+                Row::new(vec![
+                    ":kick",
+                    "Kick a user from the room, with an optional reason.",
+                ]),
                 Row::new(vec![
                     "v",
                     "View the selected message in the external editor.",

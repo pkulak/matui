@@ -1,12 +1,12 @@
 use crate::app::{App, Popup};
 use crate::matrix::matrix::format_emojis;
+use crate::widgets::EventResult;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
-use crate::widgets::rooms::{sort_rooms, Rooms};
+use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
-use crate::widgets::EventResult;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;

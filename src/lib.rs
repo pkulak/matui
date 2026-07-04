@@ -20,10 +20,10 @@ pub mod matrix;
 
 pub mod settings;
 
-/// Using external apps to do our bidding
-pub mod spawn;
 pub mod markdown;
 pub mod media;
+/// Using external apps to do our bidding
+pub mod spawn;
 
 pub fn limit_list<T>(iter: T, limit: usize, total: usize, prefix: Option<&str>) -> Vec<String>
 where
@@ -130,7 +130,7 @@ impl KeyCombo {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use crate::{truncate, KeyCombo};
+    use crate::{KeyCombo, truncate};
 
     #[test]
     fn it_truncates() {

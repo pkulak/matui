@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use crate::close;
 use crate::widgets::button::Button;
 
-use super::{get_margin, EventResult};
+use super::{EventResult, get_margin};
 
 pub struct Error {
     heading: String,

@@ -3,8 +3,8 @@ use std::{fs, io::Cursor, path::Path, process::Command, time::Duration};
 use matrix_sdk::attachment::{
     AttachmentInfo, BaseAudioInfo, BaseFileInfo, BaseImageInfo, BaseVideoInfo, Thumbnail,
 };
-use mime::{Mime, IMAGE_JPEG};
 use matrix_sdk::ruma::UInt;
+use mime::{IMAGE_JPEG, Mime};
 
 pub fn get_attachment_info(
     path: &Path,

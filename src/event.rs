@@ -1,7 +1,7 @@
 use crate::handler::MatuiEvent;
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 use std::ops::Sub;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -49,7 +49,7 @@ impl EventHandler {
     /// Constructs a new instance of [`EventHandler`].
     pub fn new(tick_rate: u64) -> Self {
         let tick_rate = Duration::from_millis(tick_rate);
-    
+
         let (sender, receiver) = channel();
         let (pk_sender, pk_receiver) = channel();
         let handler = {
@@ -92,7 +92,7 @@ impl EventHandler {
                                     // timer instead of sending one-to-one
                                     redraw_rate = tick_rate;
                                     Ok(())
-                                },
+                                }
                                 _ => Ok(()),
                             }
                             .expect("failed to send terminal event")
@@ -105,7 +105,9 @@ impl EventHandler {
                     }
 
                     if last_redraw.elapsed() >= redraw_rate {
-                        sender.send(Event::Redraw).expect("failed to send redraw event");
+                        sender
+                            .send(Event::Redraw)
+                            .expect("failed to send redraw event");
                         last_redraw = Instant::now();
                     }
                 }
