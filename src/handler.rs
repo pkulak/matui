@@ -7,10 +7,13 @@ use crate::widgets::help::Help;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
+use crate::widgets::sso::Sso;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::{OwnedRoomOrAliasId, OwnedUserId};
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 use crate::event::EventHandler;
 use matrix_sdk::encryption::verification::{Emoji, SasVerification};
@@ -27,6 +30,11 @@ pub enum MatuiEvent {
     LoginComplete,
     LoginRequired,
     LoginStarted,
+    /// OIDC is supported by the issuer (arg one) on the given homeserver.
+    OidcAvailable(String, String),
+    /// The OAuth flow is waiting on the browser at the given URL; the
+    /// Notify cancels it.
+    SsoStarted(String, Arc<Notify>),
     ProgressStarted(String, u64),
     ProgressComplete,
     Recover(String),
@@ -78,6 +86,14 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::LoginRequired => {
             app.set_popup(Popup::Signin(Signin::default()));
+        }
+        MatuiEvent::OidcAvailable(issuer, server) => {
+            if let Some(Popup::Signin(signin)) = &mut app.popup {
+                signin.oidc_available(&issuer, &server);
+            }
+        }
+        MatuiEvent::SsoStarted(url, cancel) => {
+            app.set_popup(Popup::Sso(Sso::new(url, cancel)));
         }
         MatuiEvent::LoginStarted => {
             app.set_popup(Popup::Progress(Progress::new("Logging in", 0)));

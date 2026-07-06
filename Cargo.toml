@@ -18,7 +18,7 @@ linkify = "0.11"
 lazy_static = "1.5"
 log = "0.4"
 log-panics = { version = "2", features = ["with-backtrace"] }
-matrix-sdk = { version = "0.18.0", features = ["markdown", "bundled-sqlite"] }
+matrix-sdk = { version = "0.18.0", features = ["markdown", "bundled-sqlite", "local-server"] }
 mime = "0.3"
 notify-rust = { version = "4.18", features = ["images"] }
 notify = "8.2"

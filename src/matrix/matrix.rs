@@ -3,6 +3,7 @@ use matrix_sdk::ruma::events::room::message::MessageType::File;
 use crate::media::get_attachment_info;
 use std::{fs, thread};
 
+use std::future::IntoFuture;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, TryRecvError, channel};
@@ -13,7 +14,12 @@ use futures::stream::StreamExt;
 use log::{error, info};
 use matrix_sdk::RoomState;
 use matrix_sdk::attachment::AttachmentConfig;
+use matrix_sdk::authentication::AuthSession;
 use matrix_sdk::authentication::matrix::MatrixSession;
+use matrix_sdk::authentication::oauth::registration::{
+    ApplicationType, ClientMetadata, Localized, OAuthGrantType,
+};
+use matrix_sdk::authentication::oauth::{ClientId, OAuthSession, UserSession};
 use matrix_sdk::config::SyncSettings;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::encryption::EncryptionSettings;
@@ -21,8 +27,8 @@ use matrix_sdk::encryption::verification::{
     Emoji, SasState, SasVerification, Verification, VerificationRequest, VerificationRequestState,
 };
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
+use matrix_sdk::reqwest::Url;
 use matrix_sdk::room::{MessagesOptions, Receipts, Room};
-use matrix_sdk::ruma::UserId;
 use matrix_sdk::ruma::api::Direction;
 use matrix_sdk::ruma::api::client::directory::get_public_rooms_filtered;
 use matrix_sdk::ruma::api::client::filter::{
@@ -37,7 +43,9 @@ use matrix_sdk::ruma::events::room::encryption::RoomEncryptionEventContent;
 use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 use matrix_sdk::ruma::exports::serde_json;
-use matrix_sdk::{Client, LoopCtrl, ServerName};
+use matrix_sdk::ruma::serde::Raw;
+use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
+use matrix_sdk::{Client, LoopCtrl, ServerName, SessionChange};
 use once_cell::sync::OnceCell;
 use rand::rng;
 use rand::{RngExt, distr::Alphanumeric};
@@ -153,6 +161,8 @@ impl Matrix {
                 .set(client.clone())
                 .expect("could not set client");
 
+            matrix.watch_session(client.clone());
+
             info!("syncing with token {:?}", token);
 
             if let Err(err) = sync_once(client.clone(), token, &session_file).await {
@@ -166,8 +176,9 @@ impl Matrix {
         });
     }
 
-    pub fn login(&self, username: &str, password: &str) {
+    pub fn login(&self, homeserver: &str, username: &str, password: &str) {
         let (data_dir, session_file) = Matrix::dirs();
+        let homeserver = homeserver.to_string();
         let user = username.to_string();
         let pass = password.to_string();
         let matrix = self.clone();
@@ -175,31 +186,105 @@ impl Matrix {
         App::spawn(async move {
             App::send(MatuiEvent::LoginStarted);
 
-            let client = match login(&data_dir, &session_file, &user, &pass).await {
+            match login(&data_dir, &session_file, &homeserver, &user, &pass).await {
+                Ok(client) => matrix.finish_signin(client, session_file).await,
+                Err(err) => App::send(Error(err.to_string())),
+            }
+        });
+    }
+
+    /// See if the given server supports OIDC, and if so, tell the signin
+    /// popup about it. Quiet failures: this is fired from field blurs.
+    pub fn check_oidc(&self, server: String) {
+        App::spawn(async move {
+            let Ok(server_name) = ServerName::parse(&server) else {
+                return;
+            };
+
+            let client = match Client::builder().server_name(&server_name).build().await {
                 Ok(client) => client,
                 Err(err) => {
-                    App::send(Error(err.to_string()));
+                    info!("could not check {} for OIDC: {}", server, err);
                     return;
                 }
             };
 
-            matrix
-                .client
-                .set(client.clone())
-                .expect("could not set client");
+            match client.oauth().server_metadata().await {
+                Ok(metadata) => {
+                    let issuer = metadata
+                        .issuer
+                        .host_str()
+                        .unwrap_or("your auth server")
+                        .to_string();
 
-            App::send(MatuiEvent::LoginComplete);
-            App::send(MatuiEvent::SyncStarted(SyncType::Initial));
+                    App::send(MatuiEvent::OidcAvailable(issuer, server));
+                }
+                Err(err) if err.is_not_supported() => {}
+                Err(err) => info!("could not check {} for OIDC: {}", server, err),
+            }
+        });
+    }
 
-            if let Err(err) = sync_once(client.clone(), None, &session_file).await {
-                App::send(Error(err.to_string()));
-                return;
-            };
+    pub fn login_oauth(&self, homeserver: String) {
+        let (data_dir, session_file) = Matrix::dirs();
+        let matrix = self.clone();
 
-            matrix.room_cache.populate(client.clone()).await;
-            App::send(MatuiEvent::SyncComplete);
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            matrix.verify();
+        App::spawn(async move {
+            App::send(MatuiEvent::LoginStarted);
+
+            match login_oauth_flow(&data_dir, &session_file, &homeserver).await {
+                Ok(Some(client)) => matrix.finish_signin(client, session_file).await,
+                // cancelled from the waiting popup; back to the form
+                Ok(None) => App::send(MatuiEvent::LoginRequired),
+                Err(err) => App::send(Error(err.to_string())),
+            }
+        });
+    }
+
+    /// Everything that happens after a fresh login, no matter the flow.
+    async fn finish_signin(&self, client: Client, session_file: PathBuf) {
+        self.client
+            .set(client.clone())
+            .expect("could not set client");
+
+        self.watch_session(client.clone());
+
+        App::send(MatuiEvent::LoginComplete);
+        App::send(MatuiEvent::SyncStarted(SyncType::Initial));
+
+        if let Err(err) = sync_once(client.clone(), None, &session_file).await {
+            App::send(Error(err.to_string()));
+            return;
+        };
+
+        self.room_cache.populate(client.clone()).await;
+        App::send(MatuiEvent::SyncComplete);
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        self.verify();
+    }
+
+    /// Keep the session file up to date as tokens refresh (OAuth access
+    /// tokens are short-lived).
+    fn watch_session(&self, client: Client) {
+        App::spawn(async move {
+            let mut changes = client.subscribe_to_session_changes();
+
+            while let Ok(change) = changes.recv().await {
+                match change {
+                    SessionChange::TokensRefreshed => {
+                        let (_, session_file) = Matrix::dirs();
+
+                        if let Err(err) = persist_auth(&session_file, &client) {
+                            error!("could not persist refreshed tokens: {}", err);
+                        }
+                    }
+                    // future improvement: wipe local data and return to
+                    // the signin form
+                    SessionChange::UnknownToken(_) => App::send(Error(
+                        "Your session has expired. Please sign in again.".to_string(),
+                    )),
+                }
+            }
         });
     }
 
@@ -1095,12 +1180,63 @@ struct ClientSession {
     passphrase: String,
 }
 
+/// The user's auth info, for either kind of login.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StoredAuth {
+    // OAuth must come first: untagged deserializing tries variants in
+    // order, and only OAuth sessions have a client_id
+    OAuth {
+        client_id: ClientId,
+        user: UserSession,
+    },
+    Matrix(MatrixSession),
+}
+
 /// The full session to persist.
 #[derive(Debug, Serialize, Deserialize)]
 struct FullSession {
     client_session: ClientSession,
-    user_session: MatrixSession,
+    user_session: StoredAuth,
     sync_token: Option<String>,
+}
+
+fn stored_auth(client: &Client) -> anyhow::Result<StoredAuth> {
+    match client.session().context("Your user has no session.")? {
+        AuthSession::Matrix(session) => Ok(StoredAuth::Matrix(session)),
+        AuthSession::OAuth(session) => Ok(StoredAuth::OAuth {
+            client_id: session.client_id,
+            user: session.user,
+        }),
+        _ => bail!("Unknown session type."),
+    }
+}
+
+fn persist_session(
+    session_file: &Path,
+    client_session: ClientSession,
+    client: &Client,
+) -> anyhow::Result<()> {
+    let serialized_session = serde_json::to_string(&FullSession {
+        client_session,
+        user_session: stored_auth(client)?,
+        sync_token: None,
+    })?;
+
+    fs::write(session_file, serialized_session)?;
+
+    Ok(())
+}
+
+/// Update just the auth portion of an existing session file.
+fn persist_auth(session_file: &Path, client: &Client) -> anyhow::Result<()> {
+    let serialized_session = fs::read_to_string(session_file)?;
+    let mut full_session: FullSession = serde_json::from_str(&serialized_session)?;
+
+    full_session.user_session = stored_auth(client)?;
+    fs::write(session_file, serde_json::to_string(&full_session)?)?;
+
+    Ok(())
 }
 
 async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<String>)> {
@@ -1119,11 +1255,17 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
         .server_name(homeserver)
         .sqlite_store(client_session.db_path, Some(&client_session.passphrase))
         .with_encryption_settings(build_encryption_settings())
+        .handle_refresh_tokens()
         .build()
         .await?;
 
-    // Restore the Matrix user session.
-    client.restore_session(user_session).await?;
+    // Restore the user session.
+    let session: AuthSession = match user_session {
+        StoredAuth::OAuth { client_id, user } => OAuthSession { client_id, user }.into(),
+        StoredAuth::Matrix(session) => session.into(),
+    };
+
+    client.restore_session(session).await?;
 
     Ok((client, sync_token))
 }
@@ -1131,38 +1273,100 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
 async fn login(
     data_dir: &Path,
     session_file: &Path,
-    id: &str,
+    homeserver: &str,
+    username: &str,
     password: &str,
 ) -> anyhow::Result<Client> {
-    let id = <&UserId>::try_from(id)?;
-    let username = id.localpart();
+    let server = ServerName::parse(homeserver)?;
 
-    let (client, client_session) = build_client(data_dir, id).await?;
+    // the username can be bare, or a full matrix ID
+    let username = username
+        .strip_prefix('@')
+        .unwrap_or(username)
+        .split(':')
+        .next()
+        .unwrap_or_default();
 
-    let matrix_auth = client.matrix_auth();
+    let (client, client_session) = build_client(data_dir, &server).await?;
 
-    matrix_auth
+    client
+        .matrix_auth()
         .login_username(username, password)
         .initial_device_display_name("Matui")
         .send()
         .await?;
 
-    let user_session = matrix_auth
-        .session()
-        .context("Your logged-in user has no session.")?;
-
-    let serialized_session = serde_json::to_string(&FullSession {
-        client_session,
-        user_session,
-        sync_token: None,
-    })?;
-
-    fs::write(session_file, serialized_session)?;
+    persist_session(session_file, client_session, &client)?;
 
     Ok(client)
 }
 
-async fn build_client(data_dir: &Path, id: &UserId) -> anyhow::Result<(Client, ClientSession)> {
+/// Run the browser-based OAuth login flow. Returns None if the user
+/// cancelled from the waiting popup.
+async fn login_oauth_flow(
+    data_dir: &Path,
+    session_file: &Path,
+    homeserver: &str,
+) -> anyhow::Result<Option<Client>> {
+    let server = ServerName::parse(homeserver)?;
+    let (client, client_session) = build_client(data_dir, &server).await?;
+
+    let (redirect_url, redirect) = LocalServerBuilder::new()
+        .response(LocalServerResponse::Html(
+            "<h3>You're signed in! You can close this tab and return to your terminal.</h3>"
+                .to_string(),
+        ))
+        .spawn()
+        .await?;
+
+    let mut metadata = ClientMetadata::new(
+        ApplicationType::Native,
+        vec![OAuthGrantType::AuthorizationCode {
+            redirect_uris: vec![redirect_url.clone()],
+        }],
+        Localized::new(Url::parse("https://github.com/pkulak/matui")?, []),
+    );
+
+    metadata.client_name = Some(Localized::new("Matui".to_string(), []));
+
+    let oauth = client.oauth();
+
+    let auth_data = oauth
+        .login(redirect_url, None, Some(Raw::new(&metadata)?.into()), None)
+        .build()
+        .await?;
+
+    // best effort: the waiting popup has fallbacks if this doesn't work
+    let _ = open::that_detached(auth_data.url.as_str());
+
+    let cancel = Arc::new(tokio::sync::Notify::new());
+
+    App::send(MatuiEvent::SsoStarted(
+        auth_data.url.to_string(),
+        cancel.clone(),
+    ));
+
+    let query = tokio::select! {
+        query = redirect.into_future() => query,
+        _ = cancel.notified() => {
+            oauth.abort_login(&auth_data.state).await;
+            return Ok(None);
+        }
+    };
+
+    let query = query.context("The local redirect server was shut down.")?;
+
+    oauth.finish_login(query.into()).await?;
+
+    persist_session(session_file, client_session, &client)?;
+
+    Ok(Some(client))
+}
+
+async fn build_client(
+    data_dir: &Path,
+    server: &ServerName,
+) -> anyhow::Result<(Client, ClientSession)> {
     let db_subfolder: String = (&mut rng())
         .sample_iter(Alphanumeric)
         .take(7)
@@ -1179,16 +1383,17 @@ async fn build_client(data_dir: &Path, id: &UserId) -> anyhow::Result<(Client, C
         .collect();
 
     let client = Client::builder()
-        .server_name(id.server_name())
+        .server_name(server)
         .sqlite_store(&db_path, Some(passphrase.as_str()))
         .with_encryption_settings(build_encryption_settings())
+        .handle_refresh_tokens()
         .build()
         .await?;
 
     Ok((
         client,
         ClientSession {
-            homeserver: id.server_name().host().to_string(),
+            homeserver: server.as_str().to_string(),
             db_path,
             passphrase,
         },
