@@ -179,6 +179,7 @@ fn command_rows() -> Vec<Row<'static>> {
             "Hide a user's messages, everywhere, from now on.",
         ]),
         Row::new(vec![":unignore", "Stop ignoring a user."]),
+        Row::new(vec![":q", "Quit Matui."]),
         Row::new(vec!["?", "Back to key bindings."]),
     ]
 }

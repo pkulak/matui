@@ -252,10 +252,6 @@ pub fn handle_key_event(
 
             return Ok(());
         }
-        KeyCode::Char('q') => {
-            app.running = false;
-            return Ok(());
-        }
         KeyCode::Char('?') => {
             app.set_popup(Popup::Help(Help::default()));
             return Ok(());

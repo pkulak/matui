@@ -58,6 +58,7 @@ impl Command {
 
                 match (cmd, arg) {
                     ("", _) => close!(),
+                    ("q", _) => Consumed(Box::new(|app| app.running = false)),
                     ("verify", _) => Consumed(Box::new(|app| {
                         app.set_popup(Popup::Recover(Recover::default()))
                     })),
