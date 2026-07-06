@@ -180,6 +180,7 @@ fn command_rows() -> Vec<Row<'static>> {
         ]),
         Row::new(vec![":unignore", "Stop ignoring a user."]),
         Row::new(vec![":q", "Quit Matui."]),
+        Row::new(vec![":logout", "Log out, remove this session, and quit."]),
         Row::new(vec!["?", "Back to key bindings."]),
     ]
 }

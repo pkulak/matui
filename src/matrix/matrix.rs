@@ -725,6 +725,31 @@ impl Matrix {
         });
     }
 
+    /// Log out on the server (invalidating this device, like Element's
+    /// "remove session") and wipe all local state, then quit.
+    pub fn logout(&self) {
+        let client = self.client();
+
+        App::spawn(async move {
+            App::send(ProgressStarted("Logging out.".to_string(), 500));
+
+            if let Err(err) = client.logout().await {
+                App::send(ProgressComplete);
+                App::send(Error(err.to_string()));
+                return;
+            }
+
+            let (data_dir, _) = Matrix::dirs();
+
+            App::send(ProgressComplete);
+
+            match fs::remove_dir_all(&data_dir) {
+                Ok(_) => App::send(MatuiEvent::LoggedOut),
+                Err(err) => App::send(Error(err.to_string())),
+            }
+        });
+    }
+
     pub fn create_room(
         &self,
         name: Option<String>,

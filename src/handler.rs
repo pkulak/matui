@@ -23,6 +23,7 @@ pub enum MatuiEvent {
     Confirm(String, String),
     Error(String),
     Invited(Room, String),
+    LoggedOut,
     LoginComplete,
     LoginRequired,
     LoginStarted,
@@ -71,6 +72,9 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             if app.invites_seen.insert(room.room_id().to_owned()) {
                 app.invites.push_back((room, msg));
             }
+        }
+        MatuiEvent::LoggedOut => {
+            app.running = false;
         }
         MatuiEvent::LoginRequired => {
             app.set_popup(Popup::Signin(Signin::default()));

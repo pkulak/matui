@@ -59,6 +59,10 @@ impl Command {
                 match (cmd, arg) {
                     ("", _) => close!(),
                     ("q", _) => Consumed(Box::new(|app| app.running = false)),
+                    ("logout", _) => Consumed(Box::new(|app| {
+                        app.matrix.logout();
+                        app.close_popup();
+                    })),
                     ("verify", _) => Consumed(Box::new(|app| {
                         app.set_popup(Popup::Recover(Recover::default()))
                     })),
