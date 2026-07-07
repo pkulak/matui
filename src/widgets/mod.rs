@@ -7,12 +7,13 @@ pub mod compose;
 pub mod create;
 pub mod error;
 pub mod help;
+pub mod homeserver;
+pub mod oauth;
 pub mod progress;
 pub mod recover;
 pub mod rooms;
 pub mod search;
 pub mod signin;
-pub mod sso;
 
 pub mod button;
 pub mod chat;

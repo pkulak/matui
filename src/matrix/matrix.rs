@@ -193,34 +193,19 @@ impl Matrix {
         });
     }
 
-    /// See if the given server supports OIDC, and if so, tell the signin
-    /// popup about it. Quiet failures: this is fired from field blurs.
-    pub fn check_oidc(&self, server: String) {
+    /// Start the login flow by deciding whether this homeserver supports
+    /// OIDC. OIDC homeservers go straight to browser login; everything else
+    /// asks for username/password.
+    pub fn start_login(&self, homeserver: String) {
+        let matrix = self.clone();
+
         App::spawn(async move {
-            let Ok(server_name) = ServerName::parse(&server) else {
-                return;
-            };
+            App::send(ProgressStarted("Checking homeserver.".to_string(), 0));
 
-            let client = match Client::builder().server_name(&server_name).build().await {
-                Ok(client) => client,
-                Err(err) => {
-                    info!("could not check {} for OIDC: {}", server, err);
-                    return;
-                }
-            };
-
-            match client.oauth().server_metadata().await {
-                Ok(metadata) => {
-                    let issuer = metadata
-                        .issuer
-                        .host_str()
-                        .unwrap_or("your auth server")
-                        .to_string();
-
-                    App::send(MatuiEvent::OidcAvailable(issuer, server));
-                }
-                Err(err) if err.is_not_supported() => {}
-                Err(err) => info!("could not check {} for OIDC: {}", server, err),
+            match supports_oidc(&homeserver).await {
+                Ok(true) => matrix.login_oauth(homeserver),
+                Ok(false) => App::send(MatuiEvent::PasswordLoginRequired(homeserver)),
+                Err(err) => App::send(Error(err.to_string())),
             }
         });
     }
@@ -1301,6 +1286,21 @@ async fn login(
     Ok(client)
 }
 
+async fn supports_oidc(homeserver: &str) -> anyhow::Result<bool> {
+    let server = ServerName::parse(homeserver)?;
+    let client = Client::builder()
+        .server_name(&server)
+        .build()
+        .await
+        .with_context(|| format!("could not connect to {homeserver}"))?;
+
+    match client.oauth().server_metadata().await {
+        Ok(_) => Ok(true),
+        Err(err) if err.is_not_supported() => Ok(false),
+        Err(err) => bail!("could not check {homeserver} for OIDC: {err}"),
+    }
+}
+
 /// Run the browser-based OAuth login flow. Returns None if the user
 /// cancelled from the waiting popup.
 async fn login_oauth_flow(
@@ -1341,7 +1341,7 @@ async fn login_oauth_flow(
 
     let cancel = Arc::new(tokio::sync::Notify::new());
 
-    App::send(MatuiEvent::SsoStarted(
+    App::send(MatuiEvent::OauthStarted(
         auth_data.url.to_string(),
         cancel.clone(),
     ));

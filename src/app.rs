@@ -21,12 +21,13 @@ use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
+use crate::widgets::homeserver::Homeserver;
+use crate::widgets::oauth::Oauth;
 use crate::widgets::progress::Progress;
 use crate::widgets::recover::Recover;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::search::Search;
 use crate::widgets::signin::Signin;
-use crate::widgets::sso::Sso;
 use ratatui::Frame;
 
 static SENDER: OnceCell<Sender<Event>> = OnceCell::new();
@@ -204,11 +205,12 @@ pub enum Popup {
     Compose(Compose),
     Create(Create),
     Error(Error),
+    Homeserver(Homeserver),
     Progress(Progress),
     Recover(Recover),
     Rooms(Rooms),
+    Oauth(Oauth),
     Signin(Signin),
-    Sso(Sso),
     Search(Search),
     Help(Help),
 }
@@ -221,11 +223,12 @@ impl Popup {
             Popup::Compose(w) => w.key_event(event, handler),
             Popup::Create(w) => w.key_event(event),
             Popup::Error(w) => w.key_event(event),
+            Popup::Homeserver(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Recover(w) => w.key_event(event),
             Popup::Rooms(w) => w.key_event(event),
+            Popup::Oauth(w) => w.key_event(event, handler),
             Popup::Signin(w) => w.key_event(event),
-            Popup::Sso(w) => w.key_event(event, handler),
             Popup::Search(w) => w.key_event(event),
             Popup::Help(w) => w.key_event(event),
         }
@@ -247,11 +250,12 @@ impl Popup {
             Popup::Compose(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Create(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Homeserver(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Rooms(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Oauth(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Signin(w) => frame.render_widget(w.widget(), frame.area()),
-            Popup::Sso(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Search(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Help(w) => frame.render_widget(w.widget(), frame.area()),
         }

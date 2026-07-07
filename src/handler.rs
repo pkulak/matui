@@ -4,10 +4,11 @@ use crate::widgets::EventResult;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
+use crate::widgets::homeserver::Homeserver;
+use crate::widgets::oauth::Oauth;
 use crate::widgets::progress::Progress;
 use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
-use crate::widgets::sso::Sso;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
@@ -30,11 +31,10 @@ pub enum MatuiEvent {
     LoginComplete,
     LoginRequired,
     LoginStarted,
-    /// OIDC is supported by the issuer (arg one) on the given homeserver.
-    OidcAvailable(String, String),
+    PasswordLoginRequired(String),
     /// The OAuth flow is waiting on the browser at the given URL; the
     /// Notify cancels it.
-    SsoStarted(String, Arc<Notify>),
+    OauthStarted(String, Arc<Notify>),
     ProgressStarted(String, u64),
     ProgressComplete,
     Recover(String),
@@ -85,15 +85,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.running = false;
         }
         MatuiEvent::LoginRequired => {
-            app.set_popup(Popup::Signin(Signin::default()));
+            app.set_popup(Popup::Homeserver(Homeserver::default()));
         }
-        MatuiEvent::OidcAvailable(issuer, server) => {
-            if let Some(Popup::Signin(signin)) = &mut app.popup {
-                signin.oidc_available(&issuer, &server);
-            }
+        MatuiEvent::PasswordLoginRequired(homeserver) => {
+            app.set_popup(Popup::Signin(Signin::new(homeserver)));
         }
-        MatuiEvent::SsoStarted(url, cancel) => {
-            app.set_popup(Popup::Sso(Sso::new(url, cancel)));
+        MatuiEvent::OauthStarted(url, cancel) => {
+            app.set_popup(Popup::Oauth(Oauth::new(url, cancel)));
         }
         MatuiEvent::LoginStarted => {
             app.set_popup(Popup::Progress(Progress::new("Logging in", 0)));

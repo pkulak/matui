@@ -14,18 +14,18 @@ use crate::{close, consumed};
 use super::{EventResult, get_margin};
 
 /// Shown while an OAuth login waits on the user's browser.
-pub struct Sso {
+pub struct Oauth {
     url: String,
     cancel: Arc<Notify>,
 }
 
-impl Sso {
+impl Oauth {
     pub fn new(url: String, cancel: Arc<Notify>) -> Self {
         Self { url, cancel }
     }
 
-    pub fn widget(&self) -> SsoWidget<'_> {
-        SsoWidget { sso: self }
+    pub fn widget(&self) -> OauthWidget<'_> {
+        OauthWidget { oauth: self }
     }
 
     pub fn key_event(&mut self, input: &KeyEvent, handler: &EventHandler) -> EventResult {
@@ -53,11 +53,11 @@ impl Sso {
     }
 }
 
-pub struct SsoWidget<'a> {
-    pub sso: &'a Sso,
+pub struct OauthWidget<'a> {
+    pub oauth: &'a Oauth,
 }
 
-impl Widget for SsoWidget<'_> {
+impl Widget for OauthWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
