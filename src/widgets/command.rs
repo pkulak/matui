@@ -63,6 +63,10 @@ impl Command {
                         app.matrix.logout();
                         app.close_popup();
                     })),
+                    ("qr", _) => Consumed(Box::new(|app| {
+                        app.matrix.grant_login_with_qr();
+                        app.close_popup();
+                    })),
                     ("verify", _) => Consumed(Box::new(|app| {
                         app.set_popup(Popup::Recover(Recover::default()))
                     })),

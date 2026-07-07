@@ -94,6 +94,7 @@ then typing the command name (without the colon) into the prompt.
 | R      | Reply to the selected message.                         |
 | T      | Start (or open) a thread on the selected message.      |
 | :verify | Verify this client with your passphrase.              |
+| :qr     | Let another device log in by scanning a QR code.      |
 | :leave  | Leave the current room.                               |
 | :forget | Leave the current room and forget its history.        |
 | :invite | Invite a user to the current room (bob, or @bob:example.com). |

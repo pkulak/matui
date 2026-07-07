@@ -7,9 +7,11 @@ use crate::widgets::help::Help;
 use crate::widgets::homeserver::Homeserver;
 use crate::widgets::oauth::Oauth;
 use crate::widgets::progress::Progress;
+use crate::widgets::qr::Qr;
 use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::{OwnedRoomOrAliasId, OwnedUserId};
@@ -37,6 +39,10 @@ pub enum MatuiEvent {
     OauthStarted(String, Arc<Notify>),
     ProgressStarted(String, u64),
     ProgressComplete,
+    QrLoginAuth(String),
+    QrLoginCode(String),
+    QrLoginDone,
+    QrLoginScanned(CheckCodeSender),
     Recover(String),
     Receipt(Room, ReceiptEventContent),
     RoomFound(PublicRoomsChunk),
@@ -103,6 +109,21 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.set_popup(Popup::Progress(Progress::new(&msg, delay)))
         }
         MatuiEvent::ProgressComplete => app.popup = None,
+        MatuiEvent::QrLoginAuth(url) => {
+            app.set_popup(Popup::Qr(Qr::auth(url)));
+        }
+        MatuiEvent::QrLoginCode(code) => {
+            app.set_popup(Popup::Qr(Qr::code(code)));
+        }
+        MatuiEvent::QrLoginDone => {
+            app.set_popup(Popup::Error(Error::with_heading(
+                "QR Login".to_string(),
+                "Login granted.".to_string(),
+            )));
+        }
+        MatuiEvent::QrLoginScanned(sender) => {
+            app.set_popup(Popup::Qr(Qr::check(sender)));
+        }
         MatuiEvent::Recover(key) => {
             app.set_popup(Popup::Progress(Progress::new(
                 "Fetching encryption keys.",

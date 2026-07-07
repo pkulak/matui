@@ -24,6 +24,7 @@ use crate::widgets::help::Help;
 use crate::widgets::homeserver::Homeserver;
 use crate::widgets::oauth::Oauth;
 use crate::widgets::progress::Progress;
+use crate::widgets::qr::Qr;
 use crate::widgets::recover::Recover;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::search::Search;
@@ -207,6 +208,7 @@ pub enum Popup {
     Error(Error),
     Homeserver(Homeserver),
     Progress(Progress),
+    Qr(Qr),
     Recover(Recover),
     Rooms(Rooms),
     Oauth(Oauth),
@@ -225,6 +227,7 @@ impl Popup {
             Popup::Error(w) => w.key_event(event),
             Popup::Homeserver(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
+            Popup::Qr(w) => w.key_event(event, handler),
             Popup::Recover(w) => w.key_event(event),
             Popup::Rooms(w) => w.key_event(event),
             Popup::Oauth(w) => w.key_event(event, handler),
@@ -252,6 +255,7 @@ impl Popup {
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Homeserver(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Qr(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Rooms(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Oauth(w) => frame.render_widget(w.widget(), frame.area()),

@@ -16,6 +16,7 @@ use matrix_sdk::RoomState;
 use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::authentication::AuthSession;
 use matrix_sdk::authentication::matrix::MatrixSession;
+use matrix_sdk::authentication::oauth::qrcode::{GeneratedQrProgress, GrantLoginProgress};
 use matrix_sdk::authentication::oauth::registration::{
     ApplicationType, ClientMetadata, Localized, OAuthGrantType,
 };
@@ -207,6 +208,52 @@ impl Matrix {
                 Ok(false) => App::send(MatuiEvent::PasswordLoginRequired(homeserver)),
                 Err(err) => App::send(Error(err.to_string())),
             }
+        });
+    }
+
+    pub fn grant_login_with_qr(&self) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            App::send(ProgressStarted("Preparing QR login.".to_string(), 0));
+
+            let client = matrix.client();
+            let oauth = client.oauth();
+            let grant = oauth.grant_login_with_qr_code().generate();
+            let mut progress = grant.subscribe_to_progress();
+
+            let progress_task = tokio::spawn(async move {
+                while let Some(state) = progress.next().await {
+                    match state {
+                        GrantLoginProgress::Starting => {}
+                        GrantLoginProgress::EstablishingSecureChannel(
+                            GeneratedQrProgress::QrReady(data),
+                        ) => match render_qr_code(data.to_bytes()) {
+                            Ok(code) => App::send(MatuiEvent::QrLoginCode(code)),
+                            Err(err) => App::send(Error(err.to_string())),
+                        },
+                        GrantLoginProgress::EstablishingSecureChannel(
+                            GeneratedQrProgress::QrScanned(sender),
+                        ) => App::send(MatuiEvent::QrLoginScanned(sender)),
+                        GrantLoginProgress::WaitingForAuth { verification_uri } => {
+                            let url = verification_uri.to_string();
+                            let _ = open::that_detached(&url);
+                            App::send(MatuiEvent::QrLoginAuth(url));
+                        }
+                        GrantLoginProgress::SyncingSecrets => {
+                            App::send(ProgressStarted("Syncing secrets.".to_string(), 0));
+                        }
+                        GrantLoginProgress::Done => {}
+                    }
+                }
+            });
+
+            match grant.await {
+                Ok(()) => App::send(MatuiEvent::QrLoginDone),
+                Err(err) => App::send(Error(err.to_string())),
+            }
+
+            progress_task.abort();
         });
     }
 
@@ -1284,6 +1331,15 @@ async fn login(
     persist_session(session_file, client_session, &client)?;
 
     Ok(client)
+}
+
+fn render_qr_code(data: Vec<u8>) -> anyhow::Result<String> {
+    let code = qrcode::QrCode::new(data)?;
+
+    Ok(code
+        .render::<qrcode::render::unicode::Dense1x2>()
+        .quiet_zone(true)
+        .build())
 }
 
 async fn supports_oidc(homeserver: &str) -> anyhow::Result<bool> {

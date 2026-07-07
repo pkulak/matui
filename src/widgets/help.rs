@@ -150,6 +150,10 @@ fn key_rows() -> Vec<Row<'static>> {
 fn command_rows() -> Vec<Row<'static>> {
     vec![
         Row::new(vec![":verify", "Verify this client with your passphrase."]),
+        Row::new(vec![
+            ":qr",
+            "Let another device log in by scanning a QR code.",
+        ]),
         Row::new(vec![":leave", "Leave the current room."]),
         Row::new(vec![
             ":forget",
