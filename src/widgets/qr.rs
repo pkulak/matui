@@ -172,15 +172,15 @@ fn render_check(input: &TextInput, area: Rect, buf: &mut Buffer) {
         .alignment(Alignment::Center)
         .render(splits[0], buf);
 
-    let input_area = Layout::default()
+    let input_row = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
         .split(splits[1])[0];
 
     let input_area = Layout::default()
-        .horizontal_margin(get_margin(input_area.width, 13))
+        .horizontal_margin(get_margin(input_row.width, 13))
         .constraints([Constraint::Percentage(100)].as_ref())
-        .split(input_area)[0];
+        .split(input_row)[0];
 
     let input_splits = Layout::default()
         .direction(Direction::Horizontal)
@@ -191,6 +191,7 @@ fn render_check(input: &TextInput, area: Rect, buf: &mut Buffer) {
         .alignment(Alignment::Right)
         .style(Style::default().fg(Color::LightGreen))
         .render(input_splits[0], buf);
+
     input.widget().render(input_splits[1], buf);
 
     Paragraph::new("Enter submits, Esc cancels.")
