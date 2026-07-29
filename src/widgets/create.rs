@@ -52,6 +52,18 @@ impl Create {
         CreateWidget { create: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        if let Consumed(_) = self.name.paste_event(value) {
+            return consumed!();
+        }
+
+        if let Consumed(_) = self.topic.paste_event(value) {
+            return consumed!();
+        }
+
+        self.alias.paste_event(value)
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         if let Consumed(_) = self.name.key_event(input) {
             return consumed!();

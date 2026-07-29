@@ -57,6 +57,15 @@ impl Compose {
         ComposeWidget { compose: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        if let Consumed(_) = self.input.paste_event(value) {
+            self.matrix.typing_notification(self.room(), true);
+            consumed!()
+        } else {
+            Ignored
+        }
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent, handler: &EventHandler) -> EventResult {
         // Handle "jj" to edit in external editor
         if let KeyCode::Char(c) = input.code

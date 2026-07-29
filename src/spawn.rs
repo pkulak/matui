@@ -4,7 +4,10 @@ use ashpd::{
     PortalError,
     desktop::{ResponseError, file_chooser::SelectedFiles},
 };
-use crossterm::{event::EnableFocusChange, execute};
+use crossterm::{
+    event::{EnableBracketedPaste, EnableFocusChange},
+    execute,
+};
 use lazy_static::lazy_static;
 use linkify::LinkFinder;
 use log::error;
@@ -18,7 +21,6 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::Builder;
-#[cfg(target_os = "linux")]
 use url::Url;
 
 use crate::app::App;
@@ -79,6 +81,36 @@ pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
     Ok(path)
 }
 
+pub fn pasted_file_paths(value: &str) -> Vec<PathBuf> {
+    value
+        .lines()
+        .filter_map(|value| {
+            let value = value.trim();
+
+            if value.is_empty() || value.starts_with('#') {
+                return None;
+            }
+
+            let value = if value.len() >= 2
+                && ((value.starts_with('\'') && value.ends_with('\''))
+                    || (value.starts_with('"') && value.ends_with('"')))
+            {
+                &value[1..value.len() - 1]
+            } else {
+                value
+            };
+
+            let path = if value.starts_with("file:") {
+                Url::parse(value).ok()?.to_file_path().ok()?
+            } else {
+                PathBuf::from(value)
+            };
+
+            (path.is_absolute() && path.is_file()).then_some(path)
+        })
+        .collect()
+}
+
 pub fn spawn_editor(
     handler: &EventHandler,
     matrix: Option<(&Matrix, Room)>,
@@ -97,7 +129,7 @@ pub fn spawn_editor(
     // External editors can change terminal modes too. Neovim, for example,
     // enables focus reporting while it runs and disables it again on exit, so
     // restore our own focus-reporting request before the event handler resumes.
-    let _ = execute!(stdout(), EnableFocusChange);
+    let _ = execute!(stdout(), EnableFocusChange, EnableBracketedPaste);
 
     handler.unpark();
 
@@ -329,6 +361,21 @@ pub fn send_notification(summary: &str, body: &str, _image: Option<Vec<u8>>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pasted_file_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first file.txt");
+        let second = directory.path().join("second.txt");
+        fs::write(&first, "first").unwrap();
+        fs::write(&second, "second").unwrap();
+
+        let second_uri = Url::from_file_path(&second).unwrap();
+        let pasted = format!("'{}'\n{}", first.display(), second_uri);
+
+        assert_eq!(pasted_file_paths(&pasted), vec![first, second]);
+        assert!(pasted_file_paths("Cargo.toml").is_empty());
+    }
 
     #[test]
     fn test_next_file_first() {

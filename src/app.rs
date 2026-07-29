@@ -240,6 +240,26 @@ impl Popup {
         }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        match self {
+            Popup::Command(w) => w.paste_event(value),
+            Popup::Compose(w) => w.paste_event(value),
+            Popup::Create(w) => w.paste_event(value),
+            Popup::Homeserver(w) => w.paste_event(value),
+            Popup::Qr(w) => w.paste_event(value),
+            Popup::Recover(w) => w.paste_event(value),
+            Popup::Rooms(w) => w.paste_event(value),
+            Popup::Signin(w) => w.paste_event(value),
+            Popup::Search(w) => w.paste_event(value),
+            Popup::Upload(w) => w.paste_event(value),
+            Popup::Confirm(_)
+            | Popup::Error(_)
+            | Popup::Progress(_)
+            | Popup::Oauth(_)
+            | Popup::Help(_) => EventResult::Ignored,
+        }
+    }
+
     pub fn tick_event(&mut self, timestamp: usize) -> bool {
         if let Popup::Progress(w) = self {
             w.tick_event(timestamp);

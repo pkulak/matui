@@ -44,6 +44,13 @@ impl Qr {
         QrWidget { qr: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        match self {
+            Qr::Check { input, .. } => input.paste_event(value),
+            _ => Ignored,
+        }
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent, handler: &EventHandler) -> EventResult {
         match self {
             Qr::Code(_) => match input.code {

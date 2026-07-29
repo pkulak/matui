@@ -44,6 +44,14 @@ impl Signin {
         SigninWidget { signin: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        if let Consumed(_) = self.username.paste_event(value) {
+            return consumed!();
+        }
+
+        self.password.paste_event(value)
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         if let Consumed(_) = self.username.key_event(input) {
             return consumed!();

@@ -36,6 +36,10 @@ impl Homeserver {
         HomeserverWidget { homeserver: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        self.homeserver.paste_event(value)
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         if let Consumed(_) = self.homeserver.key_event(input) {
             return consumed!();

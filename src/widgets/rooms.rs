@@ -52,6 +52,15 @@ impl Rooms {
         RoomsWidget { rooms: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        if let Consumed(_) = self.textinput.paste_event(value) {
+            self.reset();
+            consumed!()
+        } else {
+            EventResult::Ignored
+        }
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         match input.code {
             KeyCode::Esc => close!(),

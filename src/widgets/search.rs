@@ -29,6 +29,15 @@ impl Search {
         SearchWidget { search: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        if let Consumed(_) = self.input.paste_event(value) {
+            App::send(MatuiEvent::Search(self.input.value.to_lowercase()));
+            consumed!()
+        } else {
+            Ignored
+        }
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         if let Consumed(_) = self.input.key_event(input) {
             App::get_sender()

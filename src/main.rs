@@ -1,11 +1,13 @@
 use crossterm::{
-    event::{DisableFocusChange, EnableFocusChange},
+    event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange},
     execute,
 };
 use log::LevelFilter;
 use matui::app::App;
 use matui::event::{Event, EventHandler};
-use matui::handler::{handle_app_event, handle_blur_event, handle_focus_event, handle_key_event};
+use matui::handler::{
+    handle_app_event, handle_blur_event, handle_focus_event, handle_key_event, handle_paste_event,
+};
 use matui::settings::watch_settings_forever;
 use std::io::stdout;
 
@@ -19,7 +21,7 @@ fn main() -> anyhow::Result<()> {
 
     // Initialize the terminal user interface
     let mut terminal = ratatui::init();
-    execute!(stdout(), EnableFocusChange)?;
+    execute!(stdout(), EnableFocusChange, EnableBracketedPaste)?;
 
     // and the event system.
     let events = EventHandler::new(250);
@@ -46,6 +48,7 @@ fn main() -> anyhow::Result<()> {
                 render = app.tick();
             }
             Event::Key(key_event) => handle_key_event(key_event, &mut app, &events)?,
+            Event::Paste(value) => handle_paste_event(value, &mut app),
             Event::Matui(app_event) => handle_app_event(app_event, &mut app),
             Event::Focus => handle_focus_event(&mut app),
             Event::Blur => handle_blur_event(&mut app),
@@ -61,7 +64,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Exit the user interface.
-    let _ = execute!(stdout(), DisableFocusChange);
+    let _ = execute!(stdout(), DisableBracketedPaste, DisableFocusChange);
     ratatui::restore();
 
     Ok(())

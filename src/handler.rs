@@ -1,5 +1,6 @@
 use crate::app::{App, Popup};
 use crate::matrix::matrix::format_emojis;
+use crate::spawn::pasted_file_paths;
 use crate::widgets::EventResult;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
@@ -10,6 +11,7 @@ use crate::widgets::progress::Progress;
 use crate::widgets::qr::Qr;
 use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
+use crate::widgets::upload::Upload;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
@@ -316,6 +318,32 @@ pub fn handle_key_event(
     }
 
     Ok(())
+}
+
+pub fn handle_paste_event(value: String, app: &mut App) {
+    if let Some(popup) = app.popup.as_mut() {
+        if let EventResult::Consumed(f) = popup.paste_event(&value) {
+            f(app);
+        }
+        return;
+    }
+
+    let paths = pasted_file_paths(&value);
+
+    if paths.is_empty() {
+        return;
+    }
+
+    let Some(room) = app
+        .thread
+        .as_ref()
+        .or(app.chat.as_ref())
+        .map(|chat| chat.room())
+    else {
+        return;
+    };
+
+    app.set_popup(Popup::Upload(Upload::new(app.matrix.clone(), room, paths)));
 }
 
 pub fn handle_focus_event(app: &mut App) {

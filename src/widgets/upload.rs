@@ -39,6 +39,10 @@ impl Upload {
         UploadWidget { upload: self }
     }
 
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        self.input.paste_event(value)
+    }
+
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         if let Consumed(_) = self.input.key_event(input) {
             return consumed!();

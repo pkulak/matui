@@ -87,6 +87,25 @@ impl TextInput {
             _ => Ignored,
         }
     }
+
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        if !self.focused {
+            return Ignored;
+        }
+
+        let value = value.replace("\r\n", "\n");
+        let value: String = value
+            .chars()
+            .map(|c| if matches!(c, '\r' | '\n') { ' ' } else { c })
+            .collect();
+        let byte_pos = char_to_byte(&self.value, self.cursor);
+
+        self.value.insert_str(byte_pos, &value);
+        self.cursor += value.chars().count();
+
+        consumed!()
+    }
+
     pub fn value(&self) -> String {
         self.value.clone()
     }
@@ -260,6 +279,23 @@ mod tests {
         }
 
         assert_eq!(input.value(), "Goodbye World");
+    }
+
+    #[test]
+    fn it_pastes_at_the_cursor() {
+        let mut input = TextInput::new("Test".to_string(), true, false);
+
+        for c in "HelloWorld".chars() {
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        for _ in 0..5 {
+            input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        }
+
+        input.paste_event(" brave\r\nnew ");
+
+        assert_eq!(input.value(), "Hello brave new World");
     }
 
     #[test]

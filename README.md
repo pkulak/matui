@@ -149,7 +149,9 @@ with all the files you care about. I recommend [mpv](https://mpv.io/) and
 
 On Linux, an xdg-desktop-portal file chooser backend is required to show the
 file picker and save downloaded files. FFMpeg is also required to create
-thumbnails if you upload videos.
+thumbnails if you upload videos. Pasting an absolute file path or `file://` URI
+into a room opens the same caption and upload flow; separate multiple files with
+newlines.
 
 ## Search
 

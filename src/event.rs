@@ -19,6 +19,8 @@ pub enum Event {
     Blur,
     /// Key press.
     Key(KeyEvent),
+    /// Bracketed text paste.
+    Paste(String),
     /// App event
     Matui(MatuiEvent),
 }
@@ -85,6 +87,7 @@ impl EventHandler {
                         if last_park.elapsed() > Duration::from_millis(250) {
                             match event {
                                 CrosstermEvent::Key(e) => sender.send(Event::Key(e)),
+                                CrosstermEvent::Paste(value) => sender.send(Event::Paste(value)),
                                 CrosstermEvent::FocusGained => sender.send(Event::Focus),
                                 CrosstermEvent::FocusLost => sender.send(Event::Blur),
                                 CrosstermEvent::Resize(_, _) => {
