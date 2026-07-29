@@ -39,6 +39,14 @@ There is a `flake.nix` that can be used run temporarily locally, or to install o
 
 ```nix
 {
+  # Use prebuilt Matui packages when available.
+  nixConfig = {
+    extra-substituters = [ "https://pkulak.cachix.org" ];
+    extra-trusted-public-keys = [
+      "pkulak.cachix.org-1:S25jAptWCkAmwrk41b47lheB9onW9mzxVqM9o6HRg1E="
+    ];
+  };
+
   inputs = {
     matui.url = "github:pkulak/matui";
   };
