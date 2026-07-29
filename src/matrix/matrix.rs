@@ -56,7 +56,7 @@ use matrix_sdk::ruma::events::room::message::MessageType::Audio;
 use matrix_sdk::ruma::events::room::message::MessageType::Image;
 use matrix_sdk::ruma::events::room::message::MessageType::Video;
 use matrix_sdk::ruma::events::room::message::{
-    AddMentions, ForwardThread, ReplyWithinThread, RoomMessageEventContent,
+    AddMentions, ForwardThread, ReplyWithinThread, RoomMessageEventContent, TextMessageEventContent,
 };
 use matrix_sdk::ruma::events::{
     AnyMessageLikeEvent, AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, AnyTimelineEvent,
@@ -496,50 +496,62 @@ impl Matrix {
             App::send(ProgressStarted("Downloading file.".to_string(), 250));
 
             let (content_type, request, file_name) = match message {
-                Image(content) => (
-                    content
-                        .info
-                        .and_then(|info| info.mimetype)
-                        .unwrap_or(octets),
-                    MediaRequestParameters {
-                        source: content.source,
-                        format: MediaFormat::File,
-                    },
-                    content.body,
-                ),
-                Video(content) => (
-                    content
-                        .info
-                        .and_then(|info| info.mimetype)
-                        .unwrap_or(octets),
-                    MediaRequestParameters {
-                        source: content.source,
-                        format: MediaFormat::File,
-                    },
-                    content.body,
-                ),
-                Audio(content) => (
-                    content
-                        .info
-                        .and_then(|info| info.mimetype)
-                        .unwrap_or(octets),
-                    MediaRequestParameters {
-                        source: content.source,
-                        format: MediaFormat::File,
-                    },
-                    content.body,
-                ),
-                File(content) => (
-                    content
-                        .info
-                        .and_then(|info| info.mimetype)
-                        .unwrap_or(octets),
-                    MediaRequestParameters {
-                        source: content.source,
-                        format: MediaFormat::File,
-                    },
-                    content.body,
-                ),
+                Image(content) => {
+                    let file_name = content.filename().to_string();
+                    (
+                        content
+                            .info
+                            .and_then(|info| info.mimetype)
+                            .unwrap_or(octets),
+                        MediaRequestParameters {
+                            source: content.source,
+                            format: MediaFormat::File,
+                        },
+                        file_name,
+                    )
+                }
+                Video(content) => {
+                    let file_name = content.filename().to_string();
+                    (
+                        content
+                            .info
+                            .and_then(|info| info.mimetype)
+                            .unwrap_or(octets),
+                        MediaRequestParameters {
+                            source: content.source,
+                            format: MediaFormat::File,
+                        },
+                        file_name,
+                    )
+                }
+                Audio(content) => {
+                    let file_name = content.filename().to_string();
+                    (
+                        content
+                            .info
+                            .and_then(|info| info.mimetype)
+                            .unwrap_or(octets),
+                        MediaRequestParameters {
+                            source: content.source,
+                            format: MediaFormat::File,
+                        },
+                        file_name,
+                    )
+                }
+                File(content) => {
+                    let file_name = content.filename().to_string();
+                    (
+                        content
+                            .info
+                            .and_then(|info| info.mimetype)
+                            .unwrap_or(octets),
+                        MediaRequestParameters {
+                            source: content.source,
+                            format: MediaFormat::File,
+                        },
+                        file_name,
+                    )
+                }
                 _ => {
                     App::send(Error("Unknown file type.".to_string()));
                     return;
@@ -658,11 +670,11 @@ impl Matrix {
         });
     }
 
-    pub fn send_attachements(&self, room: Room, paths: Vec<PathBuf>) {
-        let total = paths.len();
+    pub fn send_attachments(&self, room: Room, attachments: Vec<(PathBuf, Option<String>)>) {
+        let total = attachments.len();
 
         App::spawn(async move {
-            for (i, path) in paths.into_iter().enumerate() {
+            for (i, (path, caption)) in attachments.into_iter().enumerate() {
                 App::send(ProgressStarted(
                     format!("Uploading {} of {}.", i + 1, total),
                     0,
@@ -691,7 +703,8 @@ impl Matrix {
                         AttachmentConfig::new().thumbnail(thumbnail).info(info)
                     }
                     _ => AttachmentConfig::new(),
-                };
+                }
+                .caption(caption.map(TextMessageEventContent::plain));
 
                 if let Err(err) = room
                     .send_attachment(&name, &content_type, data, config)

@@ -29,6 +29,7 @@ use crate::widgets::recover::Recover;
 use crate::widgets::rooms::Rooms;
 use crate::widgets::search::Search;
 use crate::widgets::signin::Signin;
+use crate::widgets::upload::Upload;
 use ratatui::Frame;
 
 static SENDER: OnceCell<Sender<Event>> = OnceCell::new();
@@ -214,6 +215,7 @@ pub enum Popup {
     Oauth(Oauth),
     Signin(Signin),
     Search(Search),
+    Upload(Upload),
     Help(Help),
 }
 
@@ -234,6 +236,7 @@ impl Popup {
             Popup::Signin(w) => w.key_event(event),
             Popup::Search(w) => w.key_event(event),
             Popup::Help(w) => w.key_event(event),
+            Popup::Upload(w) => w.key_event(event),
         }
     }
 
@@ -262,6 +265,7 @@ impl Popup {
             Popup::Signin(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Search(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Help(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Upload(w) => frame.render_widget(w.widget(), frame.area()),
         }
     }
 }

@@ -15,6 +15,7 @@ pub mod recover;
 pub mod rooms;
 pub mod search;
 pub mod signin;
+pub mod upload;
 
 pub mod button;
 pub mod chat;

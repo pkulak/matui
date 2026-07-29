@@ -135,7 +135,7 @@ fn key_rows() -> Vec<Row<'static>> {
             "V",
             "View the room and its members in the external editor.",
         ]),
-        Row::new(vec!["u", "Upload a file."]),
+        Row::new(vec!["u", "Upload a file with an optional caption."]),
         Row::new(vec![
             "m",
             "Mute or unmute the current room (until restart).",

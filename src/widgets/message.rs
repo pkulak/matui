@@ -23,10 +23,7 @@ use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
 use matrix_sdk::ruma::events::MessageLikeEvent;
 use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement, Reply};
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
-use matrix_sdk::ruma::events::room::message::{
-    AudioMessageEventContent, FileMessageEventContent, ImageMessageEventContent, Relation,
-    TextMessageEventContent, VideoMessageEventContent,
-};
+use matrix_sdk::ruma::events::room::message::{Relation, TextMessageEventContent};
 use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
 use matrix_sdk::ruma::{
     EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId,
@@ -94,51 +91,64 @@ impl Message {
     fn display_body(body: &MessageType) -> String {
         match body {
             Text(TextMessageEventContent { body, .. }) => body.to_string(),
-            Image(ImageMessageEventContent { body, info, .. }) => {
-                if let Some(info) = info {
-                    if let Some(size) = info.size {
-                        format!("Image: {} ({})", body, human_bytes(size))
-                    } else {
-                        body.to_string()
-                    }
-                } else {
-                    body.to_string()
-                }
-            }
-            Video(VideoMessageEventContent { body, info, .. }) => {
-                if let Some(info) = info {
-                    if let Some(size) = info.size {
-                        format!("Video: {} ({})", body, human_bytes(size))
-                    } else {
-                        body.to_string()
-                    }
-                } else {
-                    body.to_string()
-                }
-            }
-            Audio(AudioMessageEventContent { body, info, .. }) => {
-                if let Some(info) = info {
-                    if let Some(size) = info.size {
-                        format!("Audio: {} ({})", body, human_bytes(size))
-                    } else {
-                        body.to_string()
-                    }
-                } else {
-                    body.to_string()
-                }
-            }
-            File(FileMessageEventContent { body, info, .. }) => {
-                if let Some(info) = info {
-                    if let Some(size) = info.size {
-                        format!("File: {} ({})", body, human_bytes(size))
-                    } else {
-                        body.to_string()
-                    }
-                } else {
-                    body.to_string()
-                }
-            }
+            Image(content) => Self::display_media(
+                "Image",
+                content.filename(),
+                content.caption(),
+                content
+                    .info
+                    .as_ref()
+                    .and_then(|info| info.size)
+                    .map(human_bytes),
+            ),
+            Video(content) => Self::display_media(
+                "Video",
+                content.filename(),
+                content.caption(),
+                content
+                    .info
+                    .as_ref()
+                    .and_then(|info| info.size)
+                    .map(human_bytes),
+            ),
+            Audio(content) => Self::display_media(
+                "Audio",
+                content.filename(),
+                content.caption(),
+                content
+                    .info
+                    .as_ref()
+                    .and_then(|info| info.size)
+                    .map(human_bytes),
+            ),
+            File(content) => Self::display_media(
+                "File",
+                content.filename(),
+                content.caption(),
+                content
+                    .info
+                    .as_ref()
+                    .and_then(|info| info.size)
+                    .map(human_bytes),
+            ),
             _ => "unknown".to_string(),
+        }
+    }
+
+    fn display_media(
+        kind: &str,
+        filename: &str,
+        caption: Option<&str>,
+        size: Option<String>,
+    ) -> String {
+        let description = match size {
+            Some(size) => format!("{kind}: {filename} ({size})"),
+            None => filename.to_string(),
+        };
+
+        match caption {
+            Some(caption) => format!("{description}\n{caption}"),
+            None => description,
         }
     }
 
@@ -928,6 +938,23 @@ pub(crate) mod tests {
         .unwrap()
     }
 
+    fn image_event(body: &str, filename: Option<&str>) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.message",
+            "event_id": "$image:example.org",
+            "sender": "@alice:example.org",
+            "origin_server_ts": 1000,
+            "room_id": "!room:example.org",
+            "content": {
+                "msgtype": "m.image",
+                "body": body,
+                "filename": filename,
+                "url": "mxc://example.org/image"
+            }
+        }))
+        .unwrap()
+    }
+
     pub(crate) fn reaction_event(id: &str, ts: u64, target: &str, key: &str) -> AnyTimelineEvent {
         serde_json::from_value(json!({
             "type": "m.reaction",
@@ -963,6 +990,19 @@ pub(crate) mod tests {
             search_term: OnceCell::new(),
             display_cache: OnceCell::new(),
         }
+    }
+
+    #[test]
+    fn displays_media_captions_with_the_filename() {
+        let event = image_event("Look at this dog", Some("dog.jpg"));
+        let message = Message::try_from(&event, false).unwrap();
+
+        assert_eq!(message.display(), "dog.jpg\nLook at this dog");
+
+        let event = image_event("dog.jpg", None);
+        let message = Message::try_from(&event, false).unwrap();
+
+        assert_eq!(message.display(), "dog.jpg");
     }
 
     #[test]

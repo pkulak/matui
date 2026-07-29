@@ -108,7 +108,7 @@ then typing the command name (without the colon) into the prompt.
 | :unignore | Stop ignoring a user.                                |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room, with its full member list, in the external editor. |
-| u      | Upload a file.                                         |
+| u      | Upload a file with an optional caption.                |
 | U      | Open the command prompt with the selected message's sender. |
 | m      | Mute or unmute the current room (until restart).       |
 | /      | Search the current room.                               |

@@ -12,6 +12,7 @@ use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
 use crate::widgets::search::Search;
+use crate::widgets::upload::Upload;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
@@ -432,9 +433,12 @@ impl Chat {
                     return Ok(EventResult::Ignored);
                 }
 
-                self.matrix.send_attachements(self.room(), paths);
+                let matrix = self.matrix.clone();
+                let room = self.room();
 
-                Ok(consumed!())
+                Ok(Consumed(Box::new(move |app| {
+                    app.set_popup(Popup::Upload(Upload::new(matrix, room, paths)))
+                })))
             }
             KeyCode::Char('/') => Ok(Consumed(Box::new(|app| {
                 app.set_popup(Popup::Search(Search::default()))
