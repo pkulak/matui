@@ -26,6 +26,14 @@
         };
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        source = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./Cargo.lock
+            ./Cargo.toml
+            ./src
+          ];
+        };
         sharedDeps = [
           rustToolchain
           pkgs.pkg-config
@@ -38,8 +46,8 @@
           matui = pkgs.rustPlatform.buildRustPackage {
             pname = cargoToml.package.name;
             inherit (cargoToml.package) version;
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
+            src = source;
+            cargoLock.lockFile = source + "/Cargo.lock";
             # Won't be found by `openssl-sys` if it's in `nativeBuildInputs`.
             buildInputs = with pkgs; [ openssl ];
             nativeBuildInputs =
