@@ -261,6 +261,30 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
     }
 }
 
+fn handle_chat_key_event(
+    key_event: &KeyEvent,
+    app: &mut App,
+    handler: &EventHandler,
+) -> anyhow::Result<()> {
+    let Some(chat) = app.thread.as_mut().or(app.chat.as_mut()) else {
+        return Ok(());
+    };
+
+    let result = match chat.key_event(key_event, handler) {
+        Ok(result) => result,
+        Err(err) => {
+            app.set_popup(Popup::Error(Error::new(err.to_string())));
+            return Ok(());
+        }
+    };
+
+    if let EventResult::Consumed(f) = result {
+        f(app);
+    }
+
+    Ok(())
+}
+
 pub fn handle_key_event(
     key_event: KeyEvent,
     app: &mut App,
@@ -284,6 +308,17 @@ pub fn handle_key_event(
         return Ok(());
     }
 
+    // A reaction dialog is part of Chat rather than Popup, but is still modal.
+    if app
+        .thread
+        .as_ref()
+        .or(app.chat.as_ref())
+        .is_some_and(|chat| chat.reacting())
+    {
+        handle_chat_key_event(&key_event, app, handler)?;
+        return Ok(());
+    }
+
     // we own a few key events
     match key_event.code {
         KeyCode::Char(' ') => {
@@ -301,23 +336,7 @@ pub fn handle_key_event(
     }
 
     // and now pass it on to the chat being looked at
-    let result = if let Some(w) = app.thread.as_mut().or(app.chat.as_mut()) {
-        match w.key_event(&key_event, handler) {
-            Ok(r) => r,
-            Err(err) => {
-                app.set_popup(Popup::Error(Error::new(err.to_string())));
-                return Ok(());
-            }
-        }
-    } else {
-        EventResult::Ignored
-    };
-
-    if let EventResult::Consumed(f) = result {
-        f(app);
-    }
-
-    Ok(())
+    handle_chat_key_event(&key_event, app, handler)
 }
 
 pub fn handle_paste_event(value: String, app: &mut App) {
@@ -325,6 +344,13 @@ pub fn handle_paste_event(value: String, app: &mut App) {
         if let EventResult::Consumed(f) = popup.paste_event(&value) {
             f(app);
         }
+        return;
+    }
+
+    if let Some(chat) = app.thread.as_mut().or(app.chat.as_mut())
+        && let EventResult::Consumed(f) = chat.paste_event(&value)
+    {
+        f(app);
         return;
     }
 

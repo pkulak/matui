@@ -151,6 +151,19 @@ impl Chat {
         ChatWidget { chat: self }
     }
 
+    pub fn reacting(&self) -> bool {
+        self.react.is_some()
+    }
+
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        let Some(react) = &mut self.react else {
+            return EventResult::Ignored;
+        };
+
+        react.paste_event(value);
+        consumed!()
+    }
+
     pub fn key_event(
         &mut self,
         input: &KeyEvent,
@@ -183,7 +196,6 @@ impl Chat {
                     return Ok(consumed!());
                 }
                 ReactResult::Consumed => return Ok(consumed!()),
-                ReactResult::Ignored => {}
             }
         }
 
