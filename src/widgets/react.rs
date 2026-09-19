@@ -1,6 +1,7 @@
 use crate::matrix::matrix::center_emoji;
 use crate::settings::get_settings;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use once_cell::sync::Lazy;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -9,6 +10,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget,
 };
 use std::cell::Cell;
+use std::collections::HashSet;
 
 use crate::widgets::get_margin;
 
@@ -23,12 +25,39 @@ pub struct React {
     reactions: Vec<Reaction>,
     existing: Vec<String>,
     custom_reaction: Option<String>,
+    typed_emoji: String,
     list_state: Cell<ListState>,
 }
 
 struct Reaction {
     emoji: String,
     description: String,
+}
+
+static EMOJI_PREFIXES: Lazy<HashSet<String>> = Lazy::new(|| {
+    let mut prefixes = HashSet::new();
+
+    for emoji in emojis::iter() {
+        if let Some(skin_tones) = emoji.skin_tones() {
+            for emoji in skin_tones {
+                add_emoji_prefixes(&mut prefixes, emoji.as_str());
+            }
+        } else {
+            add_emoji_prefixes(&mut prefixes, emoji.as_str());
+        }
+    }
+
+    prefixes
+});
+
+fn add_emoji_prefixes(prefixes: &mut HashSet<String>, emoji: &str) {
+    for (index, _) in emoji.char_indices().skip(1) {
+        prefixes.insert(emoji[..index].to_string());
+    }
+}
+
+fn is_emoji_candidate(value: &str) -> bool {
+    emojis::get(value).is_some() || EMOJI_PREFIXES.contains(value)
 }
 
 fn same_emoji(left: &str, right: &str) -> bool {
@@ -90,6 +119,7 @@ impl React {
             reactions,
             existing,
             custom_reaction: None,
+            typed_emoji: String::new(),
             list_state: Cell::new(list_state),
         }
     }
@@ -99,17 +129,27 @@ impl React {
     }
 
     pub fn key_event(&mut self, input: &KeyEvent) -> ReactResult {
+        if input.kind == KeyEventKind::Release {
+            return ReactResult::Consumed;
+        }
+
         match input.code {
             KeyCode::Char('k') | KeyCode::Up => {
+                self.typed_emoji.clear();
                 self.previous();
                 ReactResult::Consumed
             }
             KeyCode::Char('j') | KeyCode::Down => {
+                self.typed_emoji.clear();
                 self.next();
                 ReactResult::Consumed
             }
-            KeyCode::Esc => ReactResult::Exit,
+            KeyCode::Esc => {
+                self.typed_emoji.clear();
+                ReactResult::Exit
+            }
             KeyCode::Enter => {
+                self.typed_emoji.clear();
                 if let Some(reaction) = self.selected_reaction() {
                     if self.existing.contains(&reaction) {
                         ReactResult::RemoveReaction(reaction)
@@ -120,16 +160,52 @@ impl React {
                     ReactResult::Exit
                 }
             }
-            _ => ReactResult::Consumed,
+            KeyCode::Char(c)
+                if input.kind == KeyEventKind::Press
+                    && matches!(input.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT) =>
+            {
+                self.type_emoji_char(c);
+                ReactResult::Consumed
+            }
+            KeyCode::Char(_) if input.kind == KeyEventKind::Repeat => ReactResult::Consumed,
+            _ => {
+                self.typed_emoji.clear();
+                ReactResult::Consumed
+            }
         }
     }
 
     pub fn paste_event(&mut self, value: &str) {
+        self.typed_emoji.clear();
         let value = value.trim();
         let Some(emoji) = emojis::get(value) else {
             return;
         };
-        let emoji = emoji.as_str().to_string();
+
+        self.select_emoji(emoji.as_str());
+    }
+
+    fn type_emoji_char(&mut self, value: char) {
+        let mut candidate = self.typed_emoji.clone();
+        candidate.push(value);
+
+        if !is_emoji_candidate(&candidate) {
+            candidate = value.to_string();
+        }
+
+        if !is_emoji_candidate(&candidate) {
+            self.typed_emoji.clear();
+            return;
+        }
+
+        self.typed_emoji = candidate;
+        if let Some(emoji) = emojis::get(&self.typed_emoji) {
+            self.select_emoji(emoji.as_str());
+        }
+    }
+
+    fn select_emoji(&mut self, emoji: &str) {
+        let emoji = emoji.to_string();
 
         if let Some(custom) = self.custom_reaction.take()
             && let Some(index) = self.reactions.iter().position(|r| r.emoji == custom)
@@ -250,7 +326,7 @@ impl Widget for ReactWidget<'_> {
 
         let block = Block::default()
             .title(title)
-            .title_bottom("Paste an emoji")
+            .title_bottom("Type or paste an emoji")
             .title_alignment(Alignment::Center)
             .style(Style::default().bg(Color::Reset))
             .borders(Borders::ALL)
@@ -289,7 +365,29 @@ mod tests {
             reactions: vec![],
             existing: vec![],
             custom_reaction: None,
+            typed_emoji: String::new(),
             list_state: Cell::new(ListState::default()),
+        }
+    }
+
+    fn type_text(react: &mut React, value: &str) {
+        for value in value.chars() {
+            react.key_event(&KeyEvent::new(KeyCode::Char(value), KeyModifiers::NONE));
+        }
+    }
+
+    fn type_text_with_releases(react: &mut React, value: &str) {
+        for value in value.chars() {
+            react.key_event(&KeyEvent::new_with_kind(
+                KeyCode::Char(value),
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            ));
+            react.key_event(&KeyEvent::new_with_kind(
+                KeyCode::Char(value),
+                KeyModifiers::NONE,
+                KeyEventKind::Release,
+            ));
         }
     }
 
@@ -323,6 +421,76 @@ mod tests {
         assert_eq!(react.selected_reaction().as_deref(), Some("🪿"));
         assert_eq!(react.reactions.len(), 1);
         assert_eq!(react.custom_reaction.as_deref(), Some("🪿"));
+    }
+
+    #[test]
+    fn types_compound_emoji_one_character_at_a_time() {
+        let mut react = empty_react();
+
+        type_text_with_releases(&mut react, "👨‍👩‍👧‍👦");
+
+        assert_eq!(react.selected_reaction().as_deref(), Some("👨‍👩‍👧‍👦"));
+        assert_eq!(react.reactions.len(), 1);
+    }
+
+    #[test]
+    fn types_flag_with_key_releases() {
+        let mut react = empty_react();
+
+        type_text_with_releases(&mut react, "🇺🇸");
+
+        assert_eq!(react.selected_reaction().as_deref(), Some("🇺🇸"));
+        assert_eq!(react.reactions.len(), 1);
+    }
+
+    #[test]
+    fn types_skin_tone_zwj_sequence() {
+        let mut react = empty_react();
+
+        type_text(&mut react, "👩🏽‍💻");
+
+        assert_eq!(react.selected_reaction().as_deref(), Some("👩🏽‍💻"));
+        assert_eq!(react.reactions.len(), 1);
+    }
+
+    #[test]
+    fn types_keycap_that_starts_with_ascii() {
+        let mut react = empty_react();
+
+        type_text(&mut react, "1️⃣");
+
+        assert_eq!(react.selected_reaction().as_deref(), Some("1️⃣"));
+        assert_eq!(react.reactions.len(), 1);
+    }
+
+    #[test]
+    fn typed_emoji_replaces_the_previous_custom_emoji() {
+        let mut react = empty_react();
+
+        type_text(&mut react, "🫡🪿");
+
+        assert_eq!(react.selected_reaction().as_deref(), Some("🪿"));
+        assert_eq!(react.reactions.len(), 1);
+        assert_eq!(react.custom_reaction.as_deref(), Some("🪿"));
+    }
+
+    #[test]
+    fn invalid_input_clears_an_incomplete_candidate() {
+        let mut react = empty_react();
+        type_text(&mut react, "👩‍x");
+
+        assert_eq!(react.typed_emoji, "");
+        assert_eq!(react.selected_reaction().as_deref(), Some("👩"));
+    }
+
+    #[test]
+    fn navigation_clears_an_incomplete_candidate() {
+        let mut react = empty_react();
+        type_text(&mut react, "1");
+
+        react.key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        assert_eq!(react.typed_emoji, "");
     }
 
     #[test]
