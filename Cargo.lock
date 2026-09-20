@@ -3314,7 +3314,7 @@ dependencies = [
 
 [[package]]
 name = "matui"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "ashpd",

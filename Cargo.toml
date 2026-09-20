@@ -1,6 +1,6 @@
 [package]
 name = "matui"
-version = "1.0.1"
+version = "1.0.2"
 authors = ["Phil Kulak"]
 edition = "2024"
 
@@ -35,13 +35,13 @@ tempfile = "3"
 textwrap = "0.16.2"
 timeago = "0.6"
 tokio = { version = "1.53.0", features = ["rt-multi-thread"] }
+url = "2.5"
 
 # make sure notify-rust pulls in a zbus build that uses tokio
 zbus = { version = "5", features = ["tokio"], default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", features = ["file_chooser"] }
-url = "2.5"
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 native-dialog = "0.9"
