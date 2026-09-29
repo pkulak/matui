@@ -235,10 +235,17 @@ impl Matrix {
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrScanned(sender),
                         ) => App::send(MatuiEvent::QrLoginScanned(sender)),
-                        GrantLoginProgress::WaitingForAuth { verification_uri } => {
+                        GrantLoginProgress::WaitingForAuth {
+                            verification_uri,
+                            continuation_sender,
+                        } => {
                             let url = verification_uri.to_string();
                             let _ = open::that_detached(&url);
                             App::send(MatuiEvent::QrLoginAuth(url));
+
+                            if let Err(err) = continuation_sender.confirm().await {
+                                App::send(Error(err.to_string()));
+                            }
                         }
                         GrantLoginProgress::SyncingSecrets => {
                             App::send(ProgressStarted("Syncing secrets.".to_string(), 0));
