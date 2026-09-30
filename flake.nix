@@ -38,7 +38,7 @@
           rustToolchain
           pkgs.pkg-config
         ]
-        ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.darwin.apple_sdk.frameworks.Security ];
+        ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.darwin.apple_sdk.frameworks.Security ];
       in
       {
         packages = rec {
