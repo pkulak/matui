@@ -297,6 +297,11 @@ impl Chat {
 
                     if let Ok(edit) = result {
                         if let Some(edit) = edit {
+                            // Unchanged text means the editor was closed without saving.
+                            if edit == message.display() {
+                                return Ok(consumed!());
+                            }
+
                             self.matrix.replace_event(
                                 self.room(),
                                 message.id.clone(),

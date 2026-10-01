@@ -86,7 +86,8 @@ impl Compose {
             if let Ok(Some(message)) = result {
                 if message.trim().is_empty() {
                     self.input.value = "".to_string();
-                } else {
+                } else if message != self.input.value.trim() {
+                    // Unchanged text means the editor was closed without saving.
                     self.send(message);
 
                     return Consumed(Box::new(move |app| {
