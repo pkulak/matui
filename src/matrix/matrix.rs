@@ -170,7 +170,7 @@ impl Matrix {
                 .expect("could not set client");
 
             matrix.watch_session(client.clone());
-            matrix.start_sync(client).await;
+            matrix.start_sync(client, SyncType::Latest).await;
         });
     }
 
@@ -288,15 +288,16 @@ impl Matrix {
         App::send(MatuiEvent::LoginComplete);
         App::send(MatuiEvent::SyncStarted(SyncType::Initial));
 
-        if self.start_sync(client).await {
+        if self.start_sync(client, SyncType::Initial).await {
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             self.verify();
         }
     }
 
-    /// Start syncing forever, and wait for the room list to load for the
-    /// first time. Returns false if it never does.
-    async fn start_sync(&self, client: Client) -> bool {
+    /// Start syncing forever, and show the rooms: a restored session's from
+    /// the store right away, and a new login's once the room list has synced.
+    /// Returns false if the room list never syncs.
+    async fn start_sync(&self, client: Client, sync_type: SyncType) -> bool {
         if client.available_sliding_sync_versions().await.is_empty() {
             App::send(Error(
                 "Matui needs a homeserver that supports sliding sync (MSC4186), \
@@ -336,12 +337,26 @@ impl Matrix {
 
         let mut room_list_state = room_list.state();
 
+        let mut room_list_synced = async || {
+            while room_list_state.get() != RoomListState::Running {
+                if room_list_state.next().await.is_none() {
+                    return false;
+                }
+            }
+
+            true
+        };
+
         // anything older than this doesn't notify
         let _ = self.sync_started.set(MilliSecondsSinceUnixEpoch::now());
-        sync_service.start().await;
 
-        while room_list_state.get() != RoomListState::Running {
-            if room_list_state.next().await.is_none() {
+        // a new login has no rooms stored until the room list syncs them
+        let restored = matches!(sync_type, SyncType::Latest);
+
+        if !restored {
+            sync_service.start().await;
+
+            if !room_list_synced().await {
                 return false;
             }
         }
@@ -356,6 +371,14 @@ impl Matrix {
         }
 
         App::send(MatuiEvent::SyncComplete);
+
+        if restored {
+            sync_service.start().await;
+
+            if !room_list_synced().await {
+                return false;
+            }
+        }
 
         // prompt for any invites that arrived while we weren't running
         for room in client.invited_rooms() {
