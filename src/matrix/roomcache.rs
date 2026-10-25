@@ -71,7 +71,13 @@ impl RoomCache {
                     .iter_mut()
                     .find(|r| r.room_id() == room.room_id())
                 {
-                    Some(existing) => *existing = room,
+                    // an update to the room doesn't unvisit it
+                    Some(existing) => {
+                        *existing = DecoratedRoom {
+                            visited: existing.visited,
+                            ..room
+                        }
+                    }
                     None => inner.rooms.push(room),
                 }
             }
@@ -442,6 +448,41 @@ mod tests {
                 "!read-none:localhost",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn visited_rooms_stay_read_through_updates() {
+        let (server, client, cache) = follow().await;
+
+        sync(
+            &server,
+            &client,
+            json!({ "!a:localhost": { "initial": true, "notification_count": 1 } }),
+        )
+        .await;
+
+        rooms_once(&cache, |rooms| rooms.len() == 1).await;
+        let room = client.get_room(room_id!("!a:localhost")).unwrap();
+        cache.room_visit_event(room);
+
+        sync(
+            &server,
+            &client,
+            json!({
+                "!a:localhost": {
+                    "notification_count": 2,
+                    "timeline": [message("$1", "@bob:localhost", 1000, "hello")],
+                },
+            }),
+        )
+        .await;
+
+        let rooms = rooms_once(&cache, |rooms| {
+            rooms.first().and_then(|r| r.last_message.as_deref()) == Some("hello")
+        })
+        .await;
+
+        assert_eq!(rooms[0].unread_count(), 0);
     }
 
     #[tokio::test]
