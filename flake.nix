@@ -56,6 +56,9 @@
                 ffmpeg
                 sqlite
               ]);
+            # the HTTP client won't build without CA certificates, even
+            # against the tests' mock server
+            nativeCheckInputs = [ pkgs.cacert ];
           };
 
           default = matui;

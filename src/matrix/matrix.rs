@@ -322,7 +322,17 @@ impl Matrix {
 
         self.watch_sync(sync_service);
 
-        let mut room_list_state = sync_service.room_list_service().state();
+        let room_list = sync_service.room_list_service();
+
+        let all_rooms = match room_list.all_rooms().await {
+            Ok(all_rooms) => all_rooms,
+            Err(err) => {
+                App::send(Error(err.to_string()));
+                return false;
+            }
+        };
+
+        let mut room_list_state = room_list.state();
 
         // anything older than this doesn't notify
         let _ = self.sync_started.set(MilliSecondsSinceUnixEpoch::now());
@@ -334,7 +344,15 @@ impl Matrix {
             }
         }
 
-        self.room_cache.populate(client.clone()).await;
+        let (loaded, cache_loaded) = tokio::sync::oneshot::channel();
+        let room_cache = self.room_cache.clone();
+
+        App::spawn(async move { room_cache.follow(&all_rooms, loaded).await });
+
+        if cache_loaded.await.is_err() {
+            return false;
+        }
+
         App::send(MatuiEvent::SyncComplete);
 
         // prompt for any invites that arrived while we weren't running
@@ -1245,11 +1263,6 @@ impl Matrix {
         let matrix = self.clone();
 
         App::spawn(async move {
-            matrix
-                .room_cache
-                .timeline_event(matrix.client(), &event)
-                .await;
-
             let Some(&sync_started) = matrix.sync_started.get() else {
                 return;
             };

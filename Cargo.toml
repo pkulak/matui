@@ -43,6 +43,9 @@ url = "2.5"
 # make sure notify-rust pulls in a zbus build that uses tokio
 zbus = { version = "5", features = ["tokio"], default-features = false }
 
+[dev-dependencies]
+matrix-sdk = { version = "0.19.1", features = ["testing"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13.13", features = ["file_chooser"] }
 
