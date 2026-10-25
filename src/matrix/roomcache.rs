@@ -4,11 +4,11 @@ use std::sync::Mutex;
 use futures::future::join_all;
 use futures::{StreamExt, pin_mut};
 use log::info;
-use matrix_sdk::RoomDisplayName;
 use matrix_sdk::latest_events::LatestEventValue;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::message::MessageType;
 use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedRoomId, RoomId};
+use matrix_sdk::{RoomDisplayName, RoomRecencyStamp};
 use matrix_sdk_ui::eyeball_im::{Vector, VectorDiff};
 use matrix_sdk_ui::room_list_service::filters::new_filter_joined;
 use matrix_sdk_ui::room_list_service::{RoomList, RoomListItem};
@@ -148,6 +148,7 @@ pub struct DecoratedRoom {
     pub last_message: Option<String>,
     pub last_sender: Option<String>,
     pub last_ts: Option<MilliSecondsSinceUnixEpoch>,
+    pub recency_stamp: Option<RoomRecencyStamp>,
 }
 
 impl DecoratedRoom {
@@ -185,12 +186,13 @@ impl DecoratedRoom {
         };
 
         DecoratedRoom {
-            inner: room,
             name,
             visited: false,
             last_message,
             last_sender,
             last_ts: latest.timestamp(),
+            recency_stamp: room.recency_stamp(),
+            inner: room,
         }
     }
 }
@@ -400,6 +402,45 @@ mod tests {
         assert_eq!(
             rooms[0].last_ts,
             Some(MilliSecondsSinceUnixEpoch(2000u32.into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn sorts_unread_first_then_by_recency() {
+        let (server, client, cache) = follow().await;
+
+        sync(
+            &server,
+            &client,
+            json!({
+                "!read-old:localhost": { "initial": true, "bump_stamp": 1 },
+                "!read-new:localhost": { "initial": true, "bump_stamp": 3 },
+                "!read-none:localhost": { "initial": true },
+                "!unread-old:localhost": {
+                    "initial": true, "bump_stamp": 2, "notification_count": 1,
+                },
+                "!unread-new:localhost": {
+                    "initial": true, "bump_stamp": 5, "notification_count": 1,
+                },
+                "!unread-none:localhost": { "initial": true, "notification_count": 1 },
+            }),
+        )
+        .await;
+
+        let mut rooms = rooms_once(&cache, |rooms| rooms.len() == 6).await;
+        crate::widgets::rooms::sort_rooms(&mut rooms);
+
+        let order: Vec<_> = rooms.iter().map(|r| r.room_id().as_str()).collect();
+        assert_eq!(
+            order,
+            [
+                "!unread-new:localhost",
+                "!unread-old:localhost",
+                "!unread-none:localhost",
+                "!read-new:localhost",
+                "!read-old:localhost",
+                "!read-none:localhost",
+            ]
         );
     }
 

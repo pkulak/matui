@@ -11,6 +11,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget,
 };
 use std::cell::Cell;
+use std::cmp::Reverse;
 
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::get_margin;
@@ -265,7 +266,8 @@ fn make_list_item(room: &DecoratedRoom) -> ListItem<'_> {
     ListItem::new(lines)
 }
 
+/// Unread rooms first, then the most recently active, with rooms that have no
+/// recency stamp last.
 pub fn sort_rooms(rooms: &mut [DecoratedRoom]) {
-    rooms.sort_by_key(|r| (r.unread_count(), r.last_ts));
-    rooms.reverse()
+    rooms.sort_by_key(|r| Reverse((r.unread_count() > 0, r.recency_stamp.map(u64::from))));
 }
