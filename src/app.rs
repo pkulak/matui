@@ -130,6 +130,7 @@ impl App {
         }
 
         self.chat = chat;
+        self.matrix.subscribe_to_room(&room);
         self.matrix.room_visit_event(room);
     }
 

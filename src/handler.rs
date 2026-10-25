@@ -199,10 +199,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::SyncComplete => {
             app.popup = None;
 
-            // now we can sync forever
-            app.matrix.sync();
-
-            // and show the first room
+            // show the first room
             let mut rooms = app.matrix.fetch_rooms();
             sort_rooms(&mut rooms);
 

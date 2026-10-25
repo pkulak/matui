@@ -21,7 +21,6 @@ use matrix_sdk::authentication::oauth::registration::{
     ApplicationType, ClientMetadata, Localized, OAuthGrantType,
 };
 use matrix_sdk::authentication::oauth::{ClientId, OAuthSession, UserSession};
-use matrix_sdk::config::SyncSettings;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::encryption::EncryptionSettings;
 use matrix_sdk::encryption::verification::{
@@ -32,9 +31,6 @@ use matrix_sdk::reqwest::Url;
 use matrix_sdk::room::{MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::Direction;
 use matrix_sdk::ruma::api::client::directory::get_public_rooms_filtered;
-use matrix_sdk::ruma::api::client::filter::{
-    FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
-};
 use matrix_sdk::ruma::api::client::room::create_room::v3::RoomPreset;
 use matrix_sdk::ruma::api::client::room::{Visibility, create_room};
 use matrix_sdk::ruma::events::key::verification::VerificationMethod;
@@ -46,7 +42,9 @@ use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessa
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::serde::Raw;
 use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
-use matrix_sdk::{Client, LoopCtrl, ServerName, SessionChange};
+use matrix_sdk::{Client, ServerName, SessionChange};
+use matrix_sdk_ui::room_list_service::State as RoomListState;
+use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 use once_cell::sync::OnceCell;
 use rand::rng;
 use rand::{RngExt, distr::Alphanumeric};
@@ -84,6 +82,8 @@ use super::notify::Notify;
 #[derive(Clone)]
 pub struct Matrix {
     client: Arc<OnceCell<Client>>,
+    sync_service: Arc<OnceCell<SyncService>>,
+    subscription_lock: Arc<tokio::sync::Mutex<()>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
 }
@@ -105,6 +105,8 @@ impl Default for Matrix {
     fn default() -> Self {
         Matrix {
             client: Arc::new(OnceCell::default()),
+            sync_service: Arc::new(OnceCell::default()),
+            subscription_lock: Arc::new(tokio::sync::Mutex::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
         }
@@ -147,8 +149,8 @@ impl Matrix {
         App::spawn(async move {
             App::send(MatuiEvent::SyncStarted(SyncType::Latest));
 
-            let (client, token) = match restore_session(session_file.as_path()).await {
-                Ok(tuple) => tuple,
+            let client = match restore_session(session_file.as_path()).await {
+                Ok(client) => client,
                 Err(err) => {
                     App::send(Error(err.to_string()));
                     return;
@@ -163,17 +165,7 @@ impl Matrix {
                 .expect("could not set client");
 
             matrix.watch_session(client.clone());
-
-            info!("syncing with token {:?}", token);
-
-            if let Err(err) = sync_once(client.clone(), token, &session_file).await {
-                App::send(Error(err.to_string()));
-                return;
-            };
-
-            matrix.room_cache.populate(client).await;
-
-            App::send(MatuiEvent::SyncComplete);
+            matrix.start_sync(client).await;
         });
     }
 
@@ -188,7 +180,7 @@ impl Matrix {
             App::send(MatuiEvent::LoginStarted);
 
             match login(&data_dir, &session_file, &homeserver, &user, &pass).await {
-                Ok(client) => matrix.finish_signin(client, session_file).await,
+                Ok(client) => matrix.finish_signin(client).await,
                 Err(err) => App::send(Error(err.to_string())),
             }
         });
@@ -272,7 +264,7 @@ impl Matrix {
             App::send(MatuiEvent::LoginStarted);
 
             match login_oauth_flow(&data_dir, &session_file, &homeserver).await {
-                Ok(Some(client)) => matrix.finish_signin(client, session_file).await,
+                Ok(Some(client)) => matrix.finish_signin(client).await,
                 // cancelled from the waiting popup; back to the form
                 Ok(None) => App::send(MatuiEvent::LoginRequired),
                 Err(err) => App::send(Error(err.to_string())),
@@ -281,7 +273,7 @@ impl Matrix {
     }
 
     /// Everything that happens after a fresh login, no matter the flow.
-    async fn finish_signin(&self, client: Client, session_file: PathBuf) {
+    async fn finish_signin(&self, client: Client) {
         self.client
             .set(client.clone())
             .expect("could not set client");
@@ -291,15 +283,74 @@ impl Matrix {
         App::send(MatuiEvent::LoginComplete);
         App::send(MatuiEvent::SyncStarted(SyncType::Initial));
 
-        if let Err(err) = sync_once(client.clone(), None, &session_file).await {
-            App::send(Error(err.to_string()));
-            return;
+        if self.start_sync(client).await {
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            self.verify();
+        }
+    }
+
+    /// Start syncing forever, and wait for the room list to load for the
+    /// first time. Returns false if it never does.
+    async fn start_sync(&self, client: Client) -> bool {
+        // handlers must be in place before the first response arrives
+        add_default_handlers(client.clone());
+        add_verification_handlers(client.clone());
+
+        let sync_service = match SyncService::builder(client.clone()).build().await {
+            Ok(service) => self.sync_service.get_or_init(|| service),
+            Err(err) => {
+                App::send(Error(err.to_string()));
+                return false;
+            }
         };
+
+        let mut sync_state = sync_service.state();
+
+        App::spawn(async move {
+            while let Some(state) = sync_state.next().await {
+                if let SyncState::Error(err) = state {
+                    error!("sync stopped: {}", err);
+                    App::send(Error(format!("Sync failed: {}", err)));
+                }
+            }
+        });
+
+        let mut room_list_state = sync_service.room_list_service().state();
+
+        sync_service.start().await;
+
+        while room_list_state.get() != RoomListState::Running {
+            if room_list_state.next().await.is_none() {
+                return false;
+            }
+        }
 
         self.room_cache.populate(client.clone()).await;
         App::send(MatuiEvent::SyncComplete);
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        self.verify();
+
+        // prompt for any invites that arrived while we weren't running
+        for room in client.invited_rooms() {
+            send_invite_event(room).await;
+        }
+
+        true
+    }
+
+    /// Get the full timeline for this room, and drop any other room.
+    pub fn subscribe_to_room(&self, room: &Room) {
+        let Some(sync_service) = self.sync_service.get() else {
+            return;
+        };
+
+        let room_list = sync_service.room_list_service();
+        let room_id = room.room_id().to_owned();
+        let lock = self.subscription_lock.clone();
+
+        App::spawn(async move {
+            // keep quick room switches from finishing out of order
+            let _guard = lock.lock().await;
+            room_list.set_room_subscriptions(&[&room_id]).await;
+        });
     }
 
     /// Keep the session file up to date as tokens refresh (OAuth access
@@ -379,49 +430,6 @@ impl Matrix {
                 Err(_) => App::send(MatuiEvent::Error(
                     "Could not recover encryption keys.".to_string(),
                 )),
-            }
-        });
-    }
-
-    pub fn sync(&self) {
-        let client = self.client();
-
-        add_default_handlers(client.clone());
-        add_verification_handlers(client.clone());
-
-        // apparently we only need the token for sync_once
-        let sync_settings = build_sync_settings(None);
-
-        App::spawn(async move {
-            // prompt for any invites that arrived while we weren't running
-            for room in client.invited_rooms() {
-                send_invite_event(room).await;
-            }
-
-            let result = client
-                .sync_with_result_callback(sync_settings, |sync_result| async move {
-                    let response = match sync_result {
-                        Ok(resp) => resp,
-                        Err(err) => {
-                            error!("no sync result: {}", err);
-                            return Ok(LoopCtrl::Continue);
-                        }
-                    };
-
-                    let (_, session_file) = Matrix::dirs();
-
-                    // We persist the token each time to keep the disk up-to-date
-                    if let Err(err) = persist_sync_token(&session_file, response.next_batch) {
-                        error!("could not persist sync token {}", err)
-                    }
-
-                    Ok(LoopCtrl::Continue)
-                })
-                .await;
-
-            if let Err(err) = result {
-                error!("sync loop ended: {}", err);
-                App::send(Error(format!("Sync failed: {}", err)));
             }
         });
     }
@@ -1250,7 +1258,6 @@ enum StoredAuth {
 struct FullSession {
     client_session: ClientSession,
     user_session: StoredAuth,
-    sync_token: Option<String>,
 }
 
 fn stored_auth(client: &Client) -> anyhow::Result<StoredAuth> {
@@ -1272,7 +1279,6 @@ fn persist_session(
     let serialized_session = serde_json::to_string(&FullSession {
         client_session,
         user_session: stored_auth(client)?,
-        sync_token: None,
     })?;
 
     fs::write(session_file, serialized_session)?;
@@ -1291,14 +1297,22 @@ fn persist_auth(session_file: &Path, client: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<String>)> {
+async fn restore_session(session_file: &Path) -> anyhow::Result<Client> {
     let serialized_session = fs::read_to_string(session_file)?;
+    let mut raw_session: serde_json::Value = serde_json::from_str(&serialized_session)?;
 
     let FullSession {
         client_session,
         user_session,
-        sync_token,
-    } = serde_json::from_str(&serialized_session)?;
+    } = serde_json::from_value(raw_session.clone())?;
+
+    // only sessions that synced with /sync have a sync_token
+    if let Some(session) = raw_session.as_object_mut()
+        && session.remove("sync_token").is_some()
+    {
+        forget_legacy_to_device_token(&client_session.db_path)?;
+        fs::write(session_file, raw_session.to_string())?;
+    }
 
     let homeserver = <&ServerName>::try_from(client_session.homeserver.as_str())?;
 
@@ -1319,7 +1333,24 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<(Client, Option<
 
     client.restore_session(session).await?;
 
-    Ok((client, sync_token))
+    Ok(client)
+}
+
+/// Synapse rejects a /sync to-device token in sliding sync, so drop the one
+/// /sync left in the crypto store.
+///
+/// TODO: drop this once matrix-sdk releases matrix-org/matrix-rust-sdk#7135,
+/// which clears the token itself.
+fn forget_legacy_to_device_token(db_path: &Path) -> anyhow::Result<()> {
+    let db = rusqlite::Connection::open_with_flags(
+        db_path.join("matrix-sdk-crypto.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )?;
+    db.execute("DELETE FROM kv WHERE key = 'next_batch_token'", ())?;
+
+    info!("forgot the /sync to-device token");
+
+    Ok(())
 }
 
 async fn login(
@@ -1476,67 +1507,12 @@ async fn build_client(
     ))
 }
 
-fn build_sync_settings(sync_token: Option<String>) -> SyncSettings {
-    let mut state_filter = RoomEventFilter::empty();
-    state_filter.lazy_load_options = LazyLoadOptions::Enabled {
-        include_redundant_members: false,
-    };
-
-    let mut room_filter = RoomFilter::empty();
-    room_filter.state = state_filter;
-
-    let mut filter = FilterDefinition::empty();
-    filter.room = room_filter;
-
-    let mut sync_settings = SyncSettings::default().filter(filter.into());
-
-    if let Some(token) = sync_token {
-        sync_settings = sync_settings.token(token);
-    }
-
-    sync_settings
-}
-
 fn build_encryption_settings() -> EncryptionSettings {
     EncryptionSettings {
         auto_enable_cross_signing: true,
         auto_enable_backups: true,
         backup_download_strategy: matrix_sdk::encryption::BackupDownloadStrategy::OneShot,
     }
-}
-
-async fn sync_once(
-    client: Client,
-    sync_token: Option<String>,
-    session_file: &Path,
-) -> anyhow::Result<String> {
-    let sync_settings = build_sync_settings(sync_token);
-
-    for _ in 0..10 {
-        match client.sync_once(sync_settings.clone()).await {
-            Ok(response) => {
-                persist_sync_token(session_file, response.next_batch.clone())?;
-                return Ok(response.next_batch);
-            }
-            Err(error) => {
-                info!("An error occurred during initial sync: {error}");
-                info!("Trying again…");
-            }
-        }
-    }
-
-    bail!("Sync timeout.")
-}
-
-fn persist_sync_token(session_file: &Path, sync_token: String) -> anyhow::Result<()> {
-    let serialized_session = fs::read_to_string(session_file)?;
-    let mut full_session: FullSession = serde_json::from_str(&serialized_session)?;
-
-    full_session.sync_token = Some(sync_token);
-    let serialized_session = serde_json::to_string(&full_session)?;
-    fs::write(session_file, serialized_session)?;
-
-    Ok(())
 }
 
 fn add_default_handlers(client: Client) {

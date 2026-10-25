@@ -15,3 +15,6 @@ test.log
 
 # generated direnv files
 .direnv
+
+# agent plans and specs
+.scratch
