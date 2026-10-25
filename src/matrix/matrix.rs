@@ -61,7 +61,8 @@ use matrix_sdk::ruma::events::{
     EmptyStateKey, InitialStateEvent, MessageLikeEvent, SyncEphemeralRoomEvent,
 };
 use matrix_sdk::ruma::{
-    OwnedEventId, OwnedRoomId, OwnedRoomOrAliasId, OwnedUserId, RoomOrAliasId, UInt,
+    MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedRoomOrAliasId, OwnedUserId,
+    RoomOrAliasId, UInt,
 };
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +87,7 @@ pub struct Matrix {
     subscription_lock: Arc<tokio::sync::Mutex<()>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
+    sync_started: Arc<OnceCell<MilliSecondsSinceUnixEpoch>>,
 }
 
 /// What should we do with the file after we download it?
@@ -109,6 +111,7 @@ impl Default for Matrix {
             subscription_lock: Arc::new(tokio::sync::Mutex::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
+            sync_started: Arc::new(OnceCell::default()),
         }
     }
 }
@@ -317,6 +320,8 @@ impl Matrix {
 
         let mut room_list_state = sync_service.room_list_service().state();
 
+        // anything older than this doesn't notify
+        let _ = self.sync_started.set(MilliSecondsSinceUnixEpoch::now());
         sync_service.start().await;
 
         while room_list_state.get() != RoomListState::Running {
@@ -1173,7 +1178,15 @@ impl Matrix {
                 .timeline_event(matrix.client(), &event)
                 .await;
 
-            if let Err(e) = matrix.notify.timeline_event(matrix.client(), event).await {
+            let Some(&sync_started) = matrix.sync_started.get() else {
+                return;
+            };
+
+            if let Err(e) = matrix
+                .notify
+                .timeline_event(matrix.client(), event, sync_started)
+                .await
+            {
                 error!("could not send notification: {}", e);
             }
         });

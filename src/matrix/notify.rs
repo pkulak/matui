@@ -1,6 +1,6 @@
 use log::error;
-use matrix_sdk::ruma::UserId;
 use matrix_sdk::ruma::events::{AnyMessageLikeEvent, MessageLikeEvent};
+use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, RoomId, UserId};
 use matrix_sdk::ruma::{OwnedRoomId, events::AnyTimelineEvent};
 use std::fs::OpenOptions;
 use std::sync::Arc;
@@ -29,6 +29,8 @@ pub struct Notify {
     focus: AtomicBool,
     room_id: Mutex<Option<OwnedRoomId>>,
     rooms: Arc<Mutex<HashMap<String, u32>>>,
+    // newest event timestamp seen in each room
+    marks: Mutex<HashMap<OwnedRoomId, MilliSecondsSinceUnixEpoch>>,
 }
 
 impl Default for Notify {
@@ -37,6 +39,7 @@ impl Default for Notify {
             focus: AtomicBool::new(false),
             room_id: Mutex::new(None),
             rooms: Arc::new(Mutex::new(HashMap::new())),
+            marks: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -46,27 +49,28 @@ impl Notify {
         &self,
         client: Client,
         event: AnyTimelineEvent,
+        sync_started: MilliSecondsSinceUnixEpoch,
     ) -> anyhow::Result<()> {
         if let Some(message) = Message::try_from(&event, true) {
-            // don't send notifications for our own messages
-            if message.sender.id == *client.user_id().unwrap() {
-                return Ok(());
-            }
-
-            // or when the room is muted, unless it mentions us
-            if is_muted(message.room_id.as_ref())
-                && !(mentions_override_mute() && mentions_user(&event, client.user_id().unwrap()))
-            {
-                return Ok(());
-            }
+            let newer_than = self.raise_mark(&event, sync_started);
 
             {
-                // don't do anything if the app is focused on our room
                 let current_room_id = self.room_id.lock().unwrap();
 
-                if self.focus.load(Ordering::Relaxed)
-                    && (*current_room_id).as_ref() == Some(&message.room_id)
-                {
+                let focused_room = if self.focus.load(Ordering::Relaxed) {
+                    current_room_id.as_deref()
+                } else {
+                    None
+                };
+
+                if !should_notify(
+                    &event,
+                    client.user_id().unwrap(),
+                    newer_than,
+                    is_muted(event.room_id()),
+                    mentions_override_mute(),
+                    focused_room,
+                ) {
                     return Ok(());
                 }
             }
@@ -85,6 +89,24 @@ impl Notify {
         }
 
         Ok(())
+    }
+
+    // Raise the room's mark to this event and return the old mark, starting
+    // from `sync_started`. Room subscriptions re-send recent events, so only
+    // events newer than the old mark are new.
+    fn raise_mark(
+        &self,
+        event: &AnyTimelineEvent,
+        sync_started: MilliSecondsSinceUnixEpoch,
+    ) -> MilliSecondsSinceUnixEpoch {
+        let mut marks = self.marks.lock().unwrap();
+        let mark = marks
+            .entry(event.room_id().to_owned())
+            .or_insert(sync_started);
+
+        let old = *mark;
+        *mark = old.max(event.origin_server_ts());
+        old
     }
 
     pub fn focus_event(&self) {
@@ -280,6 +302,37 @@ impl Notify {
     }
 }
 
+// Should this event send a desktop notification? `newer_than` is the room's
+// mark from `raise_mark`. `focused_room` is the room on screen, or None when
+// Matui doesn't have focus.
+fn should_notify(
+    event: &AnyTimelineEvent,
+    me: &UserId,
+    newer_than: MilliSecondsSinceUnixEpoch,
+    muted: bool,
+    mentions_override_mute: bool,
+    focused_room: Option<&RoomId>,
+) -> bool {
+    // only messages we haven't seen; the room list and room subscriptions
+    // also deliver older events
+    if event.origin_server_ts() <= newer_than {
+        return false;
+    }
+
+    // not our own messages
+    if event.sender() == me {
+        return false;
+    }
+
+    // not muted rooms, unless the message mentions us
+    if muted && !(mentions_override_mute && mentions_user(event, me)) {
+        return false;
+    }
+
+    // not the room we're looking at
+    focused_room != Some(event.room_id())
+}
+
 // does the event intentionally mention the given user (or the whole room)?
 fn mentions_user(event: &AnyTimelineEvent, me: &UserId) -> bool {
     if let AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomMessage(
@@ -295,12 +348,16 @@ fn mentions_user(event: &AnyTimelineEvent, me: &UserId) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::mentions_user;
+    use super::{Notify, mentions_user, should_notify};
     use matrix_sdk::ruma::events::AnyTimelineEvent;
     use matrix_sdk::ruma::exports::serde_json::{Value, from_value, json};
-    use matrix_sdk::ruma::user_id;
+    use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, UInt, room_id, user_id};
 
     fn message_event(mentions: Option<Value>) -> AnyTimelineEvent {
+        event_from("@bob:example.org", 1_000, mentions)
+    }
+
+    fn event_from(sender: &str, ts: u64, mentions: Option<Value>) -> AnyTimelineEvent {
         let mut content = json!({ "msgtype": "m.text", "body": "hey" });
 
         if let Some(m) = mentions {
@@ -310,8 +367,8 @@ mod tests {
         from_value(json!({
             "type": "m.room.message",
             "event_id": "$event:example.org",
-            "sender": "@bob:example.org",
-            "origin_server_ts": 1_000,
+            "sender": sender,
+            "origin_server_ts": ts,
             "room_id": "!room:example.org",
             "content": content,
         }))
@@ -333,5 +390,87 @@ mod tests {
 
         let event = message_event(None);
         assert!(!mentions_user(&event, me));
+    }
+
+    fn started() -> MilliSecondsSinceUnixEpoch {
+        MilliSecondsSinceUnixEpoch(UInt::from(1_000u32))
+    }
+
+    #[test]
+    fn it_only_notifies_after_startup() {
+        let me = user_id!("@alice:example.org");
+
+        let event = event_from("@bob:example.org", 999, None);
+        assert!(!should_notify(&event, me, started(), false, true, None));
+
+        let event = event_from("@bob:example.org", 1_000, None);
+        assert!(!should_notify(&event, me, started(), false, true, None));
+
+        let event = event_from("@bob:example.org", 1_001, None);
+        assert!(should_notify(&event, me, started(), false, true, None));
+    }
+
+    #[test]
+    fn it_raises_the_mark_once_per_event() {
+        let notify = Notify::default();
+        let event = event_from("@bob:example.org", 2_000, None);
+        let older = event_from("@bob:example.org", 1_500, None);
+
+        assert_eq!(notify.raise_mark(&event, started()), started());
+
+        // a subscription re-sends the event, and an older one
+        let mark = MilliSecondsSinceUnixEpoch(UInt::from(2_000u32));
+        assert_eq!(notify.raise_mark(&event, started()), mark);
+        assert_eq!(notify.raise_mark(&older, started()), mark);
+    }
+
+    #[test]
+    fn it_skips_own_messages() {
+        let me = user_id!("@alice:example.org");
+        let event = event_from("@alice:example.org", 2_000, None);
+
+        assert!(!should_notify(&event, me, started(), false, true, None));
+    }
+
+    #[test]
+    fn it_skips_muted_rooms_unless_mentioned() {
+        let me = user_id!("@alice:example.org");
+        let plain = event_from("@bob:example.org", 2_000, None);
+        let mention = event_from(
+            "@bob:example.org",
+            2_000,
+            Some(json!({ "user_ids": ["@alice:example.org"] })),
+        );
+
+        assert!(!should_notify(&plain, me, started(), true, true, None));
+        assert!(should_notify(&mention, me, started(), true, true, None));
+
+        // the override is off
+        assert!(!should_notify(&mention, me, started(), true, false, None));
+    }
+
+    #[test]
+    fn it_skips_the_focused_room() {
+        let me = user_id!("@alice:example.org");
+        let event = event_from("@bob:example.org", 2_000, None);
+        let this_room = Some(room_id!("!room:example.org"));
+        let other_room = Some(room_id!("!other:example.org"));
+
+        assert!(!should_notify(
+            &event,
+            me,
+            started(),
+            false,
+            true,
+            this_room
+        ));
+        assert!(should_notify(
+            &event,
+            me,
+            started(),
+            false,
+            true,
+            other_room
+        ));
     }
 }
