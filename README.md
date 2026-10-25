@@ -16,6 +16,9 @@ is not conserved at all.
 Anyone who wants a very simple terminal Matrix client. Room administration
 beyond moderation (settings, power levels) is left to other clients.
 
+Your homeserver must support Simplified Sliding Sync (MSC4186), as Synapse and
+matrix.org do. Matui shows an error and won't sync on servers that don't.
+
 # Installation
 
 ## Releases

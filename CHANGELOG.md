@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.0] - 2026-10-25
+
+- Sync with Simplified Sliding Sync (MSC4186) instead of `/sync`. Matui now needs a homeserver that supports it.
+
 ## [1.0.2] - 2026-09-19
 
 - Fix macOS release builds by including the URL parsing dependency on every platform.

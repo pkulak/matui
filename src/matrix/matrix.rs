@@ -295,6 +295,15 @@ impl Matrix {
     /// Start syncing forever, and wait for the room list to load for the
     /// first time. Returns false if it never does.
     async fn start_sync(&self, client: Client) -> bool {
+        if client.available_sliding_sync_versions().await.is_empty() {
+            App::send(Error(
+                "Matui needs a homeserver that supports sliding sync (MSC4186), \
+                 and this one doesn't."
+                    .to_string(),
+            ));
+            return false;
+        }
+
         // handlers must be in place before the first response arrives
         add_default_handlers(client.clone());
         add_verification_handlers(client.clone());
