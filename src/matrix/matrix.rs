@@ -26,6 +26,7 @@ use matrix_sdk::encryption::EncryptionSettings;
 use matrix_sdk::encryption::verification::{
     Emoji, SasState, SasVerification, Verification, VerificationRequest, VerificationRequestState,
 };
+use matrix_sdk::encryption::vodozemac::base64_decode;
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
 use matrix_sdk::reqwest::Url;
 use matrix_sdk::room::{MessagesOptions, Receipts, Room};
@@ -42,7 +43,8 @@ use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessa
 use matrix_sdk::ruma::exports::serde_json;
 use matrix_sdk::ruma::serde::Raw;
 use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
-use matrix_sdk::{Client, ServerName, SessionChange};
+use matrix_sdk::{Client, ServerName, SessionChange, SqliteStoreConfig};
+use matrix_sdk_sqlite::Base64Variant;
 use matrix_sdk_ui::room_list_service::State as RoomListState;
 use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 use once_cell::sync::OnceCell;
@@ -1417,7 +1419,10 @@ async fn restore_session(session_file: &Path) -> anyhow::Result<Client> {
     // Build the client with the previous settings from the session.
     let client = Client::builder()
         .server_name(homeserver)
-        .sqlite_store(client_session.db_path, Some(&client_session.passphrase))
+        .sqlite_store_with_config_and_cache_path(
+            store_config(&client_session.db_path, &client_session.passphrase)?,
+            None::<&Path>,
+        )
         .with_encryption_settings(build_encryption_settings())
         .handle_refresh_tokens()
         .build()
@@ -1589,7 +1594,10 @@ async fn build_client(
 
     let client = Client::builder()
         .server_name(server)
-        .sqlite_store(&db_path, Some(passphrase.as_str()))
+        .sqlite_store_with_config_and_cache_path(
+            store_config(&db_path, &passphrase)?,
+            None::<&Path>,
+        )
         .with_encryption_settings(build_encryption_settings())
         .handle_refresh_tokens()
         .build()
@@ -1603,6 +1611,19 @@ async fn build_client(
             passphrase,
         },
     ))
+}
+
+/// Our passphrases are 32 random base64 characters, so the store can use the
+/// bytes they encode as its key, rather than run PBKDF2 for each of its four
+/// databases at every launch. Opening a store set up with the passphrase
+/// switches it to the key, so older versions of Matui can't open it after.
+fn store_config(db_path: &Path, passphrase: &str) -> anyhow::Result<SqliteStoreConfig> {
+    let key = base64_decode(passphrase)?;
+
+    Ok(
+        SqliteStoreConfig::new(db_path)
+            .high_entropy_passphrase(Some(&key), Base64Variant::Unpadded),
+    )
 }
 
 fn build_encryption_settings() -> EncryptionSettings {
@@ -1809,4 +1830,42 @@ pub fn format_emojis(emojis: [Emoji; 7]) -> String {
         .map(|e| center_emoji(e))
         .collect::<Vec<_>>()
         .join("")
+}
+
+#[cfg(test)]
+mod tests {
+    use matrix_sdk::{SqliteStateStore, StateStore};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn store_set_up_with_the_passphrase_switches_to_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let passphrase = "aZ09bY18cX27dW36eV45fU54gT63hS72";
+
+        let store = SqliteStateStore::open_with_config(
+            &SqliteStoreConfig::new(dir.path()).passphrase(Some(passphrase)),
+        )
+        .await
+        .unwrap();
+        store
+            .set_custom_value(b"kept", b"yes".to_vec())
+            .await
+            .unwrap();
+        drop(store);
+
+        // the first open migrates, and the second uses the key alone
+        for _ in 0..2 {
+            let config = store_config(dir.path(), passphrase).unwrap();
+            let store = SqliteStateStore::open_with_config(&config).await.unwrap();
+            let kept = store.get_custom_value(b"kept").await.unwrap();
+            assert_eq!(kept.as_deref(), Some(b"yes".as_slice()));
+        }
+
+        let old = SqliteStateStore::open_with_config(
+            &SqliteStoreConfig::new(dir.path()).passphrase(Some(passphrase)),
+        )
+        .await;
+        assert!(old.is_err(), "the store should need the key now");
+    }
 }

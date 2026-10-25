@@ -20,6 +20,8 @@ log = "0.4"
 log-panics = { version = "2", features = ["with-backtrace"] }
 matrix-sdk = { version = "0.19.1", features = ["markdown", "bundled-sqlite", "local-server"] }
 matrix-sdk-ui = "0.19.1"
+# only for Base64Variant, which matrix-sdk doesn't re-export
+matrix-sdk-sqlite = { version = "0.19.1", default-features = false }
 mime = "0.3"
 notify-rust = { version = "4.18", features = ["images"] }
 notify = "8.2"

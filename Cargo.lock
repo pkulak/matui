@@ -3700,6 +3700,7 @@ dependencies = [
  "log",
  "log-panics",
  "matrix-sdk",
+ "matrix-sdk-sqlite",
  "matrix-sdk-ui",
  "mime",
  "native-dialog",
