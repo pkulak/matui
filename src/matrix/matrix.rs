@@ -299,7 +299,11 @@ impl Matrix {
         add_default_handlers(client.clone());
         add_verification_handlers(client.clone());
 
-        let sync_service = match SyncService::builder(client.clone()).build().await {
+        let sync_service = match SyncService::builder(client.clone())
+            .with_offline_mode()
+            .build()
+            .await
+        {
             Ok(service) => self.sync_service.get_or_init(|| service),
             Err(err) => {
                 App::send(Error(err.to_string()));
@@ -307,16 +311,7 @@ impl Matrix {
             }
         };
 
-        let mut sync_state = sync_service.state();
-
-        App::spawn(async move {
-            while let Some(state) = sync_state.next().await {
-                if let SyncState::Error(err) = state {
-                    error!("sync stopped: {}", err);
-                    App::send(Error(format!("Sync failed: {}", err)));
-                }
-            }
-        });
+        self.watch_sync(sync_service);
 
         let mut room_list_state = sync_service.room_list_service().state();
 
@@ -339,6 +334,74 @@ impl Matrix {
         }
 
         true
+    }
+
+    /// Restart sync after it fails, and only show an error once it keeps
+    /// failing. Losing the network needs nothing here: offline mode waits for
+    /// the server to come back by itself. But if the server answers and still
+    /// rejects sync, offline mode retries with no pause, so pause it here.
+    fn watch_sync(&self, sync_service: &SyncService) {
+        const RESTART_DELAY: Duration = Duration::from_secs(5);
+        const FAILURES_BEFORE_POPUP: u32 = 3;
+
+        enum Watched {
+            Sync(SyncState),
+            RoomList(RoomListState),
+        }
+
+        let mut states = futures::stream::select(
+            sync_service.state().map(Watched::Sync),
+            sync_service
+                .room_list_service()
+                .state()
+                .map(Watched::RoomList),
+        );
+
+        let cell = self.sync_service.clone();
+
+        App::spawn(async move {
+            let mut failures = 0;
+
+            while let Some(state) = states.next().await {
+                let offline = matches!(state, Watched::Sync(SyncState::Offline));
+
+                let failure = match state {
+                    // the sync service says Running before any request, so
+                    // only a room list that synced again proves recovery
+                    Watched::RoomList(RoomListState::Running) => {
+                        failures = 0;
+                        continue;
+                    }
+                    Watched::Sync(SyncState::Error(err)) => err.to_string(),
+                    Watched::Sync(SyncState::Terminated) => "sync stopped".to_string(),
+                    Watched::Sync(SyncState::Offline) => "the server rejects sync".to_string(),
+                    _ => continue,
+                };
+
+                failures += 1;
+                error!("sync failed ({} in a row): {}", failures, failure);
+
+                if failures == FAILURES_BEFORE_POPUP {
+                    App::send(Error(format!("Sync failed: {}", failure)));
+                }
+
+                // a first Offline is usually a lost connection, which the
+                // service waits out by itself
+                if offline && failures == 1 {
+                    continue;
+                }
+
+                let Some(sync_service) = cell.get() else {
+                    continue;
+                };
+
+                // cancels offline mode's own retries; does nothing after an
+                // error or termination
+                sync_service.stop().await;
+                tokio::time::sleep(RESTART_DELAY).await;
+                sync_service.start().await;
+            }
+        });
     }
 
     /// Get the full timeline for this room, and drop any other room.
