@@ -74,72 +74,42 @@ impl Matrix {
 
     pub fn download_content(&self, message: MessageType, after: AfterDownload) {
         let matrix = self.clone();
-        let octets = "application/octet-stream".to_string();
 
         App::spawn(async move {
             App::send(ProgressStarted("Downloading file.".to_string(), 250));
 
-            let (content_type, request, file_name) = match message {
-                Image(content) => {
-                    let file_name = content.filename().to_string();
-                    (
-                        content
-                            .info
-                            .and_then(|info| info.mimetype)
-                            .unwrap_or(octets),
-                        MediaRequestParameters {
-                            source: content.source,
-                            format: MediaFormat::File,
-                        },
-                        file_name,
-                    )
-                }
-                Video(content) => {
-                    let file_name = content.filename().to_string();
-                    (
-                        content
-                            .info
-                            .and_then(|info| info.mimetype)
-                            .unwrap_or(octets),
-                        MediaRequestParameters {
-                            source: content.source,
-                            format: MediaFormat::File,
-                        },
-                        file_name,
-                    )
-                }
-                Audio(content) => {
-                    let file_name = content.filename().to_string();
-                    (
-                        content
-                            .info
-                            .and_then(|info| info.mimetype)
-                            .unwrap_or(octets),
-                        MediaRequestParameters {
-                            source: content.source,
-                            format: MediaFormat::File,
-                        },
-                        file_name,
-                    )
-                }
-                File(content) => {
-                    let file_name = content.filename().to_string();
-                    (
-                        content
-                            .info
-                            .and_then(|info| info.mimetype)
-                            .unwrap_or(octets),
-                        MediaRequestParameters {
-                            source: content.source,
-                            format: MediaFormat::File,
-                        },
-                        file_name,
-                    )
-                }
+            let (file_name, mimetype, source) = match message {
+                Image(c) => (
+                    c.filename().to_string(),
+                    c.info.and_then(|i| i.mimetype),
+                    c.source,
+                ),
+                Video(c) => (
+                    c.filename().to_string(),
+                    c.info.and_then(|i| i.mimetype),
+                    c.source,
+                ),
+                Audio(c) => (
+                    c.filename().to_string(),
+                    c.info.and_then(|i| i.mimetype),
+                    c.source,
+                ),
+                File(c) => (
+                    c.filename().to_string(),
+                    c.info.and_then(|i| i.mimetype),
+                    c.source,
+                ),
                 _ => {
                     App::send(Error("Unknown file type.".to_string()));
                     return;
                 }
+            };
+
+            let content_type = mimetype.unwrap_or_else(|| "application/octet-stream".to_string());
+
+            let request = MediaRequestParameters {
+                source,
+                format: MediaFormat::File,
             };
 
             let handle = match matrix
