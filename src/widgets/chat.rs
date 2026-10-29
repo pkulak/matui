@@ -305,12 +305,8 @@ impl Chat {
                                 return Ok(consumed!());
                             }
 
-                            self.matrix.replace_event(
-                                self.room(),
-                                message.id.clone(),
-                                edit,
-                                message.in_reply_to.clone(),
-                            );
+                            self.matrix
+                                .replace_event(self.room(), message.id.clone(), edit);
 
                             return Ok(consumed!());
                         } else {
