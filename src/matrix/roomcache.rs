@@ -14,7 +14,7 @@ use matrix_sdk_ui::room_list_service::filters::new_filter_joined;
 use matrix_sdk_ui::room_list_service::{RoomList, RoomListItem};
 use tokio::sync::oneshot;
 
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 
 #[derive(Default)]
 pub struct RoomCache {

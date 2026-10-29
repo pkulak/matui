@@ -12,7 +12,7 @@ use tokio::runtime::Handle;
 
 use crate::event::{Event, EventHandler};
 use crate::handler::MatuiEvent;
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 use crate::widgets::EventResult;
 use crate::widgets::chat::Chat;
 use crate::widgets::command::Command;

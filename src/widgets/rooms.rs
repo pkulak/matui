@@ -1,4 +1,4 @@
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::{close, consumed};
 use crossterm::event::{KeyCode, KeyEvent};

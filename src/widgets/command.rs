@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use matrix_sdk::ruma::{IdParseError, OwnedUserId, RoomOrAliasId, UserId};
 
 use crate::app::{App, Popup};
-use crate::matrix::matrix::Moderation;
+use crate::matrix::Moderation;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;

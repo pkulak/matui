@@ -1,5 +1,5 @@
 use crate::app::Popup;
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::widgets::compose::Compose;
 use crate::{close, consumed};

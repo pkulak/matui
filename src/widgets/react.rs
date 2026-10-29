@@ -1,4 +1,4 @@
-use crate::matrix::matrix::center_emoji;
+use crate::matrix::emoji::center_emoji;
 use crate::settings::get_settings;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use once_cell::sync::Lazy;
