@@ -36,17 +36,8 @@ impl Matrix {
         App::spawn(async move {
             App::send(ProgressStarted("Joining.".to_string(), 500));
 
-            match room.join().await {
-                Ok(_) => {
-                    matrix.room_cache.add_room(room.clone()).await;
-                    App::send(ProgressComplete);
-                    App::send(MatuiEvent::RoomSelected(room));
-                }
-                Err(err) => {
-                    App::send(ProgressComplete);
-                    App::send(Error(err.to_string()));
-                }
-            }
+            let result = room.join().await.map(|_| room);
+            matrix.open_room(result).await;
         });
     }
 
@@ -56,17 +47,8 @@ impl Matrix {
         App::spawn(async move {
             App::send(ProgressStarted("Joining.".to_string(), 500));
 
-            match matrix.client().join_room_by_id_or_alias(&target, &[]).await {
-                Ok(room) => {
-                    matrix.room_cache.add_room(room.clone()).await;
-                    App::send(ProgressComplete);
-                    App::send(MatuiEvent::RoomSelected(room));
-                }
-                Err(err) => {
-                    App::send(ProgressComplete);
-                    App::send(Error(err.to_string()));
-                }
-            }
+            let result = matrix.client().join_room_by_id_or_alias(&target, &[]).await;
+            matrix.open_room(result).await;
         });
     }
 
@@ -82,9 +64,7 @@ impl Matrix {
                     RoomOrAliasId::parse(format!("#{}:{}", name, matrix.me().server_name()))
                 && let Ok(room) = matrix.client().join_room_by_id_or_alias(&alias, &[]).await
             {
-                matrix.room_cache.add_room(room.clone()).await;
-                App::send(ProgressComplete);
-                App::send(MatuiEvent::RoomSelected(room));
+                matrix.open_room(Ok(room)).await;
                 return;
             }
 
@@ -175,17 +155,8 @@ impl Matrix {
                 ];
             }
 
-            match matrix.client().create_room(request).await {
-                Ok(room) => {
-                    matrix.room_cache.add_room(room.clone()).await;
-                    App::send(ProgressComplete);
-                    App::send(MatuiEvent::RoomSelected(room));
-                }
-                Err(err) => {
-                    App::send(ProgressComplete);
-                    App::send(Error(err.to_string()));
-                }
-            }
+            let result = matrix.client().create_room(request).await;
+            matrix.open_room(result).await;
         });
     }
 
@@ -213,17 +184,7 @@ impl Matrix {
                 matrix.client().create_room(request).await
             };
 
-            match result {
-                Ok(room) => {
-                    matrix.room_cache.add_room(room.clone()).await;
-                    App::send(ProgressComplete);
-                    App::send(MatuiEvent::RoomSelected(room));
-                }
-                Err(err) => {
-                    App::send(ProgressComplete);
-                    App::send(Error(err.to_string()));
-                }
-            }
+            matrix.open_room(result).await;
         });
     }
 
@@ -319,5 +280,21 @@ impl Matrix {
                 }
             }
         });
+    }
+
+    /// Finish joining or creating a room: add it to the room list and open
+    /// it, or show why it failed.
+    async fn open_room(&self, result: matrix_sdk::Result<Room>) {
+        match result {
+            Ok(room) => {
+                self.room_cache.add_room(room.clone()).await;
+                App::send(ProgressComplete);
+                App::send(MatuiEvent::RoomSelected(room));
+            }
+            Err(err) => {
+                App::send(ProgressComplete);
+                App::send(Error(err.to_string()));
+            }
+        }
     }
 }
