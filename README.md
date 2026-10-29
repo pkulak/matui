@@ -11,6 +11,14 @@ is not conserved at all.
 
 ![Matui](https://github.com/pkulak/matui/blob/main/screenshot.png?raw=true "The main chat window.")
 
+# New sliding-sync requirement
+
+Version 1.1 now requires a sliding-sync server. I resisted this for a while,
+but it's so much faster and at this point the two servers anyone should be
+using (tuwunel and synapse) both have sliding-sync built in. Apologies to
+anyone using Dendrite. If that's you, I'm receptive to an issue where we can
+chat about maintaining a special backports branch.
+
 # Who should use this client?
 
 Anyone who wants a very simple terminal Matrix client. Room administration
