@@ -4,7 +4,7 @@ use std::sync::mpsc::{Sender, TryRecvError, channel};
 use std::time::Duration;
 use std::{fs, thread};
 
-use log::{error, info};
+use log::error;
 use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
@@ -341,13 +341,7 @@ impl Matrix {
         Some(event)
     }
 
-    pub fn replace_event(
-        &self,
-        room: Room,
-        id: OwnedEventId,
-        message: String,
-        in_reply_to: Option<OwnedEventId>,
-    ) {
+    pub fn replace_event(&self, room: Room, id: OwnedEventId, message: String) {
         App::spawn(async move {
             App::send(ProgressStarted("Editing message.".to_string(), 500));
 
@@ -358,18 +352,6 @@ impl Matrix {
             let Some(event) = event.as_original() else {
                 return;
             };
-
-            let reply_event = match in_reply_to {
-                Some(id) => Matrix::get_room_event(&room, &id).await,
-                None => None,
-            };
-
-            let reply_event = match reply_event {
-                Some(e) => e.as_original().cloned(),
-                None => None,
-            };
-
-            info!("reply event: {:?}", reply_event);
 
             let content = without_me(&room, text_content(&room, &message).await);
 
