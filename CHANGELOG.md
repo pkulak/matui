@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Mention people by typing their user ID (`@bob:example.com`) in any message, or pick a room member with `@`. Replies now mention the person you're replying to, and edits keep their mentions.
+
 ## [1.0.2] - 2026-09-19
 
 - Fix macOS release builds by including the URL parsing dependency on every platform.
