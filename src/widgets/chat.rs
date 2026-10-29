@@ -1,7 +1,7 @@
 use crate::app::{App, Popup};
 use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, spawn_editor};

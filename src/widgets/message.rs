@@ -9,9 +9,10 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use timeago::Formatter;
 
-use crate::matrix::matrix::{AfterDownload, Matrix, pad_emoji};
+use crate::matrix::emoji::pad_emoji;
 use crate::matrix::mentions::restore_user_ids;
 use crate::matrix::username::Username;
+use crate::matrix::{AfterDownload, Matrix};
 use crate::spawn::view_text;
 use crate::{limit_list, pretty_list};
 use chrono::offset::Local;

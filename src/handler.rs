@@ -1,5 +1,5 @@
 use crate::app::{App, Popup};
-use crate::matrix::matrix::format_emojis;
+use crate::matrix::emoji::format_emojis;
 use crate::spawn::pasted_file_paths;
 use crate::widgets::EventResult;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};

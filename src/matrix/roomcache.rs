@@ -10,7 +10,7 @@ use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, RoomId};
 use matrix_sdk::{Client, RoomDisplayName, RoomState};
 use std::sync::Mutex;
 
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 
 pub struct RoomCache {
     rooms: Mutex<Vec<DecoratedRoom>>,

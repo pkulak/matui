@@ -25,7 +25,7 @@ use url::Url;
 
 use crate::app::App;
 use crate::event::{Event, EventHandler};
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 use crate::settings::clean_vim;
 use matrix_sdk::Room;
 

@@ -8,7 +8,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::textinput::TextInput;
 use crate::widgets::{EventResult, get_margin};

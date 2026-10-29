@@ -8,7 +8,7 @@ use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::event::EventHandler;
-use crate::matrix::matrix::Matrix;
+use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::spawn::spawn_editor;
 use crate::widgets::EventResult::{Consumed, Ignored};
