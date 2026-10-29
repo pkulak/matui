@@ -8,6 +8,7 @@ use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
+use crate::widgets::members::Members;
 use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
@@ -285,10 +286,12 @@ impl Chat {
                 };
 
                 if matches!(message.body, Text(_)) {
+                    let original = message.editable();
+
                     let result = spawn_editor(
                         handler,
                         None,
-                        Some(message.display()),
+                        Some(&original),
                         Some(&format!(
                             "<!-- Edit your message above to change it in {}. -->",
                             self.room.name
@@ -298,7 +301,7 @@ impl Chat {
                     if let Ok(edit) = result {
                         if let Some(edit) = edit {
                             // Unchanged text means the editor was closed without saving.
-                            if edit == message.display() {
+                            if edit == original {
                                 return Ok(consumed!());
                             }
 
@@ -326,7 +329,24 @@ impl Chat {
                 let thread = self.thread_target();
 
                 Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Compose(Compose::new(room, matrix, thread)))
+                    app.set_popup(Popup::Compose(Compose::new(room, matrix, thread, "")))
+                })))
+            }
+            KeyCode::Char('@') => {
+                // normally a local store read, like V
+                let members = App::get_handle()
+                    .block_on(async { self.room().members(RoomMemberships::JOIN).await })?;
+
+                let members = Members::new(
+                    self.room.clone(),
+                    self.matrix.clone(),
+                    self.thread_target(),
+                    members,
+                    &self.matrix.me(),
+                );
+
+                Ok(Consumed(Box::new(|app| {
+                    app.set_popup(Popup::Members(members))
                 })))
             }
             KeyCode::Char('I') => {

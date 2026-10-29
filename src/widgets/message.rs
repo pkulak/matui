@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 use timeago::Formatter;
 
 use crate::matrix::matrix::{AfterDownload, Matrix, pad_emoji};
+use crate::matrix::mentions::restore_user_ids;
 use crate::matrix::username::Username;
 use crate::spawn::view_text;
 use crate::{limit_list, pretty_list};
@@ -23,7 +24,7 @@ use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
 use matrix_sdk::ruma::events::MessageLikeEvent;
 use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement, Reply};
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
-use matrix_sdk::ruma::events::room::message::{Relation, TextMessageEventContent};
+use matrix_sdk::ruma::events::room::message::{MessageFormat, Relation, TextMessageEventContent};
 use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
 use matrix_sdk::ruma::{
     EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId,
@@ -171,6 +172,19 @@ impl Message {
     pub fn display(&self) -> &str {
         self.display_cache
             .get_or_init(|| Message::display_body(&self.body).trim().to_string())
+    }
+
+    /// What to edit: the body, with mention pills turned back into user IDs.
+    pub fn editable(&self) -> String {
+        match &self.body {
+            Text(TextMessageEventContent {
+                formatted: Some(html),
+                ..
+            }) if html.format == MessageFormat::Html => {
+                restore_user_ids(self.display(), &html.body)
+            }
+            _ => self.display().to_string(),
+        }
     }
 
     pub fn display_full(&self) -> String {

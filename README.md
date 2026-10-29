@@ -105,6 +105,7 @@ then typing the command name (without the colon) into the prompt.
 | G      | Select latest message.                                 |
 | i      | Compose a new message.                                 |
 | I      | Create a new message directly in the external editor.  |
+| @      | Pick a room member to mention in a new message.        |
 | Enter  | Open the selected message, or its thread if it has one. |
 | Esc    | Leave the thread view.                                 |
 | s      | Save the selected message (images and videos).         |

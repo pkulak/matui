@@ -22,6 +22,7 @@ use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::homeserver::Homeserver;
+use crate::widgets::members::Members;
 use crate::widgets::oauth::Oauth;
 use crate::widgets::progress::Progress;
 use crate::widgets::qr::Qr;
@@ -209,6 +210,7 @@ pub enum Popup {
     Create(Create),
     Error(Error),
     Homeserver(Homeserver),
+    Members(Members),
     Progress(Progress),
     Qr(Qr),
     Recover(Recover),
@@ -229,6 +231,7 @@ impl Popup {
             Popup::Create(w) => w.key_event(event),
             Popup::Error(w) => w.key_event(event),
             Popup::Homeserver(w) => w.key_event(event),
+            Popup::Members(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Qr(w) => w.key_event(event, handler),
             Popup::Recover(w) => w.key_event(event),
@@ -247,6 +250,7 @@ impl Popup {
             Popup::Compose(w) => w.paste_event(value),
             Popup::Create(w) => w.paste_event(value),
             Popup::Homeserver(w) => w.paste_event(value),
+            Popup::Members(w) => w.paste_event(value),
             Popup::Qr(w) => w.paste_event(value),
             Popup::Recover(w) => w.paste_event(value),
             Popup::Rooms(w) => w.paste_event(value),
@@ -278,6 +282,7 @@ impl Popup {
             Popup::Create(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Homeserver(w) => frame.render_widget(w.widget(), frame.area()),
+            Popup::Members(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Qr(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),

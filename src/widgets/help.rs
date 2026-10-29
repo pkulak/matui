@@ -104,6 +104,7 @@ fn key_rows() -> Vec<Row<'static>> {
             "I",
             "Create a new message directly in the external editor.",
         ]),
+        Row::new(vec!["@", "Pick a room member to mention in a new message."]),
         Row::new(vec![
             "Enter",
             "Open the selected message, or its thread if it has one.",

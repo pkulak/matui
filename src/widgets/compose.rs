@@ -25,8 +25,16 @@ pub struct Compose {
 }
 
 impl Compose {
-    pub fn new(room: DecoratedRoom, matrix: Matrix, thread: Option<OwnedEventId>) -> Self {
-        let input = TextInput::new("Message".to_string(), true, false);
+    pub fn new(
+        room: DecoratedRoom,
+        matrix: Matrix,
+        thread: Option<OwnedEventId>,
+        text: &str,
+    ) -> Self {
+        let mut input = TextInput::new("Message".to_string(), true, false);
+
+        // pasting leaves the cursor at the end
+        input.paste_event(text);
 
         Self {
             input,

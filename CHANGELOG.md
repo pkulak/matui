@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Mention people by typing their user ID (`@bob:example.com`) in any message, or pick a room member with `@`. Replies now mention the person you're replying to, and edits keep their mentions.
+
 ## [1.1.0] - 2026-10-25
 
 - Sync with Simplified Sliding Sync (MSC4186) instead of `/sync`. Matui now needs a homeserver that supports it.

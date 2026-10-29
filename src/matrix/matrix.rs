@@ -1,6 +1,7 @@
 use matrix_sdk::ruma::events::room::message::MessageType::File;
 
 use crate::media::get_attachment_info;
+use std::collections::HashMap;
 use std::{fs, thread};
 
 use std::future::IntoFuture;
@@ -78,6 +79,7 @@ use crate::handler::{Batch, MatuiEvent, SyncType};
 use crate::matrix::roomcache::{DecoratedRoom, RoomCache};
 use crate::spawn::{save_file, view_file};
 
+use super::mentions;
 use super::mime::mime_from_path;
 use super::notify::Notify;
 
@@ -728,10 +730,9 @@ impl Matrix {
         App::spawn(async move {
             App::send(ProgressStarted("Sending message.".to_string(), 500));
 
-            if let Err(err) = room
-                .send(RoomMessageEventContent::text_markdown(message))
-                .await
-            {
+            let content = text_content(&room, &message).await;
+
+            if let Err(err) = room.send(without_me(&room, content)).await {
                 App::send(Error(err.to_string()));
             }
 
@@ -755,13 +756,13 @@ impl Matrix {
                 return;
             };
 
-            let reply = RoomMessageEventContent::text_markdown(message).make_reply_to(
+            let reply = text_content(&room, &message).await.make_reply_to(
                 og_in_reply_to,
                 ForwardThread::Yes,
-                AddMentions::No,
+                AddMentions::Yes,
             );
 
-            if let Err(err) = room.send(reply).await {
+            if let Err(err) = room.send(without_me(&room, reply)).await {
                 App::send(Error(err.to_string()));
             }
 
@@ -791,13 +792,13 @@ impl Matrix {
                 return;
             };
 
-            let reply = RoomMessageEventContent::text_markdown(message).make_for_thread(
+            let reply = text_content(&room, &message).await.make_for_thread(
                 og_target,
                 is_reply,
-                AddMentions::No,
+                AddMentions::Yes,
             );
 
-            if let Err(err) = room.send(reply).await {
+            if let Err(err) = room.send(without_me(&room, reply)).await {
                 App::send(Error(err.to_string()));
             }
 
@@ -1269,10 +1270,9 @@ impl Matrix {
 
             info!("reply event: {:?}", reply_event);
 
-            if let Err(err) = room
-                .send(RoomMessageEventContent::text_markdown(message).make_replacement(event))
-                .await
-            {
+            let content = without_me(&room, text_content(&room, &message).await);
+
+            if let Err(err) = room.send(content.make_replacement(event)).await {
                 App::send(Error(err.to_string()));
             }
 
@@ -1819,6 +1819,37 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
             SasState::Created { .. } => info!("verification created"),
         }
     }
+}
+
+/// Builds a text message from what the user typed, turning the IDs of joined
+/// members into mentions.
+async fn text_content(room: &Room, message: &str) -> RoomMessageEventContent {
+    let mut names = HashMap::new();
+
+    for (_, id) in mentions::find_user_ids(message) {
+        if names.contains_key(&id) {
+            continue;
+        }
+
+        if let Ok(Some(member)) = room.get_member(&id).await
+            && *member.membership() == MembershipState::Join
+        {
+            let name = member.display_name().unwrap_or(id.as_str()).to_string();
+            names.insert(id, name);
+        }
+    }
+
+    mentions::message_content(message, &names)
+}
+
+/// Nobody needs to mention themselves, whether by typing their own ID or by
+/// replying to their own message.
+fn without_me(room: &Room, mut content: RoomMessageEventContent) -> RoomMessageEventContent {
+    if let Some(mentions) = &mut content.mentions {
+        mentions.user_ids.remove(room.own_user_id());
+    }
+
+    content
 }
 
 pub fn pad_emoji(emoji: &str) -> String {
