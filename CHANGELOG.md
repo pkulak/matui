@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Mention people by typing their user ID (`@bob:example.com`) in any message, or pick a room member with `@`. Replies now mention the person you're replying to, and edits keep their mentions.
+- Don't mark a room as read when it's opened while the terminal is out of focus, such as by clicking a notification.
 
 ## [1.0.2] - 2026-09-19
 

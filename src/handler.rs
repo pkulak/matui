@@ -373,6 +373,7 @@ pub fn handle_paste_event(value: String, app: &mut App) {
 }
 
 pub fn handle_focus_event(app: &mut App) {
+    app.focus = true;
     app.matrix.focus_event();
 
     // we consider it a room "visit" if you come back to the app and view a
@@ -388,6 +389,7 @@ pub fn handle_focus_event(app: &mut App) {
 }
 
 pub fn handle_blur_event(app: &mut App) {
+    app.focus = false;
     app.matrix.blur_event();
 
     for chat in app.chat.iter_mut().chain(app.thread.iter_mut()) {

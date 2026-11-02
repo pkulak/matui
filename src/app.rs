@@ -44,6 +44,10 @@ pub struct App {
     /// How many ticks have passed?
     pub timestamp: usize,
 
+    /// Does the terminal have focus? Terminals that don't report focus
+    /// never change this, so it starts out true.
+    pub focus: bool,
+
     /// Hold on to all our widgets. The chat is always the room; a thread
     /// renders on top of it while both keep receiving events.
     pub popup: Option<Popup>,
@@ -75,6 +79,7 @@ impl App {
         Self {
             running: true,
             timestamp: 0,
+            focus: true,
             popup: None,
             chat: None,
             thread: None,
@@ -118,7 +123,7 @@ impl App {
         // a new room means any open thread is stale
         self.thread = None;
 
-        let mut chat = Chat::try_new(self.matrix.clone(), room.clone());
+        let mut chat = Chat::try_new(self.matrix.clone(), room.clone(), self.focus);
 
         if chat.is_none() {
             warn!("could not switch to room");
