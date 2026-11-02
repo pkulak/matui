@@ -128,7 +128,7 @@ then typing the command name (without the colon) into the prompt.
 # Invites
 
 When you're invited to a room, Matui pops up a prompt: as soon as the invite
-arrives if it's running, or right after startup if not. "Yes" joins the room
+arrives if it's running, or once you've picked a room after startup if not. "Yes" joins the room
 and takes you there, "No" declines the invite for good, and Esc puts it off
 until the next restart. If several invites are pending, they're shown one at
 a time.

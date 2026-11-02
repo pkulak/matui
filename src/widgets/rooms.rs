@@ -26,6 +26,18 @@ pub struct Rooms {
 
 impl Rooms {
     pub fn new(matrix: Matrix, current: Option<Room>) -> Self {
+        let mut ret = Self {
+            textinput: TextInput::new("Search".to_string(), true, false),
+            room: vec![],
+            list_state: Cell::new(ListState::default()),
+        };
+
+        ret.refresh(matrix, current);
+        ret
+    }
+
+    // reload the rooms; otherwise the list is a snapshot from when it opened
+    pub fn refresh(&mut self, matrix: Matrix, current: Option<Room>) {
         let mut rooms = matrix.fetch_rooms();
         sort_rooms(&mut rooms);
 
@@ -38,14 +50,8 @@ impl Rooms {
             rooms.push(first);
         }
 
-        let mut ret = Self {
-            textinput: TextInput::new("Search".to_string(), true, false),
-            room: rooms,
-            list_state: Cell::new(ListState::default()),
-        };
-
-        ret.reset();
-        ret
+        self.room = rooms;
+        self.reset();
     }
 
     pub fn widget(&self) -> RoomsWidget<'_> {

@@ -197,18 +197,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             };
         }
         MatuiEvent::SyncComplete => {
-            app.popup = None;
-
             // now we can sync forever
             app.matrix.sync();
 
-            // and show the first room
-            let mut rooms = app.matrix.fetch_rooms();
-            sort_rooms(&mut rooms);
-
-            if let Some(room) = rooms.first() {
-                app.select_room(room.inner.clone())
-            }
+            // start in the room chooser, so no room is open (and read) until
+            // someone picks one
+            let rooms = Rooms::new(app.matrix.clone(), None);
+            app.popup = (!rooms.room.is_empty()).then_some(Popup::Rooms(rooms));
         }
         MatuiEvent::Timeline(event) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
@@ -385,6 +380,11 @@ pub fn handle_focus_event(app: &mut App) {
 
     if let Some(thread) = &mut app.thread {
         thread.focus_event();
+    }
+
+    // the room chooser could have been open for a long time
+    if let Some(Popup::Rooms(rooms)) = &mut app.popup {
+        rooms.refresh(app.matrix.clone(), app.chat.as_ref().map(|c| c.room()));
     }
 }
 
