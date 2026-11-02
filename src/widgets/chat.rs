@@ -77,7 +77,7 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub fn try_new(matrix: Matrix, room: Room) -> Option<Self> {
+    pub fn try_new(matrix: Matrix, room: Room, focus: bool) -> Option<Self> {
         let decorated_room = matrix.wrap_room(&room)?;
 
         matrix.fetch_messages(room, None, 25);
@@ -98,7 +98,7 @@ impl Chat {
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
             bookmark: Cell::new(Option::None),
-            focus: true,
+            focus,
             search_term: "".to_string(),
             thread_root: None,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
