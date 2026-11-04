@@ -80,6 +80,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.set_popup(Popup::Error(Error::with_heading(header, msg)));
         }
         MatuiEvent::Error(msg) => {
+            log::warn!("Error: {msg}");
             app.set_popup(Popup::Error(Error::new(msg)));
         }
         MatuiEvent::Invited(room, msg) => {
@@ -265,6 +266,7 @@ fn handle_chat_key_event(
     let result = match chat.key_event(key_event, handler) {
         Ok(result) => result,
         Err(err) => {
+            log::warn!("Error: {err}");
             app.set_popup(Popup::Error(Error::new(err.to_string())));
             return Ok(());
         }
