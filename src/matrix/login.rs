@@ -293,10 +293,13 @@ async fn login_oauth_flow(
         .spawn()
         .await?;
 
+    let mut redirect_url_no_port = redirect_url.clone();
+    redirect_url_no_port.set_port(None).unwrap();
+
     let mut metadata = ClientMetadata::new(
         ApplicationType::Native,
         vec![OAuthGrantType::AuthorizationCode {
-            redirect_uris: vec![redirect_url.clone()],
+            redirect_uris: vec![redirect_url_no_port.clone()],
         }],
         Localized::new(Url::parse("https://github.com/pkulak/matui")?, []),
     );
