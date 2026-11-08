@@ -36,6 +36,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::{Deref, Range};
 use std::sync::Mutex;
+use tokio::task::AbortHandle;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -63,6 +64,7 @@ pub struct Chat {
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
     fetching: Cell<bool>,
+    fetch: Cell<Option<AbortHandle>>,
     height: Cell<usize>,
     line_types: Mutex<Vec<LineType>>,
     bookmark: Cell<Option<Bookmark>>,
@@ -76,11 +78,20 @@ pub struct Chat {
     in_flight: Vec<OwnedUserId>,
 }
 
+// stop retrying a fetch for a room nobody is looking at
+impl Drop for Chat {
+    fn drop(&mut self) {
+        if let Some(fetch) = self.fetch.take() {
+            fetch.abort();
+        }
+    }
+}
+
 impl Chat {
     pub fn try_new(matrix: Matrix, room: Room, focus: bool) -> Option<Self> {
         let decorated_room = matrix.wrap_room(&room)?;
 
-        matrix.fetch_messages(room, None, 25);
+        let fetch = matrix.fetch_messages(room, None, 25);
 
         Some(Self {
             matrix: matrix.clone(),
@@ -95,6 +106,7 @@ impl Chat {
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
             fetching: Cell::new(true),
+            fetch: Cell::new(Some(fetch)),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
             bookmark: Cell::new(Option::None),
@@ -124,6 +136,7 @@ impl Chat {
             list_state: Cell::new(ListState::default()),
             next_cursor: self.next_cursor.clone(),
             fetching: Cell::new(false),
+            fetch: Cell::new(None),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
             bookmark: Cell::new(Option::None),
@@ -849,8 +862,11 @@ impl Chat {
         if buffer < 100 && self.events.len() < max_events() {
             let limit = if self.search_term.is_empty() { 32 } else { 256 };
 
-            self.matrix
+            let fetch = self
+                .matrix
                 .fetch_messages(self.room(), self.next_cursor.clone(), limit);
+
+            self.fetch.set(Some(fetch));
 
             self.fetching.set(true);
             info!("fetching more events... {}", self.events.len())
