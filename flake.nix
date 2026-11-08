@@ -69,6 +69,8 @@
             sharedDeps
             ++ (with pkgs; [
               bacon
+              # for the attachment tests
+              ffmpeg
               openssl
               sqlite
             ]);
