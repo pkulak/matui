@@ -1,7 +1,8 @@
+use std::pin::pin;
 use std::time::Duration;
 
 use futures::stream::StreamExt;
-use log::error;
+use log::{error, warn};
 use matrix_sdk::Client;
 use matrix_sdk::RoomState;
 use matrix_sdk::room::Room;
@@ -14,6 +15,7 @@ use matrix_sdk_ui::room_list_service::State as RoomListState;
 use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 
 use super::Matrix;
+use super::decryption::RoomKey;
 use super::verification::add_verification_handlers;
 use crate::app::App;
 use crate::event::Event::Matui;
@@ -37,6 +39,7 @@ impl Matrix {
         // handlers must be in place before the first response arrives
         add_default_handlers(client.clone());
         add_verification_handlers(client.clone());
+        follow_room_keys(&client).await;
 
         let sync_service = match SyncService::builder(client.clone())
             .with_offline_mode()
@@ -237,6 +240,37 @@ fn add_default_handlers(client: Client) {
             }
             _ => {}
         };
+    });
+}
+
+/// Tell the UI about every room key that arrives, so the open room can
+/// decrypt what it couldn't before.
+async fn follow_room_keys(client: &Client) {
+    let Some(stream) = client.encryption().room_keys_received_stream().await else {
+        return;
+    };
+
+    App::spawn(async move {
+        let mut stream = pin!(stream);
+
+        while let Some(keys) = stream.next().await {
+            let keys = match keys {
+                Ok(keys) => Some(
+                    keys.into_iter()
+                        .map(|k| RoomKey {
+                            room_id: k.room_id,
+                            session_id: k.session_id,
+                        })
+                        .collect(),
+                ),
+                Err(err) => {
+                    warn!("lost track of room keys: {}", err);
+                    None
+                }
+            };
+
+            App::send(MatuiEvent::RoomKeys(keys));
+        }
     });
 }
 

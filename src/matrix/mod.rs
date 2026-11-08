@@ -1,3 +1,4 @@
+mod decryption;
 pub mod emoji;
 mod login;
 pub mod mentions;
@@ -11,6 +12,7 @@ mod sync;
 pub mod username;
 mod verification;
 
+pub use decryption::RoomKey;
 pub use messages::AfterDownload;
 pub use rooms::Moderation;
 

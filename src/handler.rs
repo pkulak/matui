@@ -1,4 +1,5 @@
 use crate::app::{App, Popup};
+use crate::matrix::RoomKey;
 use crate::matrix::emoji::format_emojis;
 use crate::spawn::pasted_file_paths;
 use crate::widgets::EventResult;
@@ -30,6 +31,9 @@ use matrix_sdk::ruma::events::AnyTimelineEvent;
 #[derive(Clone, Debug)]
 pub enum MatuiEvent {
     Confirm(String, String),
+    /// Events that failed to decrypt before, now decrypted. They're old, so
+    /// they don't notify.
+    Decrypted(Vec<AnyTimelineEvent>),
     Error(String),
     Invited(Room, String),
     LoggedOut,
@@ -51,6 +55,9 @@ pub enum MatuiEvent {
     Recover(String),
     Receipt(Room, ReceiptEventContent),
     RoomFound(PublicRoomsChunk),
+    /// Room keys arrived, or `None` if some arrived but we lost track of
+    /// which.
+    RoomKeys(Option<Vec<RoomKey>>),
     RoomLeft(Room),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
@@ -219,6 +226,18 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             // is it weird to send events all the way up here, then right
             // back down?
             app.matrix.timeline_event(event)
+        }
+        MatuiEvent::RoomKeys(keys) => {
+            // the room chat has every event the thread view has, so it asks
+            // for both
+            if let Some(c) = &app.chat {
+                c.room_keys_event(keys);
+            }
+        }
+        MatuiEvent::Decrypted(events) => {
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+                c.decrypted_event(events.clone());
+            }
         }
         MatuiEvent::TimelineBatch(batch) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {

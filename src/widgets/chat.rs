@@ -1,8 +1,8 @@
 use crate::app::{App, Popup};
 use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
-use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
+use crate::matrix::{Matrix, RoomKey};
 use crate::pictures::{Pictures, picker};
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
@@ -26,13 +26,16 @@ use matrix_sdk::RoomMemberships;
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::events::room::MediaSource;
+use matrix_sdk::ruma::events::room::encrypted::OriginalRoomEncryptedEvent;
 use matrix_sdk::ruma::events::room::member::{MembershipChange, RoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
 use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
 use matrix_sdk::ruma::events::room::name::RoomNameEvent;
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 use matrix_sdk::ruma::events::room::topic::RoomTopicEvent;
-use matrix_sdk::ruma::events::{AnyMessageLikeEvent, AnyStateEvent, AnyTimelineEvent};
+use matrix_sdk::ruma::events::{
+    AnyMessageLikeEvent, AnyStateEvent, AnyTimelineEvent, MessageLikeEvent,
+};
 use matrix_sdk::ruma::{
     EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedMxcUri, OwnedUserId, RoomId, UserId,
 };
@@ -532,6 +535,35 @@ impl Chat {
         merge_event(&mut self.events, event);
         self.set_messages(false);
         self.pretty_members = OnceCell::new();
+        self.set_fully_read();
+    }
+
+    // room keys arrived, so try our encrypted events again
+    pub fn room_keys_event(&self, keys: Option<Vec<RoomKey>>) {
+        let encrypted: Vec<OriginalRoomEncryptedEvent> = self
+            .events
+            .iter()
+            .filter_map(|e| match &**e {
+                AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomEncrypted(
+                    MessageLikeEvent::Original(e),
+                )) => Some(e.clone()),
+                _ => None,
+            })
+            .collect();
+
+        if !encrypted.is_empty() {
+            self.matrix.decrypt_again(self.room(), encrypted, keys);
+        }
+    }
+
+    pub fn decrypted_event(&mut self, events: Vec<AnyTimelineEvent>) {
+        let room_id = self.room.room_id().to_owned();
+
+        for event in events.into_iter().filter(|e| e.room_id() == room_id) {
+            merge_event(&mut self.events, event);
+        }
+
+        self.set_messages(false);
         self.set_fully_read();
     }
 
