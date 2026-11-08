@@ -13,6 +13,7 @@ use crate::widgets::message::{LineType, Message, Reaction, ReactionEvent};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
 use crate::widgets::search::Search;
+use crate::widgets::timeline::Timeline;
 use crate::widgets::upload::Upload;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
@@ -43,8 +44,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{
-    Block, BorderType, Borders, List, ListDirection, ListItem, ListState, Paragraph,
-    StatefulWidget, Widget,
+    Block, BorderType, Borders, ListItem, ListState, Paragraph, StatefulWidget, Widget,
 };
 
 use super::confirm::{Confirm, ConfirmBehavior};
@@ -1180,14 +1180,8 @@ impl Widget for ChatWidget<'_> {
         let mut line_types = self.chat.line_types.lock().unwrap();
         line_types.clear();
 
-        let mut items: Vec<ListItem> = vec![];
-        let mut buffer: Vec<LineType> = vec![];
         let window = &self.chat.messages[self.chat.window.clone()];
-
-        for m in window.iter() {
-            items.append(&mut m.to_list_items((area.width - 2) as usize, &mut buffer));
-            line_types.append(&mut buffer);
-        }
+        let timeline = Timeline::new(window, (area.width - 2) as usize, &mut line_types);
 
         // make sure we save our last render dimensions
         self.chat.height.set((splits[1].height).into());
@@ -1215,11 +1209,7 @@ impl Widget for ChatWidget<'_> {
             *list_state.selected_mut() = Some(i.min(line_types.len().saturating_sub(1)));
         }
 
-        let list = List::new(items)
-            .highlight_symbol("> ")
-            .direction(ListDirection::BottomToTop);
-
-        StatefulWidget::render(list, splits[1], buf, &mut list_state);
+        timeline.render(splits[1], buf, &mut list_state);
         self.chat.list_state.set(list_state);
 
         // reaction window
@@ -1437,7 +1427,7 @@ fn push_group(items: &mut Vec<TimelineItem>, group: RoomEvents) {
     }
 }
 
-fn make_message_list(
+pub(crate) fn make_message_list(
     timeline: &BTreeSet<OrderedEvent>,
     members: &Vec<RoomMember>,
     receipts: &Receipts,
