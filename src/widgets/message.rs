@@ -24,7 +24,9 @@ use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
 use matrix_sdk::ruma::events::MessageLikeEvent;
 use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement, Reply};
-use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, Image, Text, Video};
+use matrix_sdk::ruma::events::room::message::MessageType::{
+    self, Audio, Image, Notice, Text, Video,
+};
 use matrix_sdk::ruma::events::room::message::{MessageFormat, Relation, TextMessageEventContent};
 use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
 use matrix_sdk::ruma::{
@@ -93,6 +95,7 @@ impl Message {
     fn display_body(body: &MessageType) -> String {
         match body {
             Text(TextMessageEventContent { body, .. }) => body.to_string(),
+            Notice(content) => content.body.to_string(),
             Image(content) => Self::display_media(
                 "Image",
                 content.filename(),
@@ -296,7 +299,7 @@ impl Message {
             let c = c.clone();
 
             let body = match c.content.msgtype {
-                Text(_) | Image(_) | Video(_) | Audio(_) | File(_) => c.content.msgtype,
+                Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_) => c.content.msgtype,
                 _ => return None,
             };
 
@@ -1102,6 +1105,23 @@ pub(crate) mod tests {
         let message = Message::try_from(&event, false).unwrap();
 
         assert_eq!(message.display(), "dog.jpg");
+    }
+
+    #[test]
+    fn displays_notices() {
+        let event = serde_json::from_value(json!({
+            "type": "m.room.message",
+            "event_id": "$notice:example.org",
+            "sender": "@alice:example.org",
+            "origin_server_ts": 1000,
+            "room_id": "!room:example.org",
+            "content": { "msgtype": "m.notice", "body": "hello" }
+        }))
+        .unwrap();
+
+        let message = Message::try_from(&event, false).unwrap();
+
+        assert_eq!(message.display(), "hello");
     }
 
     #[test]
