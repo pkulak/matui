@@ -25,7 +25,7 @@ struct Placement {
     source: MediaSource,
     // the message's list rows
     rows: Range<usize>,
-    // the list row of the picture's top, and its size, once it's ready
+    // the list row of the picture's top, and its size, once that's known
     picture: Option<(usize, Size)>,
 }
 
@@ -50,9 +50,9 @@ impl<'a> Timeline<'a> {
                 .and(m.message())
                 .and_then(|m| picture_source(&m.body));
 
-            let size = picker.zip(source.as_ref()).and_then(|(picker, source)| {
-                pictures.size(source_uri(source), picker, width as u16)
-            });
+            let size = picker
+                .zip(source.as_ref())
+                .and_then(|(picker, source)| pictures.size(source, picker, width as u16));
 
             items.append(&mut m.to_list_items(width, size.map(|s| s.height), &mut buffer));
 
@@ -71,7 +71,7 @@ impl<'a> Timeline<'a> {
                 });
 
                 placements.push(Placement {
-                    source,
+                    source: source.media,
                     rows: start..line_types.len(),
                     picture,
                 });
@@ -524,6 +524,46 @@ mod tests {
             assert!(picture_rows(&drawn.rows).is_empty());
             assert!(drawn.fetches.is_empty());
         }
+    }
+
+    #[test]
+    fn pictures_with_dimensions_hold_their_rows_while_loading() {
+        // the event's 400×100 fits in five rows
+        let event = image_event("dog.jpg", None, Some(1000), None, Some((400, 100)));
+        let mut pictures = Pictures::default();
+        let picker = kitty();
+
+        // the first draw asks for the picture and already leaves its rows,
+        // without the title line
+        let loading = draw_with(vec![event.clone()], 0, 20, &mut pictures, Some(&picker));
+
+        assert_eq!(loading.fetches, [dog_uri()]);
+        assert_eq!(loading.rows[14], "  @alice:example.org <time>");
+        assert!(picture_rows(&loading.rows).is_empty());
+        assert!(!loading.rows.iter().any(|row| row.contains("dog.jpg")));
+
+        // the decoded picture is taller than the event said, which alone
+        // would take six rows, but it keeps the five
+        pictures.insert(dog_uri(), Some(DynamicImage::new_rgb8(400, 120)));
+        let ready = draw_with(vec![event], 0, 20, &mut pictures, Some(&picker));
+
+        assert_eq!(ready.rows[14], "  @alice:example.org <time>");
+        assert_eq!(picture_rows(&ready.rows), (15..20).collect::<Vec<_>>());
+        assert_eq!(ready.line_types.len(), loading.line_types.len());
+    }
+
+    #[test]
+    fn failed_pictures_with_dimensions_show_the_title_line() {
+        let event = image_event("dog.jpg", None, Some(1000), None, Some((400, 100)));
+        let mut pictures = Pictures::default();
+        pictures.insert(dog_uri(), None);
+
+        let drawn = draw_with(vec![event], 0, 10, &mut pictures, Some(&kitty()));
+
+        assert_eq!(
+            bottom(&drawn.rows, 2),
+            ["  @alice:example.org <time>", "> Image: dog.jpg (1000 B)"]
+        );
     }
 
     #[test]
