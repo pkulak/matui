@@ -9,7 +9,7 @@ use matrix_sdk::authentication::oauth::{ClientId, OAuthSession, UserSession};
 use matrix_sdk::encryption::EncryptionSettings;
 use matrix_sdk::encryption::vodozemac::base64_decode;
 use matrix_sdk::ruma::exports::serde_json;
-use matrix_sdk::{Client, ServerName, SessionChange, SqliteStoreConfig};
+use matrix_sdk::{Client, SessionChange, SqliteStoreConfig};
 use matrix_sdk_sqlite::Base64Variant;
 use rand::rng;
 use rand::{RngExt, distr::Alphanumeric};
@@ -128,11 +128,9 @@ pub(super) async fn restore_session(session_file: &Path) -> anyhow::Result<Clien
         fs::write(session_file, raw_session.to_string())?;
     }
 
-    let homeserver = <&ServerName>::try_from(client_session.homeserver.as_str())?;
-
     // Build the client with the previous settings from the session.
     let client = Client::builder()
-        .server_name(homeserver)
+        .server_name_or_homeserver_url(&client_session.homeserver)
         .sqlite_store_with_config_and_cache_path(
             store_config(&client_session.db_path, &client_session.passphrase)?,
             None::<&Path>,
@@ -172,7 +170,7 @@ fn forget_legacy_to_device_token(db_path: &Path) -> anyhow::Result<()> {
 
 pub(super) async fn build_client(
     data_dir: &Path,
-    server: &ServerName,
+    homeserver: &str,
 ) -> anyhow::Result<(Client, ClientSession)> {
     let db_subfolder: String = (&mut rng())
         .sample_iter(Alphanumeric)
@@ -190,7 +188,7 @@ pub(super) async fn build_client(
         .collect();
 
     let client = Client::builder()
-        .server_name(server)
+        .server_name_or_homeserver_url(homeserver)
         .sqlite_store_with_config_and_cache_path(
             store_config(&db_path, &passphrase)?,
             None::<&Path>,
@@ -203,7 +201,7 @@ pub(super) async fn build_client(
     Ok((
         client,
         ClientSession {
-            homeserver: server.as_str().to_string(),
+            homeserver: homeserver.to_string(),
             db_path,
             passphrase,
         },

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use futures::stream::StreamExt;
 use log::info;
+use matrix_sdk::Client;
 use matrix_sdk::authentication::oauth::qrcode::{GeneratedQrProgress, GrantLoginProgress};
 use matrix_sdk::authentication::oauth::registration::{
     ApplicationType, ClientMetadata, Localized, OAuthGrantType,
@@ -13,7 +14,6 @@ use matrix_sdk::authentication::oauth::registration::{
 use matrix_sdk::reqwest::Url;
 use matrix_sdk::ruma::serde::Raw;
 use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
-use matrix_sdk::{Client, ServerName};
 
 use super::Matrix;
 use super::session::{build_client, persist_session, restore_session};
@@ -210,8 +210,6 @@ async fn login(
     username: &str,
     password: &str,
 ) -> anyhow::Result<Client> {
-    let server = ServerName::parse(homeserver)?;
-
     // the username can be bare, or a full matrix ID
     let username = username
         .strip_prefix('@')
@@ -220,7 +218,7 @@ async fn login(
         .next()
         .unwrap_or_default();
 
-    let (client, client_session) = build_client(data_dir, &server).await?;
+    let (client, client_session) = build_client(data_dir, homeserver).await?;
 
     client
         .matrix_auth()
@@ -244,9 +242,8 @@ fn render_qr_code(data: Vec<u8>) -> anyhow::Result<String> {
 }
 
 async fn supports_oidc(homeserver: &str) -> anyhow::Result<bool> {
-    let server = ServerName::parse(homeserver)?;
     let client = Client::builder()
-        .server_name(&server)
+        .server_name_or_homeserver_url(homeserver)
         .build()
         .await
         .with_context(|| format!("could not connect to {homeserver}"))?;
@@ -265,8 +262,7 @@ async fn login_oauth_flow(
     session_file: &Path,
     homeserver: &str,
 ) -> anyhow::Result<Option<Client>> {
-    let server = ServerName::parse(homeserver)?;
-    let (client, client_session) = build_client(data_dir, &server).await?;
+    let (client, client_session) = build_client(data_dir, homeserver).await?;
 
     let (redirect_url, redirect) = LocalServerBuilder::new()
         .response(LocalServerResponse::Html(
