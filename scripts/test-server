@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Run a throwaway Continuwuity or Tuwunel homeserver on localhost, for
+# reproducing bugs against servers other than Synapse.
+#
+#   scripts/test-server <continuwuity|tuwunel> [port] [dir]
+#
+# The server name is "localhost", so users are @name:localhost. A fresh
+# database gets @admin:localhost, password "admin", as the server admin;
+# anyone else registers with the token "matui". State lives in dir, a new
+# temporary directory by default; delete it to start over.
+set -euo pipefail
+
+args=()
+
+case "${1:-}" in
+continuwuity)
+	bin=conduwuit
+	# it offers OAuth by default, which matui prefers, and which needs a
+	# browser; password login is easier to drive from tmux
+	args+=(-O 'oauth={compatibility_mode="disabled"}')
+	;;
+tuwunel) bin=tuwunel ;;
+*)
+	echo "usage: $0 <continuwuity|tuwunel> [port] [dir]" >&2
+	exit 2
+	;;
+esac
+
+port=${2:-6167}
+# not under $TMPDIR, which nix develop deletes on the way out
+dir=${3:-$(mktemp -d "/tmp/$1.XXXXXX")}
+
+args+=(
+	-O 'server_name="localhost"'
+	-O "database_path=\"$dir/db\""
+	-O 'address=["127.0.0.1"]'
+	-O "port=$port"
+	-O 'allow_federation=false'
+	-O 'allow_registration=true'
+	-O 'registration_token="matui"'
+)
+
+# Continuwuity won't take registrations until it has a first user, and
+# creating one again on an existing database is fatal
+if [[ ! -d $dir/db ]]; then
+	args+=(--execute "users create-user admin admin")
+fi
+
+echo "$1 on http://localhost:$port, state in $dir" >&2
+exec "$bin" "${args[@]}"

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Build matui and start it in a detached tmux session, with its config, data
+# and cache in dir, for driving it with send-keys and capture-pane.
+#
+#   scripts/test-matui <session> [dir]
+#
+# The tmux socket is "matui", so talk to it with `tmux -L matui ...`. The
+# debug build logs to dir/test.log. Reuse dir to come back to a signed-in
+# session; prints dir when matui is ready for keys.
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+	echo "usage: $0 <session> [dir]" >&2
+	exit 2
+fi
+
+session=$1
+# not under $TMPDIR, which nix develop deletes on the way out
+dir=${2:-$(mktemp -d /tmp/matui.XXXXXX)}
+mkdir -p "$dir"
+
+cargo build --quiet --manifest-path "$(dirname "$0")/../Cargo.toml"
+bin=$(realpath "$(dirname "$0")/../target/debug/matui")
+
+# Under tmux, matui's terminal query asks for the outer terminal, which a
+# detached session doesn't have; the query times out and its reader then
+# eats the first keys. Looking like a plain terminal lets tmux answer.
+tmux -L matui new-session -d -s "$session" -x 120 -y 40 -c "$dir" \
+	env -u TERM_PROGRAM TERM=xterm-256color \
+	HOME="$dir" \
+	XDG_CONFIG_HOME="$dir/config" \
+	XDG_DATA_HOME="$dir/data" \
+	XDG_CACHE_HOME="$dir/cache" \
+	"$bin"
+
+# keys sent before the first draw are lost
+for _ in $(seq 100); do
+	if tmux -L matui capture-pane -t "$session" -p | grep -q '[^[:space:]]'; then
+		echo "$dir"
+		exit 0
+	fi
+	sleep 0.2
+done
+
+echo "matui didn't draw within 20 seconds; see $dir/test.log" >&2
+exit 1
