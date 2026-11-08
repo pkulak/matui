@@ -38,7 +38,7 @@ impl Matrix {
 
         // handlers must be in place before the first response arrives
         add_default_handlers(client.clone());
-        add_verification_handlers(client.clone());
+        add_verification_handlers(client.clone(), App::get_sender());
         follow_room_keys(&client).await;
 
         let sync_service = match SyncService::builder(client.clone())

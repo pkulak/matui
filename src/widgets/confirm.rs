@@ -1,11 +1,12 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
+use matrix_sdk::encryption::verification::VerificationRequest;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::{OwnedEventId, OwnedRoomOrAliasId};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 
 use crate::widgets::button::Button;
 use crate::widgets::{Focusable, focus_next};
@@ -16,6 +17,7 @@ use super::{EventResult, get_margin};
 #[derive(Clone)]
 pub enum ConfirmBehavior {
     Verification,
+    VerificationRequest(VerificationRequest),
     DeleteMessage(Room, OwnedEventId),
     JoinRoom(Room),
     JoinPublicRoom(OwnedRoomOrAliasId),
@@ -67,11 +69,19 @@ impl Confirm {
             }
             // an invite has to be popped off the queue even on escape, or the
             // next tick will just show it again
-            KeyCode::Esc => match self.behavior {
+            KeyCode::Esc => match self.behavior.clone() {
                 ConfirmBehavior::JoinRoom(_) => EventResult::Consumed(Box::new(|app| {
                     app.invites.pop_front();
                     app.close_popup();
                 })),
+                // a request left pending makes the SDK cancel the next one
+                // from the same user, such as a retry
+                ConfirmBehavior::VerificationRequest(request) => {
+                    EventResult::Consumed(Box::new(|app| {
+                        app.matrix.decline_verification(request);
+                        app.close_popup();
+                    }))
+                }
                 _ => close!(),
             },
             KeyCode::Enter => self.make_result(),
@@ -99,6 +109,18 @@ impl Confirm {
                     app.close_popup();
                 }
             })),
+            ConfirmBehavior::VerificationRequest(request) if focused => {
+                EventResult::Consumed(Box::new(|app| {
+                    app.matrix.accept_verification(request);
+                    app.close_popup();
+                }))
+            }
+            ConfirmBehavior::VerificationRequest(request) => {
+                EventResult::Consumed(Box::new(|app| {
+                    app.matrix.decline_verification(request);
+                    app.close_popup();
+                }))
+            }
             ConfirmBehavior::DeleteMessage(room, id) if focused => {
                 EventResult::Consumed(Box::new(|app| {
                     app.matrix.redact_event(room, id);
@@ -161,7 +183,9 @@ impl Widget for ConfirmWidget<'_> {
             ])
             .split(area);
 
-        Paragraph::new(self.confirm.message.clone()).render(splits[1], buf);
+        Paragraph::new(self.confirm.message.clone())
+            .wrap(Wrap { trim: false })
+            .render(splits[1], buf);
 
         let splits = Layout::default()
             .direction(Direction::Horizontal)

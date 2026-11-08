@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::event::EventHandler;
-use matrix_sdk::encryption::verification::{Emoji, SasVerification};
+use matrix_sdk::encryption::verification::{Emoji, SasVerification, VerificationRequest};
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 
@@ -67,6 +67,8 @@ pub enum MatuiEvent {
     Timeline(AnyTimelineEvent),
     TimelineBatch(Batch),
     Typing(Room, Vec<OwnedUserId>),
+    /// Another device asks to verify, with a prompt naming it.
+    VerificationRequested(VerificationRequest, String),
     VerificationStarted(SasVerification, [Emoji; 7]),
     VerificationCompleted,
 }
@@ -259,6 +261,15 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             if app.receipts.len() > 500 {
                 app.receipts.pop_front();
             }
+        }
+        MatuiEvent::VerificationRequested(request, message) => {
+            app.set_popup(Popup::Confirm(Confirm::new(
+                "Verification Request".to_string(),
+                message,
+                "Accept".to_string(),
+                "Decline".to_string(),
+                ConfirmBehavior::VerificationRequest(request),
+            )));
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
             app.sas = Some(sas);
