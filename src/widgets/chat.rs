@@ -32,7 +32,7 @@ use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
 use matrix_sdk::ruma::events::room::name::RoomNameEvent;
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 use matrix_sdk::ruma::events::room::topic::RoomTopicEvent;
-use matrix_sdk::ruma::events::{AnyStateEvent, AnyTimelineEvent};
+use matrix_sdk::ruma::events::{AnyMessageLikeEvent, AnyStateEvent, AnyTimelineEvent};
 use matrix_sdk::ruma::{
     EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedMxcUri, OwnedUserId, RoomId, UserId,
 };
@@ -529,7 +529,7 @@ impl Chat {
         }
 
         self.check_event_sender(&event);
-        self.events.insert(OrderedEvent::new(event));
+        merge_event(&mut self.events, event);
         self.set_messages(false);
         self.pretty_members = OnceCell::new();
         self.set_fully_read();
@@ -604,7 +604,7 @@ impl Chat {
 
         for event in batch.events {
             self.check_event_sender(&event);
-            self.events.insert(OrderedEvent::new(event));
+            merge_event(&mut self.events, event);
         }
 
         let reset = self.messages.is_empty();
@@ -1131,6 +1131,26 @@ impl PartialEq for OrderedEvent {
 
 impl Eq for OrderedEvent {}
 
+// adds an event, letting a decrypted copy replace the encrypted one with the
+// same ID; otherwise the copy we already have wins
+fn merge_event(events: &mut BTreeSet<OrderedEvent>, event: AnyTimelineEvent) {
+    let event = OrderedEvent::new(event);
+    let decrypts = !is_encrypted(&event) && events.get(&event).is_some_and(|e| is_encrypted(e));
+
+    if decrypts {
+        events.replace(event);
+    } else {
+        events.insert(event);
+    }
+}
+
+fn is_encrypted(event: &AnyTimelineEvent) -> bool {
+    matches!(
+        event,
+        AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomEncrypted(_))
+    )
+}
+
 pub struct ChatWidget<'a> {
     pub chat: &'a Chat,
 }
@@ -1577,6 +1597,7 @@ const REPLY_TEMPLATE: &str = "<!--
 mod tests {
     use super::*;
     use crate::widgets::message::tests::{reaction_event, text_event, thread_event};
+    use matrix_sdk::ruma::exports::serde_json::{self, json};
     use matrix_sdk::ruma::{owned_event_id, owned_user_id};
 
     fn items(events: Vec<AnyTimelineEvent>, thread_root: Option<&EventId>) -> Vec<TimelineItem> {
@@ -1636,6 +1657,72 @@ mod tests {
         assert_eq!(newest.reactions.len(), 1);
 
         assert_eq!(items[1].message().unwrap().id.as_str(), "$root:example.org");
+    }
+
+    fn encrypted_event(id: &str, ts: u64) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.encrypted",
+            "event_id": id,
+            "sender": "@alice:example.org",
+            "origin_server_ts": ts,
+            "room_id": "!room:example.org",
+            "content": {
+                "algorithm": "m.megolm.v1.aes-sha2",
+                "ciphertext": "AwgAEnAC",
+                "session_id": "session"
+            }
+        }))
+        .unwrap()
+    }
+
+    fn merged(events: Vec<AnyTimelineEvent>) -> Vec<(String, bool)> {
+        let mut set = BTreeSet::new();
+
+        for event in events {
+            merge_event(&mut set, event);
+        }
+
+        set.iter()
+            .map(|e| (e.event_id().to_string(), is_encrypted(e)))
+            .collect()
+    }
+
+    #[test]
+    fn decrypted_copy_replaces_encrypted() {
+        let events = merged(vec![
+            encrypted_event("$a:example.org", 1000),
+            text_event("$a:example.org", 1000, "hello"),
+        ]);
+
+        assert_eq!(events, vec![("$a:example.org".to_string(), false)]);
+    }
+
+    #[test]
+    fn encrypted_copy_never_replaces_decrypted() {
+        let events = merged(vec![
+            text_event("$a:example.org", 1000, "hello"),
+            encrypted_event("$a:example.org", 1000),
+        ]);
+
+        assert_eq!(events, vec![("$a:example.org".to_string(), false)]);
+    }
+
+    #[test]
+    fn new_ids_are_added() {
+        let events = merged(vec![
+            text_event("$b:example.org", 2000, "second"),
+            encrypted_event("$a:example.org", 1000),
+            text_event("$c:example.org", 3000, "third"),
+        ]);
+
+        assert_eq!(
+            events,
+            vec![
+                ("$a:example.org".to_string(), true),
+                ("$b:example.org".to_string(), false),
+                ("$c:example.org".to_string(), false),
+            ]
+        );
     }
 
     fn member(kind: MemberKind, name: &str) -> StateEntry {
