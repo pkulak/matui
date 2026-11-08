@@ -42,7 +42,7 @@
           pkgs.darwin.apple_sdk.frameworks.Security
         ];
       in
-      {
+      rec {
         packages = rec {
 
           matui = pkgs.rustPlatform.buildRustPackage {
@@ -64,6 +64,24 @@
           };
 
           default = matui;
+        };
+
+        checks = {
+          # its build runs the tests
+          inherit (packages) matui;
+
+          clippy = packages.matui.overrideAttrs {
+            pname = "matui-clippy";
+            buildPhase = "cargo clippy --all-targets --offline -- --deny warnings";
+            doCheck = false;
+            installPhase = "touch $out";
+          };
+
+          fmt = pkgs.runCommand "matui-fmt" { nativeBuildInputs = [ rustToolchain ]; } ''
+            cd ${source}
+            cargo fmt --check
+            touch $out
+          '';
         };
 
         devShells.default = pkgs.mkShell {
