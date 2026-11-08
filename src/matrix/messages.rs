@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::{fs, thread};
 
 use log::error;
+use matrix_sdk::HttpError;
 use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
@@ -19,6 +20,7 @@ use matrix_sdk::ruma::events::room::message::{
 };
 use matrix_sdk::ruma::events::{AnyMessageLikeEvent, AnyTimelineEvent, MessageLikeEvent};
 use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId, UInt};
+use tokio::task::AbortHandle;
 
 use super::Matrix;
 use super::mentions;
@@ -36,19 +38,29 @@ pub enum AfterDownload {
 }
 
 impl Matrix {
-    pub fn fetch_messages(&self, room: Room, cursor: Option<String>, limit: usize) {
-        App::spawn(async move {
-            // fetch the actual messages
-            let mut options = MessagesOptions::new(Direction::Backward);
-            options.limit =
-                UInt::new(limit.try_into().unwrap_or(25)).expect("invalid paging limit");
-            options.from = cursor;
+    /// Abort the returned handle to stop fetching, including any retries.
+    pub fn fetch_messages(&self, room: Room, cursor: Option<String>, limit: usize) -> AbortHandle {
+        const RETRY_DELAY: Duration = Duration::from_secs(3);
 
-            let messages = match room.messages(options).await {
-                Ok(msg) => msg,
-                Err(err) => {
-                    App::send(Error(err.to_string()));
-                    return;
+        let limit = UInt::new(limit.try_into().unwrap_or(25)).expect("invalid paging limit");
+
+        let task = App::get_handle().spawn(async move {
+            let messages = loop {
+                let mut options = MessagesOptions::new(Direction::Backward);
+                options.limit = limit;
+                options.from = cursor.clone();
+
+                match room.messages(options).await {
+                    Ok(msg) => break msg,
+                    // a lost connection comes back by itself, so wait it out
+                    Err(matrix_sdk::Error::Http(err)) if matches!(*err, HttpError::Reqwest(_)) => {
+                        error!("could not fetch messages, retrying: {}", err);
+                        tokio::time::sleep(RETRY_DELAY).await;
+                    }
+                    Err(err) => {
+                        App::send(Error(err.to_string()));
+                        return;
+                    }
                 }
             };
 
@@ -70,6 +82,8 @@ impl Matrix {
 
             App::send(MatuiEvent::TimelineBatch(batch));
         });
+
+        task.abort_handle()
     }
 
     pub fn download_content(&self, message: MessageType, after: AfterDownload) {
