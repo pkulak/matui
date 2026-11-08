@@ -5,6 +5,7 @@
 - Mention people by typing their user ID (`@bob:example.com`) in any message, or pick a room member with `@`. Replies now mention the person you're replying to, and edits keep their mentions.
 - Don't mark a room as read when it's opened while the terminal is out of focus, such as by clicking a notification.
 - Start in the room switcher instead of opening the most recent room, and refresh the switcher when the terminal regains focus.
+- Send a small JPEG thumbnail with every uploaded image and video, so other clients can show a preview.
 
 ## [1.0.2] - 2026-09-19
 
