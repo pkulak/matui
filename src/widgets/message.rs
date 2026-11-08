@@ -988,6 +988,35 @@ pub(crate) mod tests {
         .unwrap()
     }
 
+    pub(crate) fn reply_event(id: &str, ts: u64, target: &str, body: &str) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.message",
+            "event_id": id,
+            "sender": "@bob:example.org",
+            "origin_server_ts": ts,
+            "room_id": "!room:example.org",
+            "content": {
+                "msgtype": "m.text",
+                "body": body,
+                "m.relates_to": { "m.in_reply_to": { "event_id": target } }
+            }
+        }))
+        .unwrap()
+    }
+
+    pub(crate) fn join_event(id: &str, ts: u64, name: &str) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.member",
+            "event_id": id,
+            "sender": "@bob:example.org",
+            "state_key": "@bob:example.org",
+            "origin_server_ts": ts,
+            "room_id": "!room:example.org",
+            "content": { "membership": "join", "displayname": name }
+        }))
+        .unwrap()
+    }
+
     fn test_message(id: OwnedEventId) -> Message {
         Message {
             id,

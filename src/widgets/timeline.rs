@@ -43,10 +43,11 @@ impl StatefulWidget for Timeline<'_> {
 mod tests {
     use super::*;
     use crate::widgets::chat::{OrderedEvent, make_message_list};
-    use crate::widgets::message::tests::{reaction_event, text_event, thread_event};
+    use crate::widgets::message::tests::{
+        join_event, reaction_event, reply_event, text_event, thread_event,
+    };
     use crate::widgets::receipts::Receipts;
     use matrix_sdk::ruma::events::AnyTimelineEvent;
-    use matrix_sdk::ruma::exports::serde_json::{self, json};
     use matrix_sdk::ruma::owned_user_id;
     use std::collections::BTreeSet;
 
@@ -90,35 +91,6 @@ mod tests {
 
     fn bottom(rows: &[String], n: usize) -> &[String] {
         &rows[rows.len() - n..]
-    }
-
-    fn reply_event(id: &str, ts: u64, target: &str, body: &str) -> AnyTimelineEvent {
-        serde_json::from_value(json!({
-            "type": "m.room.message",
-            "event_id": id,
-            "sender": "@bob:example.org",
-            "origin_server_ts": ts,
-            "room_id": "!room:example.org",
-            "content": {
-                "msgtype": "m.text",
-                "body": body,
-                "m.relates_to": { "m.in_reply_to": { "event_id": target } }
-            }
-        }))
-        .unwrap()
-    }
-
-    fn join_event(id: &str, ts: u64, name: &str) -> AnyTimelineEvent {
-        serde_json::from_value(json!({
-            "type": "m.room.member",
-            "event_id": id,
-            "sender": "@bob:example.org",
-            "state_key": "@bob:example.org",
-            "origin_server_ts": ts,
-            "room_id": "!room:example.org",
-            "content": { "membership": "join", "displayname": name }
-        }))
-        .unwrap()
     }
 
     #[test]
@@ -168,10 +140,8 @@ mod tests {
 
     #[test]
     fn long_text_wraps_to_the_width() {
-        let (rows, line_types) = draw(
-            vec![text_event("$text:example.org", 1000, &"word ".repeat(20))],
-            0,
-        );
+        let events = vec![text_event("$text:example.org", 1000, &"word ".repeat(20))];
+        let (rows, line_types) = draw(events.clone(), 0);
 
         assert_eq!(
             bottom(&rows, 4),
@@ -185,6 +155,15 @@ mod tests {
 
         // one line type per row: three body rows, the author, the spacer
         assert_eq!(line_types.len(), 5);
+
+        // moving the selection up steps through the body a row at a time,
+        // then onto the author line
+        for selected in 1..=3 {
+            let (rows, _) = draw(events.clone(), selected);
+            let marker = rows.iter().position(|row| row.starts_with("> "));
+
+            assert_eq!(marker, Some(rows.len() - 1 - selected));
+        }
     }
 
     #[test]
