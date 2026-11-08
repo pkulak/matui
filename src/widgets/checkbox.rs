@@ -66,7 +66,7 @@ impl Widget for CheckboxWidget<'_> {
 
         let area = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Length(3), Constraint::Percentage(100)])
             .split(area)[0];
 
         Block::default()
@@ -83,7 +83,7 @@ impl Widget for CheckboxWidget<'_> {
         let area = Layout::default()
             .vertical_margin(1)
             .horizontal_margin(get_margin(area.width, label.len() as u16))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         Paragraph::new(label)

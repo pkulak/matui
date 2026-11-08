@@ -307,7 +307,7 @@ impl Widget for ReactWidget<'_> {
                 (self.parent.reactions.len() + 4) as u16,
             ))
             .horizontal_margin(get_margin(area.width, 40))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -338,7 +338,7 @@ impl Widget for ReactWidget<'_> {
             .direction(Direction::Horizontal)
             .vertical_margin(2)
             .horizontal_margin(2)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         let items: Vec<ListItem> = self

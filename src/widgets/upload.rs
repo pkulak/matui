@@ -97,7 +97,7 @@ impl Widget for UploadWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 70))
             .vertical_margin(get_margin(area.height, 13))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));

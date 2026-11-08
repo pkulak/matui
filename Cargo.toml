@@ -44,6 +44,7 @@ url = "2.5"
 
 # make sure notify-rust pulls in a zbus build that uses tokio
 zbus = { version = "5", features = ["tokio"], default-features = false }
+ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm", "image-defaults"] }
 
 [dev-dependencies]
 matrix-sdk = { version = "0.19.1", features = ["testing"] }

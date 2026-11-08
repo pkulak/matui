@@ -62,7 +62,7 @@ impl Widget for OauthWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
             .vertical_margin(get_margin(area.height, 9))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -71,15 +71,12 @@ impl Widget for OauthWidget<'_> {
             .direction(Direction::Vertical)
             .horizontal_margin(4)
             .vertical_margin(1)
-            .constraints(
-                [
-                    Constraint::Length(2),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                ]
-                .as_ref(),
-            )
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
             .split(area);
 
         let block = Block::default()

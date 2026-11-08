@@ -143,7 +143,7 @@ impl Widget for ComposeWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
             .vertical_margin(get_margin(area.height, 10))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -152,14 +152,11 @@ impl Widget for ComposeWidget<'_> {
             .direction(Direction::Vertical)
             .horizontal_margin(8)
             .vertical_margin(3)
-            .constraints(
-                [
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Percentage(100),
-                ]
-                .as_ref(),
-            )
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Percentage(100),
+            ])
             .split(area);
 
         let block = Block::default()

@@ -1,41 +1,145 @@
+use crate::pictures::{Pictures, picture_source, source_uri};
 use crate::widgets::chat::TimelineItem;
 use crate::widgets::message::LineType;
+use matrix_sdk::ruma::events::room::MediaSource;
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::widgets::{List, ListDirection, ListItem, ListState, StatefulWidget};
+use ratatui::layout::{Rect, Size};
+use ratatui::widgets::{List, ListDirection, ListItem, ListState, StatefulWidget, Widget};
+use ratatui_image::picker::Picker;
+use ratatui_image::sliced::{SignedPosition, SlicedImage};
+use std::ops::Range;
 
-// the chat's message list, drawn bottom to top
+const HIGHLIGHT_SYMBOL: &str = "> ";
+
+// the chat's message list, drawn bottom to top, with any pictures drawn
+// over the blank rows left for them
 pub struct Timeline<'a> {
     items: Vec<ListItem<'a>>,
+    pictures: &'a mut Pictures,
+    picker: Option<&'a Picker>,
+    placements: Vec<Placement>,
+}
+
+// where a message with a picture source landed in the list
+struct Placement {
+    source: MediaSource,
+    // the message's list rows
+    rows: Range<usize>,
+    // the list row of the picture's top, and its size, once it's ready
+    picture: Option<(usize, Size)>,
 }
 
 impl<'a> Timeline<'a> {
     // lays out the visible messages, recording what each list row is in
     // line_types, so the caller can place the selection before drawing
-    pub fn new(messages: &'a [TimelineItem], width: usize, line_types: &mut Vec<LineType>) -> Self {
+    pub fn new(
+        messages: &'a [TimelineItem],
+        width: usize,
+        line_types: &mut Vec<LineType>,
+        pictures: &'a mut Pictures,
+        picker: Option<&'a Picker>,
+    ) -> Self {
         let mut items = vec![];
+        let mut placements = vec![];
 
         // each item reverses its own rows, so collect them one at a time
         let mut buffer = vec![];
 
         for m in messages {
-            items.append(&mut m.to_list_items(width, &mut buffer));
+            let source = picker
+                .and(m.message())
+                .and_then(|m| picture_source(&m.body));
+
+            let size = picker.zip(source.as_ref()).and_then(|(picker, source)| {
+                pictures.size(source_uri(source), picker, width as u16)
+            });
+
+            items.append(&mut m.to_list_items(width, size.map(|s| s.height), &mut buffer));
+
+            let start = line_types.len();
             line_types.append(&mut buffer);
+
+            if let Some(source) = source {
+                // the picture sits right under the author line, which is
+                // the message's topmost start
+                let picture = size.and_then(|size| {
+                    let author = line_types[start..]
+                        .iter()
+                        .rposition(|l| matches!(l, LineType::MessageStart(_)))?;
+
+                    Some((start + author - 1, size))
+                });
+
+                placements.push(Placement {
+                    source,
+                    rows: start..line_types.len(),
+                    picture,
+                });
+            }
         }
 
-        Self { items }
+        Self {
+            items,
+            pictures,
+            picker,
+            placements,
+        }
     }
-}
 
-impl StatefulWidget for Timeline<'_> {
-    type State = ListState;
-
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut ListState) {
+    // draws the list and its ready pictures, returning the picture sources
+    // that were drawn for the first time and need fetching
+    pub fn render(self, area: Rect, buf: &mut Buffer, state: &mut ListState) -> Vec<MediaSource> {
         let list = List::new(self.items)
-            .highlight_symbol("> ")
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
             .direction(ListDirection::BottomToTop);
 
         StatefulWidget::render(list, area, buf, state);
+
+        let Some(picker) = self.picker else {
+            return vec![];
+        };
+
+        // every row is one line high, so list rows map straight to screen
+        // rows, counting up from the bottom
+        let offset = state.offset();
+        let visible = offset..offset + area.height as usize;
+
+        // the list only makes room for the marker when something's selected
+        let x = if state.selected().is_some() {
+            HIGHLIGHT_SYMBOL.len() as i16
+        } else {
+            0
+        };
+
+        let mut fetches = vec![];
+
+        for placement in self.placements {
+            if placement.rows.end <= visible.start || placement.rows.start >= visible.end {
+                continue;
+            }
+
+            let uri = source_uri(&placement.source);
+
+            if self.pictures.request(uri) {
+                fetches.push(placement.source.clone());
+            }
+
+            let Some((top, size)) = placement.picture else {
+                continue;
+            };
+
+            let Some(protocol) = self.pictures.protocol(uri, picker, size) else {
+                continue;
+            };
+
+            // may be above the area, if the top has scrolled off
+            let y = area.height as i64 - 1 - (top as i64 - offset as i64);
+            let position = SignedPosition::from((x, y as i16));
+
+            SlicedImage::new(protocol, position).render(area, buf);
+        }
+
+        fetches
     }
 }
 
@@ -44,39 +148,108 @@ mod tests {
     use super::*;
     use crate::widgets::chat::{OrderedEvent, make_message_list};
     use crate::widgets::message::tests::{
-        join_event, reaction_event, reply_event, text_event, thread_event,
+        image_event, join_event, reaction_event, reply_event, text_event, thread_event,
     };
     use crate::widgets::receipts::Receipts;
+    use image::DynamicImage;
     use matrix_sdk::ruma::events::AnyTimelineEvent;
-    use matrix_sdk::ruma::owned_user_id;
+    use matrix_sdk::ruma::{OwnedMxcUri, owned_mxc_uri, owned_user_id};
+    use ratatui_image::FontSize;
+    use ratatui_image::picker::ProtocolType;
     use std::collections::BTreeSet;
 
     const WIDTH: u16 = 40;
     const HEIGHT: u16 = 10;
 
-    // draws the timeline for some events with the given row selected,
-    // returning each screen row as text, top to bottom
-    fn draw(events: Vec<AnyTimelineEvent>, selected: usize) -> (Vec<String>, Vec<LineType>) {
+    // what Kitty draws a picture with
+    const PLACEHOLDER: char = '\u{10EEEE}';
+
+    struct Drawn {
+        // each screen row as text, top to bottom, with picture cells as #
+        rows: Vec<String>,
+        line_types: Vec<LineType>,
+        fetches: Vec<OwnedMxcUri>,
+    }
+
+    // draws the timeline for some events with the given row selected
+    fn draw_with(
+        events: Vec<AnyTimelineEvent>,
+        selected: usize,
+        height: u16,
+        pictures: &mut Pictures,
+        picker: Option<&Picker>,
+    ) -> Drawn {
         let timeline: BTreeSet<OrderedEvent> = events.into_iter().map(OrderedEvent::new).collect();
         let receipts = Receipts::new(owned_user_id!("@me:example.org"));
         let messages = make_message_list(&timeline, &vec![], &receipts, "", None);
 
-        let area = Rect::new(0, 0, WIDTH, HEIGHT);
+        let area = Rect::new(0, 0, WIDTH, height);
         let mut buf = Buffer::empty(area);
         let mut line_types = vec![];
         let mut state = ListState::default().with_selected(Some(selected));
 
-        Timeline::new(&messages, (WIDTH - 2).into(), &mut line_types)
-            .render(area, &mut buf, &mut state);
+        let fetches = Timeline::new(
+            &messages,
+            (WIDTH - 2).into(),
+            &mut line_types,
+            pictures,
+            picker,
+        )
+        .render(area, &mut buf, &mut state);
 
-        let rows = (0..HEIGHT)
+        let rows = (0..height)
             .map(|y| {
-                let row: String = (0..WIDTH).map(|x| buf[(x, y)].symbol()).collect();
+                let row: String = (0..WIDTH)
+                    .map(|x| match buf[(x, y)].symbol() {
+                        s if s.contains(PLACEHOLDER) => "#",
+                        s => s,
+                    })
+                    .collect();
+
                 without_elapsed(row.trim_end())
             })
             .collect();
 
-        (rows, line_types)
+        Drawn {
+            rows,
+            line_types,
+            fetches: fetches.iter().map(source_uri).cloned().collect(),
+        }
+    }
+
+    fn draw(events: Vec<AnyTimelineEvent>, selected: usize) -> (Vec<String>, Vec<LineType>) {
+        let drawn = draw_with(events, selected, HEIGHT, &mut Pictures::default(), None);
+        (drawn.rows, drawn.line_types)
+    }
+
+    #[allow(deprecated)]
+    fn kitty() -> Picker {
+        let mut picker = Picker::from_fontsize(FontSize::new(10, 20));
+        picker.set_protocol_type(ProtocolType::Kitty);
+        picker
+    }
+
+    // a small image, which shows its original
+    fn dog(caption: Option<&str>) -> AnyTimelineEvent {
+        match caption {
+            Some(caption) => image_event(caption, Some("dog.jpg"), Some(1000), None, None),
+            None => image_event("dog.jpg", None, Some(1000), None, None),
+        }
+    }
+
+    fn dog_uri() -> OwnedMxcUri {
+        owned_mxc_uri!("mxc://example.org/image")
+    }
+
+    // the dog's picture, ready at the given pixel size
+    fn ready(width: u32, height: u32) -> Pictures {
+        let mut pictures = Pictures::default();
+        pictures.insert(dog_uri(), Some(DynamicImage::new_rgb8(width, height)));
+        pictures
+    }
+
+    fn picture_rows(rows: &[String]) -> Vec<usize> {
+        (0..rows.len()).filter(|&i| rows[i].contains('#')).collect()
     }
 
     // swap an author line's "56 years ago" for a stable placeholder
@@ -287,5 +460,143 @@ mod tests {
         assert_eq!(rows[0], "> @alice:example.org <time>");
         assert_eq!(rows[1], "  message 1");
         assert!(!rows.contains(&"  message 5".to_string()));
+    }
+
+    #[test]
+    fn ready_pictures_replace_the_title_line() {
+        // a wide picture fills the width beside the marker column
+        let drawn = draw_with(
+            vec![dog(Some("Look at this dog"))],
+            0,
+            20,
+            &mut ready(400, 50),
+            Some(&kitty()),
+        );
+
+        let picture = format!("  {}", "#".repeat(38));
+
+        assert_eq!(
+            bottom(&drawn.rows, 5),
+            [
+                "  @alice:example.org <time>".to_string(),
+                picture.clone(),
+                picture.clone(),
+                picture,
+                "> Look at this dog".to_string(),
+            ]
+        );
+
+        assert!(!drawn.rows.iter().any(|row| row.contains("dog.jpg")));
+        assert!(drawn.fetches.is_empty());
+    }
+
+    #[test]
+    fn tall_pictures_stop_at_ten_rows() {
+        let drawn = draw_with(vec![dog(None)], 0, 20, &mut ready(400, 300), Some(&kitty()));
+        let rows = picture_rows(&drawn.rows);
+
+        // keeping their shape, so narrower than the width
+        assert_eq!(rows, (10..20).collect::<Vec<_>>());
+
+        for i in rows {
+            assert_eq!(drawn.rows[i].matches('#').count(), 27);
+        }
+
+        assert_eq!(drawn.rows[9], "  @alice:example.org <time>");
+    }
+
+    #[test]
+    fn pictures_that_are_not_ready_show_the_title_line() {
+        let mut loading = Pictures::default();
+        loading.request(&dog_uri());
+
+        let mut failed = Pictures::default();
+        failed.insert(dog_uri(), None);
+
+        for mut pictures in [loading, failed] {
+            let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&kitty()));
+
+            assert_eq!(
+                bottom(&drawn.rows, 2),
+                ["  @alice:example.org <time>", "> Image: dog.jpg (1000 B)"]
+            );
+
+            assert!(picture_rows(&drawn.rows).is_empty());
+            assert!(drawn.fetches.is_empty());
+        }
+    }
+
+    #[test]
+    fn without_a_picker_pictures_stay_titles() {
+        let drawn = draw_with(vec![dog(None)], 0, 10, &mut ready(400, 50), None);
+
+        assert_eq!(
+            bottom(&drawn.rows, 2),
+            ["  @alice:example.org <time>", "> Image: dog.jpg (1000 B)"]
+        );
+
+        assert!(drawn.fetches.is_empty());
+    }
+
+    #[test]
+    fn pictures_scrolled_partly_off_show_their_visible_rows() {
+        let events = vec![dog(None), text_event("$text:example.org", 2000, "hello")];
+        let mut pictures = ready(400, 300);
+        let picker = kitty();
+
+        // the newer message pushes the picture's top off the screen
+        let drawn = draw_with(events.clone(), 0, 8, &mut pictures, Some(&picker));
+
+        assert_eq!(picture_rows(&drawn.rows), [0, 1, 2, 3, 4]);
+        assert_eq!(
+            bottom(&drawn.rows, 2),
+            ["  @alice:example.org <time>", "> hello"]
+        );
+
+        // selecting the picture's author scrolls its bottom off instead
+        let drawn = draw_with(events, 13, 8, &mut pictures, Some(&picker));
+
+        assert_eq!(drawn.rows[0], "> @alice:example.org <time>");
+        assert_eq!(picture_rows(&drawn.rows), [1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn the_cursor_steps_through_picture_rows() {
+        let mut pictures = ready(400, 300);
+        let picker = kitty();
+
+        for selected in 0..10 {
+            let drawn = draw_with(vec![dog(None)], selected, 20, &mut pictures, Some(&picker));
+            let marker = drawn.rows.iter().position(|row| row.starts_with("> "));
+
+            assert_eq!(marker, Some(19 - selected));
+            assert!(matches!(
+                drawn.line_types[selected],
+                LineType::MessageContent
+            ));
+        }
+    }
+
+    #[test]
+    fn drawing_an_unfetched_picture_asks_for_it_once() {
+        let mut pictures = Pictures::default();
+        let picker = kitty();
+
+        // it shows the title line while it loads
+        let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&picker));
+
+        assert_eq!(drawn.fetches, [dog_uri()]);
+        assert_eq!(bottom(&drawn.rows, 1), ["> Image: dog.jpg (1000 B)"]);
+
+        let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&picker));
+        assert!(drawn.fetches.is_empty());
+    }
+
+    #[test]
+    fn pictures_off_screen_are_not_fetched() {
+        let events = vec![dog(None), text_event("$text:example.org", 2000, "hello")];
+        let drawn = draw_with(events, 0, 3, &mut Pictures::default(), Some(&kitty()));
+
+        assert!(drawn.fetches.is_empty());
     }
 }

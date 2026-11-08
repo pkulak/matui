@@ -51,7 +51,7 @@ impl Widget for ErrorWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
             .vertical_margin(get_margin(area.height, 8))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -60,14 +60,11 @@ impl Widget for ErrorWidget<'_> {
             .direction(Direction::Vertical)
             .horizontal_margin(4)
             .vertical_margin(1)
-            .constraints(
-                [
-                    Constraint::Length(1),
-                    Constraint::Length(2),
-                    Constraint::Length(3),
-                ]
-                .as_ref(),
-            )
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(2),
+                Constraint::Length(3),
+            ])
             .split(area);
 
         let block = Block::default()
@@ -85,7 +82,7 @@ impl Widget for ErrorWidget<'_> {
         let area = Layout::default()
             .direction(Direction::Horizontal)
             .horizontal_margin(get_margin(splits[1].width, 20))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(splits[2])[0];
 
         self.error.button.widget().render(area, buf);

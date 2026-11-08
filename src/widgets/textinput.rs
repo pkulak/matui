@@ -234,7 +234,7 @@ impl Widget for TextInputWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(1)
             .vertical_margin(1)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         self.adjust_window(area.width as usize);

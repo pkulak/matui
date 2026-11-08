@@ -90,7 +90,7 @@ impl Widget for SigninWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
             .vertical_margin(get_margin(area.height, 17))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -99,18 +99,15 @@ impl Widget for SigninWidget<'_> {
             .direction(Direction::Vertical)
             .horizontal_margin(8)
             .vertical_margin(2)
-            .constraints(
-                [
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                ]
-                .as_ref(),
-            )
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(3),
+            ])
             .split(area);
 
         let block = Block::default()
@@ -127,7 +124,7 @@ impl Widget for SigninWidget<'_> {
 
         let submit_area = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(splits[6])[1];
 
         self.signin.submit.widget().render(submit_area, buf);

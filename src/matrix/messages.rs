@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::mpsc::{Sender, TryRecvError, channel};
 use std::time::Duration;
 use std::{fs, thread};
 
+use image::{DynamicImage, ImageReader, Limits};
 use log::error;
 use matrix_sdk::HttpError;
 use matrix_sdk::attachment::AttachmentConfig;
@@ -13,6 +15,7 @@ use matrix_sdk::room::{MessagesOptions, Receipts, Room};
 use matrix_sdk::ruma::api::Direction;
 use matrix_sdk::ruma::events::reaction::ReactionEventContent;
 use matrix_sdk::ruma::events::relation::Annotation;
+use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, File, Image, Video};
 use matrix_sdk::ruma::events::room::message::{
@@ -28,8 +31,15 @@ use super::mime::mime_from_path;
 use crate::app::App;
 use crate::handler::MatuiEvent::{Error, ProgressComplete, ProgressStarted};
 use crate::handler::{Batch, MatuiEvent};
-use crate::media::get_attachment_info;
+use crate::media::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, decode_upright, get_attachment_info};
+use crate::pictures::source_uri;
 use crate::spawn::{save_file, view_file};
+
+/// The widest or tallest picture we'll decode, in pixels.
+const MAX_PICTURE_SIDE: u32 = 10_000;
+
+/// The most memory decoding a picture may take.
+const MAX_PICTURE_ALLOC: u64 = 256 * 1024 * 1024;
 
 /// What should we do with the file after we download it?
 pub enum AfterDownload {
@@ -154,6 +164,38 @@ impl Matrix {
                     )),
                 },
             };
+        });
+    }
+
+    /// Download and decode a picture for a room's chat, in the background.
+    pub fn fetch_picture(&self, room_id: OwnedRoomId, source: MediaSource) {
+        let matrix = self.clone();
+
+        App::spawn(async move {
+            let uri = source_uri(&source).clone();
+
+            let request = MediaRequestParameters {
+                source,
+                format: MediaFormat::File,
+            };
+
+            let image = match matrix
+                .client()
+                .media()
+                .get_media_content(&request, true)
+                .await
+            {
+                Ok(bytes) => tokio::task::spawn_blocking(move || decode_picture(&bytes))
+                    .await
+                    .ok()
+                    .flatten(),
+                Err(err) => {
+                    error!("could not download picture {}: {}", uri, err);
+                    None
+                }
+            };
+
+            App::send(MatuiEvent::Picture(room_id, uri, image));
         });
     }
 
@@ -417,6 +459,34 @@ impl Matrix {
     }
 }
 
+/// Decodes a picture, shrinking an original to thumbnail size so it's
+/// cheap to draw.
+fn decode_picture(bytes: &[u8]) -> Option<DynamicImage> {
+    // the sender picks these bytes and their claimed size, so cap what
+    // decoding them can cost
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_PICTURE_SIDE);
+    limits.max_image_height = Some(MAX_PICTURE_SIDE);
+    limits.max_alloc = Some(MAX_PICTURE_ALLOC);
+
+    let mut reader = ImageReader::new(Cursor::new(bytes));
+    reader.limits(limits);
+
+    let image = match decode_upright(reader) {
+        Ok(image) => image,
+        Err(err) => {
+            error!("could not decode picture: {}", err);
+            return None;
+        }
+    };
+
+    if image.width() <= THUMBNAIL_WIDTH && image.height() <= THUMBNAIL_HEIGHT {
+        return Some(image);
+    }
+
+    Some(image.thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
+}
+
 /// Builds a text message from what the user typed, turning the IDs of joined
 /// members into mentions.
 async fn text_content(room: &Room, message: &str) -> RoomMessageEventContent {
@@ -446,4 +516,27 @@ fn without_me(room: &Room, mut content: RoomMessageEventContent) -> RoomMessageE
     }
 
     content
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageFormat, RgbImage};
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Cursor::new(vec![]);
+
+        DynamicImage::ImageRgb8(RgbImage::new(width, height))
+            .write_to(&mut bytes, ImageFormat::Png)
+            .unwrap();
+
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn pictures_too_big_to_decode_fail() {
+        assert!(decode_picture(&png(MAX_PICTURE_SIDE, 1)).is_some());
+        assert!(decode_picture(&png(MAX_PICTURE_SIDE + 1, 1)).is_none());
+        assert!(decode_picture(&png(1, MAX_PICTURE_SIDE + 1)).is_none());
+    }
 }

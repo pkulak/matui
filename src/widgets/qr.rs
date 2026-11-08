@@ -126,7 +126,7 @@ fn frame(area: Rect, buf: &mut Buffer, width: u16, height: u16) -> Vec<Rect> {
     let area = Layout::default()
         .horizontal_margin(get_margin(area.width, width))
         .vertical_margin(get_margin(area.height, height))
-        .constraints([Constraint::Percentage(100)].as_ref())
+        .constraints([Constraint::Percentage(100)])
         .split(area)[0];
 
     buf.merge(&Buffer::empty(area));
@@ -144,14 +144,11 @@ fn frame(area: Rect, buf: &mut Buffer, width: u16, height: u16) -> Vec<Rect> {
         .direction(Direction::Vertical)
         .horizontal_margin(2)
         .vertical_margin(1)
-        .constraints(
-            [
-                Constraint::Length(2),
-                Constraint::Percentage(100),
-                Constraint::Length(1),
-            ]
-            .as_ref(),
-        )
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Percentage(100),
+            Constraint::Length(1),
+        ])
         .split(area)
         .to_vec()
 }
@@ -181,17 +178,17 @@ fn render_check(input: &TextInput, area: Rect, buf: &mut Buffer) {
 
     let input_row = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
+        .constraints([Constraint::Length(3), Constraint::Percentage(100)])
         .split(splits[1])[0];
 
     let input_area = Layout::default()
         .horizontal_margin(get_margin(input_row.width, 13))
-        .constraints([Constraint::Percentage(100)].as_ref())
+        .constraints([Constraint::Percentage(100)])
         .split(input_row)[0];
 
     let input_splits = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(7), Constraint::Length(6)].as_ref())
+        .constraints([Constraint::Length(7), Constraint::Length(6)])
         .split(input_area);
 
     Paragraph::new("Code:")
