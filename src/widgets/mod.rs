@@ -25,6 +25,7 @@ pub mod message;
 pub mod react;
 pub mod receipts;
 pub mod textinput;
+pub mod timeline;
 
 #[macro_export]
 macro_rules! consumed {
