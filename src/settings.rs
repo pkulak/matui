@@ -25,6 +25,11 @@ fn get_path() -> PathBuf {
 }
 
 fn build_settings() -> Config {
+    // tests run on the defaults, whatever the developer's config says
+    if cfg!(test) {
+        return Config::default();
+    }
+
     let config = Config::builder()
         .add_source(config::File::from(get_path().as_path()))
         .build();
