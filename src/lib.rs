@@ -22,6 +22,7 @@ pub mod settings;
 
 pub mod markdown;
 pub mod media;
+pub mod pictures;
 /// Using external apps to do our bidding
 pub mod spawn;
 

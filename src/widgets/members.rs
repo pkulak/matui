@@ -151,7 +151,7 @@ impl Widget for MembersWidget<'_> {
             .direction(Direction::Horizontal)
             .vertical_margin(2)
             .horizontal_margin(get_margin(area.width, 60))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -169,7 +169,7 @@ impl Widget for MembersWidget<'_> {
             .direction(Direction::Vertical)
             .vertical_margin(2)
             .horizontal_margin(2)
-            .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Length(3), Constraint::Percentage(100)])
             .split(area);
 
         self.members.textinput.widget().render(splits[0], buf);
@@ -193,7 +193,7 @@ impl Widget for MembersWidget<'_> {
 
         let area = Layout::default()
             .horizontal_margin(1)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(splits[1])[0];
 
         let mut list_state = self.members.list_state.take();

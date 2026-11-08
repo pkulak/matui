@@ -139,7 +139,7 @@ impl Widget for CreateWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
             .vertical_margin(get_margin(area.height, 24))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -148,20 +148,17 @@ impl Widget for CreateWidget<'_> {
             .direction(Direction::Vertical)
             .horizontal_margin(8)
             .vertical_margin(2)
-            .constraints(
-                [
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                    Constraint::Length(1),
-                    Constraint::Percentage(100),
-                ]
-                .as_ref(),
-            )
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(1),
+                Constraint::Percentage(100),
+            ])
             .split(area);
 
         let block = Block::default()
@@ -178,7 +175,7 @@ impl Widget for CreateWidget<'_> {
 
         let checks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(splits[6]);
 
         self.create.encrypted.widget().render(checks[0], buf);
@@ -186,7 +183,7 @@ impl Widget for CreateWidget<'_> {
 
         let buttons = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(splits[8]);
 
         self.create.cancel.widget().render(buttons[0], buf);

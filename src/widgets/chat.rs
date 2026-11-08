@@ -3,6 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
+use crate::pictures::{Pictures, picker};
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
@@ -19,10 +20,12 @@ use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use image::DynamicImage;
 use log::info;
 use matrix_sdk::RoomMemberships;
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
+use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::{MembershipChange, RoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
 use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
@@ -30,9 +33,11 @@ use matrix_sdk::ruma::events::room::name::RoomNameEvent;
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 use matrix_sdk::ruma::events::room::topic::RoomTopicEvent;
 use matrix_sdk::ruma::events::{AnyStateEvent, AnyTimelineEvent};
-use matrix_sdk::ruma::{EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId, UserId};
+use matrix_sdk::ruma::{
+    EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedMxcUri, OwnedUserId, RoomId, UserId,
+};
 use once_cell::sync::OnceCell;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::{Deref, Range};
@@ -43,9 +48,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
-use ratatui::widgets::{
-    Block, BorderType, Borders, ListItem, ListState, Paragraph, StatefulWidget, Widget,
-};
+use ratatui::widgets::{Block, BorderType, Borders, ListItem, ListState, Paragraph, Widget};
 
 use super::confirm::{Confirm, ConfirmBehavior};
 use super::message::MergeResult;
@@ -67,6 +70,7 @@ pub struct Chat {
     fetch: Cell<Option<AbortHandle>>,
     height: Cell<usize>,
     line_types: Mutex<Vec<LineType>>,
+    pictures: RefCell<Pictures>,
     bookmark: Cell<Option<Bookmark>>,
     focus: bool,
     search_term: String,
@@ -109,6 +113,7 @@ impl Chat {
             fetch: Cell::new(Some(fetch)),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
+            pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
             focus,
             search_term: "".to_string(),
@@ -139,6 +144,7 @@ impl Chat {
             fetch: Cell::new(None),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
+            pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
             focus: true,
             search_term: "".to_string(),
@@ -622,6 +628,30 @@ impl Chat {
             self.try_fetch_previous();
         } else {
             info!("refusing to fetch more messages without making progress");
+        }
+    }
+
+    pub fn picture_event(
+        &mut self,
+        room_id: &RoomId,
+        uri: OwnedMxcUri,
+        image: Option<DynamicImage>,
+    ) {
+        if room_id != self.room.room_id() {
+            return;
+        }
+
+        self.pictures.get_mut().insert(uri, image);
+
+        // the picture's rows may push the selection onto another message,
+        // so keep it where it was
+        self.adjust_range(false);
+    }
+
+    fn fetch_pictures(&self, sources: Vec<MediaSource>) {
+        for source in sources {
+            self.matrix
+                .fetch_picture(self.room.room_id().to_owned(), source);
         }
     }
 
@@ -1116,7 +1146,7 @@ impl Widget for ChatWidget<'_> {
         let area = Layout::default()
             .direction(Direction::Horizontal)
             .horizontal_margin(get_margin(area.width, 80))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -1124,7 +1154,7 @@ impl Widget for ChatWidget<'_> {
         let splits = Layout::default()
             .direction(Direction::Vertical)
             .vertical_margin(1)
-            .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Length(3), Constraint::Percentage(100)])
             .split(area);
 
         let mut header_text = match &self.chat.thread_root {
@@ -1153,7 +1183,7 @@ impl Widget for ChatWidget<'_> {
             .direction(Direction::Vertical)
             .horizontal_margin(2)
             .vertical_margin(1)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(splits[0])[0];
 
         let (p_content, p_color) = if let Some(typing) = &self.chat.typing {
@@ -1181,7 +1211,15 @@ impl Widget for ChatWidget<'_> {
         line_types.clear();
 
         let window = &self.chat.messages[self.chat.window.clone()];
-        let timeline = Timeline::new(window, (area.width - 2) as usize, &mut line_types);
+        let mut pictures = self.chat.pictures.borrow_mut();
+
+        let timeline = Timeline::new(
+            window,
+            (area.width - 2) as usize,
+            &mut line_types,
+            &mut pictures,
+            picker(),
+        );
 
         // make sure we save our last render dimensions
         self.chat.height.set((splits[1].height).into());
@@ -1209,8 +1247,9 @@ impl Widget for ChatWidget<'_> {
             *list_state.selected_mut() = Some(i.min(line_types.len().saturating_sub(1)));
         }
 
-        timeline.render(splits[1], buf, &mut list_state);
+        let fetches = timeline.render(splits[1], buf, &mut list_state);
         self.chat.list_state.set(list_state);
+        self.chat.fetch_pictures(fetches);
 
         // reaction window
         if let Some(react) = self.chat.react.as_ref() {
@@ -1238,16 +1277,21 @@ pub enum TimelineItem {
 }
 
 impl TimelineItem {
-    fn message(&self) -> Option<&Message> {
+    pub(crate) fn message(&self) -> Option<&Message> {
         match self {
             TimelineItem::Message(m) => Some(m),
             TimelineItem::Events(_) => None,
         }
     }
 
-    pub fn to_list_items(&self, width: usize, sidecar: &mut Vec<LineType>) -> Vec<ListItem<'_>> {
+    pub fn to_list_items(
+        &self,
+        width: usize,
+        picture_rows: Option<u16>,
+        sidecar: &mut Vec<LineType>,
+    ) -> Vec<ListItem<'_>> {
         match self {
-            TimelineItem::Message(m) => m.to_list_items(width, sidecar),
+            TimelineItem::Message(m) => m.to_list_items(width, picture_rows, sidecar),
             TimelineItem::Events(e) => e.to_list_items(sidecar),
         }
     }

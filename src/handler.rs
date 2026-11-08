@@ -13,10 +13,11 @@ use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::upload::Upload;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use image::DynamicImage;
 use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
-use matrix_sdk::ruma::{OwnedRoomOrAliasId, OwnedUserId};
+use matrix_sdk::ruma::{OwnedMxcUri, OwnedRoomId, OwnedRoomOrAliasId, OwnedUserId};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -39,6 +40,8 @@ pub enum MatuiEvent {
     /// The OAuth flow is waiting on the browser at the given URL; the
     /// Notify cancels it.
     OauthStarted(String, Arc<Notify>),
+    /// A picture for a room's chat, or `None` if it couldn't be loaded.
+    Picture(OwnedRoomId, OwnedMxcUri, Option<DynamicImage>),
     ProgressStarted(String, u64),
     ProgressComplete,
     QrLoginAuth(String),
@@ -107,6 +110,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::LoginComplete => {
             app.popup = None;
+        }
+        MatuiEvent::Picture(room_id, uri, image) => {
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+                c.picture_event(&room_id, uri.clone(), image.clone());
+            }
         }
         MatuiEvent::ProgressStarted(msg, delay) => {
             app.set_popup(Popup::Progress(Progress::new(&msg, delay)))

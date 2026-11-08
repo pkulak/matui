@@ -1,4 +1,5 @@
-use std::{fs, io::Cursor, path::Path, process::Command, time::Duration};
+use std::io::{BufRead, Cursor, Seek};
+use std::{fs, path::Path, process::Command, time::Duration};
 
 use image::{
     DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, Rgba, RgbaImage, imageops,
@@ -9,8 +10,8 @@ use matrix_sdk::attachment::{
 use matrix_sdk::ruma::UInt;
 use mime::{IMAGE_JPEG, Mime};
 
-const THUMBNAIL_WIDTH: u32 = 800;
-const THUMBNAIL_HEIGHT: u32 = 600;
+pub const THUMBNAIL_WIDTH: u32 = 800;
+pub const THUMBNAIL_HEIGHT: u32 = 600;
 
 pub fn get_attachment_info(
     path: &Path,
@@ -80,12 +81,14 @@ fn get_static_image_info(path: &Path) -> anyhow::Result<(Option<Thumbnail>, Atta
 }
 
 fn decode_image(path: &Path) -> anyhow::Result<DynamicImage> {
-    let mut decoder = ImageReader::open(path)?
-        .with_guessed_format()?
-        .into_decoder()?;
+    decode_upright(ImageReader::open(path)?)
+}
+
+/// Decodes an image upright, the way clients display it.
+pub fn decode_upright(reader: ImageReader<impl BufRead + Seek>) -> anyhow::Result<DynamicImage> {
+    let mut decoder = reader.with_guessed_format()?.into_decoder()?;
     let orientation = decoder.orientation()?;
     let mut img = DynamicImage::from_decoder(decoder)?;
-    // clients display the original upright, so the thumbnail must be too
     img.apply_orientation(orientation);
     Ok(img)
 }

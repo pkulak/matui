@@ -58,7 +58,7 @@ impl Widget for ProgressWidget<'_> {
             .direction(Vertical)
             .horizontal_margin(get_margin(area.width, 60))
             .vertical_margin(get_margin(area.height, 5))
-            .constraints([Constraint::Length(5)].as_ref())
+            .constraints([Constraint::Length(5)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -75,7 +75,7 @@ impl Widget for ProgressWidget<'_> {
                 (self.progress.text.len() + 4) as u16,
             ))
             .vertical_margin(2)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         Paragraph::new(value).render(area, buf);

@@ -51,7 +51,7 @@ impl Widget for HelpWidget {
             .direction(Direction::Horizontal)
             .vertical_margin(get_margin(area.height, height))
             .horizontal_margin(get_margin(area.width, 70))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -70,12 +70,12 @@ impl Widget for HelpWidget {
             .direction(Direction::Vertical)
             .vertical_margin(2)
             .horizontal_margin(2)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area);
 
         let area = Layout::default()
             .horizontal_margin(1)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(splits[0])[0];
 
         let widths = &[Constraint::Length(key_width), Constraint::Percentage(90)];

@@ -170,6 +170,16 @@ impl Message {
                 .any(|r| r.contains_search_term(search_term))
     }
 
+    // what's shown under a picture
+    fn caption(&self) -> Option<&str> {
+        match &self.body {
+            Image(content) => content.caption(),
+            Video(content) => content.caption(),
+            _ => None,
+        }
+        .map(str::trim)
+    }
+
     pub fn display(&self) -> &str {
         self.display_cache
             .get_or_init(|| Message::display_body(&self.body).trim().to_string())
@@ -685,9 +695,16 @@ impl Message {
         result
     }
 
-    pub fn to_list_items(&self, width: usize, sidecar: &mut Vec<LineType>) -> Vec<ListItem<'_>> {
+    // with picture rows, blank rows for the picture replace the title line,
+    // straight under the author
+    pub fn to_list_items(
+        &self,
+        width: usize,
+        picture_rows: Option<u16>,
+        sidecar: &mut Vec<LineType>,
+    ) -> Vec<ListItem<'_>> {
         let items: Vec<ratatui::text::Text> = self
-            .to_list_items_internal(self.display(), width, sidecar)
+            .to_list_items_internal(self.display(), width, picture_rows, sidecar)
             .into_iter()
             .map(|spans| ratatui::text::Text::from(Line::from(spans)))
             .collect();
@@ -700,6 +717,7 @@ impl Message {
         &'a self,
         body: &'a str,
         width: usize,
+        picture_rows: Option<u16>,
         sidecar: &mut Vec<LineType>,
     ) -> Vec<Vec<Span<'a>>> {
         let mut lines = vec![];
@@ -722,8 +740,22 @@ impl Message {
         lines.push(author);
         sidecar.push(LineType::MessageStart(self.id.clone()));
 
+        let body = match picture_rows {
+            Some(rows) => {
+                for _ in 0..rows {
+                    lines.push(vec![]);
+                    sidecar.push(LineType::MessageContent);
+                }
+
+                self.caption().unwrap_or_default()
+            }
+            None => body,
+        };
+
         // the actual message
-        if matches!(self.body, Text(_)) && self.search_term.get().is_none() {
+        if picture_rows.is_some() && body.is_empty() {
+            // a picture with no caption has nothing more to say
+        } else if matches!(self.body, Text(_)) && self.search_term.get().is_none() {
             let md_lines = markdown::md_body_to_spans(body, width);
             let limit = settings::message_line_limit();
             let message_overlap = md_lines.len() > limit;
@@ -812,7 +844,7 @@ impl Message {
         for (i, r) in self.replies.iter().enumerate() {
             let reply = r.display();
             let body = Message::remove_reply_header(reply);
-            let mut reply_lines = r.to_list_items_internal(body, width - 2, sidecar);
+            let mut reply_lines = r.to_list_items_internal(body, width - 2, None, sidecar);
             Message::indent(&mut reply_lines, i == 0);
             lines.append(&mut reply_lines);
         }
@@ -953,7 +985,29 @@ pub(crate) mod tests {
         .unwrap()
     }
 
-    fn image_event(body: &str, filename: Option<&str>) -> AnyTimelineEvent {
+    // an image from mxc://example.org/image, with whatever info is given
+    pub(crate) fn image_event(
+        body: &str,
+        filename: Option<&str>,
+        size: Option<u64>,
+        thumbnail: Option<&str>,
+        dimensions: Option<(u32, u32)>,
+    ) -> AnyTimelineEvent {
+        let mut info = json!({});
+
+        if let Some(size) = size {
+            info["size"] = json!(size);
+        }
+
+        if let Some(thumbnail) = thumbnail {
+            info["thumbnail_url"] = json!(thumbnail);
+        }
+
+        if let Some((w, h)) = dimensions {
+            info["w"] = json!(w);
+            info["h"] = json!(h);
+        }
+
         serde_json::from_value(json!({
             "type": "m.room.message",
             "event_id": "$image:example.org",
@@ -964,7 +1018,8 @@ pub(crate) mod tests {
                 "msgtype": "m.image",
                 "body": body,
                 "filename": filename,
-                "url": "mxc://example.org/image"
+                "url": "mxc://example.org/image",
+                "info": info
             }
         }))
         .unwrap()
@@ -1038,12 +1093,12 @@ pub(crate) mod tests {
 
     #[test]
     fn displays_media_captions_with_the_filename() {
-        let event = image_event("Look at this dog", Some("dog.jpg"));
+        let event = image_event("Look at this dog", Some("dog.jpg"), None, None, None);
         let message = Message::try_from(&event, false).unwrap();
 
         assert_eq!(message.display(), "dog.jpg\nLook at this dog");
 
-        let event = image_event("dog.jpg", None);
+        let event = image_event("dog.jpg", None, None, None, None);
         let message = Message::try_from(&event, false).unwrap();
 
         assert_eq!(message.display(), "dog.jpg");

@@ -136,7 +136,7 @@ impl Widget for ConfirmWidget<'_> {
         let area = Layout::default()
             .horizontal_margin(get_margin(area.width, 60))
             .vertical_margin(get_margin(area.height, 10))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -154,21 +154,18 @@ impl Widget for ConfirmWidget<'_> {
             .direction(Direction::Vertical)
             .horizontal_margin(4)
             .vertical_margin(1)
-            .constraints(
-                [
-                    Constraint::Length(1),
-                    Constraint::Length(4),
-                    Constraint::Length(3),
-                ]
-                .as_ref(),
-            )
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(4),
+                Constraint::Length(3),
+            ])
             .split(area);
 
         Paragraph::new(self.confirm.message.clone()).render(splits[1], buf);
 
         let splits = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(splits[2]);
 
         self.confirm.yes.widget().render(splits[0], buf);

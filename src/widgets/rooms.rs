@@ -187,7 +187,7 @@ impl Widget for RoomsWidget<'_> {
             .direction(Direction::Horizontal)
             .vertical_margin(2)
             .horizontal_margin(get_margin(area.width, 60))
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
         buf.merge(&Buffer::empty(area));
@@ -206,7 +206,7 @@ impl Widget for RoomsWidget<'_> {
             .direction(Direction::Vertical)
             .vertical_margin(2)
             .horizontal_margin(2)
-            .constraints([Constraint::Length(3), Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Length(3), Constraint::Percentage(100)])
             .split(area);
 
         self.rooms.textinput.widget().render(splits[0], buf);
@@ -220,7 +220,7 @@ impl Widget for RoomsWidget<'_> {
 
         let area = Layout::default()
             .horizontal_margin(1)
-            .constraints([Constraint::Percentage(100)].as_ref())
+            .constraints([Constraint::Percentage(100)])
             .split(splits[1])[0];
 
         let mut list_state = self.rooms.list_state.take();

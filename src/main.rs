@@ -8,6 +8,7 @@ use matui::event::{Event, EventHandler};
 use matui::handler::{
     handle_app_event, handle_blur_event, handle_focus_event, handle_key_event, handle_paste_event,
 };
+use matui::pictures::init_picker;
 use matui::settings::watch_settings_forever;
 use std::io::stdout;
 
@@ -22,6 +23,10 @@ fn main() -> anyhow::Result<()> {
     // Initialize the terminal user interface
     let mut terminal = ratatui::init();
     execute!(stdout(), EnableFocusChange, EnableBracketedPaste)?;
+
+    // this reads the terminal's answers from stdin, so it has to finish
+    // before the event thread starts reading
+    init_picker();
 
     // and the event system.
     let events = EventHandler::new(250);
