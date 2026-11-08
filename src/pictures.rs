@@ -1,12 +1,12 @@
 use image::DynamicImage;
 use log::{info, warn};
-use matrix_sdk::ruma::OwnedMxcUri;
-use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Image, Video};
+use matrix_sdk::ruma::events::room::{MediaSource, ThumbnailInfo};
+use matrix_sdk::ruma::{OwnedMxcUri, UInt};
 use ratatui::layout::Size;
-use ratatui_image::Resize;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::SlicedProtocol;
+use ratatui_image::{FontSize, Resize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -41,25 +41,47 @@ pub fn picker() -> Option<&'static Picker> {
     PICKER.get().and_then(Option::as_ref)
 }
 
+/// A picture to show for a message.
+pub struct PictureSource {
+    pub media: MediaSource,
+    // its width and height in pixels, if the event says
+    pub dimensions: Option<(u32, u32)>,
+}
+
 /// Which picture, if any, to show for a message.
-pub fn picture_source(body: &MessageType) -> Option<MediaSource> {
+pub fn picture_source(body: &MessageType) -> Option<PictureSource> {
     match body {
         Image(content) => {
-            let info = content.info.as_deref();
+            let info = content.info.as_deref()?;
 
-            if let Some(thumbnail) = info.and_then(|i| i.thumbnail_source.clone()) {
-                return Some(thumbnail);
+            if let Some(thumbnail) = info.thumbnail_source.clone() {
+                return Some(thumbnail_source(thumbnail, info.thumbnail_info.as_deref()));
             }
 
-            let size = info.and_then(|i| i.size)?;
-            (u64::from(size) <= MAX_ORIGINAL_SIZE).then(|| content.source.clone())
+            (u64::from(info.size?) <= MAX_ORIGINAL_SIZE).then(|| PictureSource {
+                media: content.source.clone(),
+                dimensions: dimensions(info.width, info.height),
+            })
         }
-        Video(content) => content
-            .info
-            .as_deref()
-            .and_then(|i| i.thumbnail_source.clone()),
+        Video(content) => {
+            let info = content.info.as_deref()?;
+            let thumbnail = info.thumbnail_source.clone()?;
+
+            Some(thumbnail_source(thumbnail, info.thumbnail_info.as_deref()))
+        }
         _ => None,
     }
+}
+
+fn thumbnail_source(media: MediaSource, info: Option<&ThumbnailInfo>) -> PictureSource {
+    PictureSource {
+        media,
+        dimensions: info.and_then(|i| dimensions(i.width, i.height)),
+    }
+}
+
+fn dimensions(width: Option<UInt>, height: Option<UInt>) -> Option<(u32, u32)> {
+    Some((width?.try_into().ok()?, height?.try_into().ok()?))
 }
 
 pub fn source_uri(source: &MediaSource) -> &OwnedMxcUri {
@@ -109,13 +131,20 @@ impl Pictures {
         true
     }
 
-    /// The rows and columns a ready picture takes, within the given width.
-    pub fn size(&self, uri: &OwnedMxcUri, picker: &Picker, width: u16) -> Option<Size> {
-        let Some(Picture::Ready { image, .. }) = self.entries.get(uri) else {
-            return None;
+    /// The rows and columns a picture takes, within the given width. The
+    /// event's dimensions give its size before it's ready, and keep it the
+    /// same after, so the timeline doesn't jump. Without them, there's no
+    /// size until it's ready.
+    pub fn size(&self, source: &PictureSource, picker: &Picker, width: u16) -> Option<Size> {
+        let dimensions = match self.entries.get(source_uri(&source.media)) {
+            Some(Picture::Failed) => return None,
+            Some(Picture::Ready { image, .. }) => {
+                source.dimensions.unwrap_or((image.width(), image.height()))
+            }
+            _ => source.dimensions?,
         };
 
-        Some(Resize::Fit(None).size_for(image, picker.font_size(), Size::new(width, MAX_ROWS)))
+        fit(dimensions, picker.font_size(), Size::new(width, MAX_ROWS))
     }
 
     /// The picture, ready to draw at the given size.
@@ -150,6 +179,30 @@ impl Pictures {
     }
 }
 
+// the cells a picture fills when shrunk to fit the available ones, keeping
+// its shape, the way Resize::Fit sizes it
+fn fit((width, height): (u32, u32), font: FontSize, available: Size) -> Option<Size> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let (width, height) = (f64::from(width), f64::from(height));
+
+    // never enlarged
+    let max_width = width.min(f64::from(available.width) * f64::from(font.width));
+    let max_height = height.min(f64::from(available.height) * f64::from(font.height));
+    let ratio = f64::min(max_width / width, max_height / height);
+
+    let cells = |pixels: f64, cell: u16| {
+        ((pixels * ratio).round().max(1.0) / f64::from(cell)).ceil() as u16
+    };
+
+    Some(Size::new(
+        cells(width, font.width),
+        cells(height, font.height),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,8 +231,12 @@ mod tests {
         }))
     }
 
-    fn uri(source: Option<MediaSource>) -> Option<OwnedMxcUri> {
-        source.as_ref().map(source_uri).cloned()
+    fn uri(source: Option<PictureSource>) -> Option<OwnedMxcUri> {
+        source.map(|s| source_uri(&s.media).clone())
+    }
+
+    fn dimensions_of(body: MessageType) -> Option<(u32, u32)> {
+        picture_source(&body).unwrap().dimensions
     }
 
     #[test]
@@ -231,6 +288,35 @@ mod tests {
     fn videos_need_a_thumbnail() {
         let body = video(json!({ "size": 1000 }));
         assert_eq!(uri(picture_source(&body)), None);
+    }
+
+    #[test]
+    fn dimensions_come_from_the_info_for_the_source() {
+        let both = json!({
+            "size": 1000,
+            "w": 4000,
+            "h": 3000,
+            "thumbnail_url": "mxc://example.org/thumbnail",
+            "thumbnail_info": { "w": 800, "h": 600 }
+        });
+
+        assert_eq!(dimensions_of(image(both.clone())), Some((800, 600)));
+        assert_eq!(dimensions_of(video(both)), Some((800, 600)));
+
+        let original = image(json!({ "size": 1000, "w": 400, "h": 300 }));
+        assert_eq!(dimensions_of(original), Some((400, 300)));
+
+        // a thumbnail without its own dimensions doesn't borrow the original's
+        let body = image(json!({
+            "w": 4000,
+            "h": 3000,
+            "thumbnail_url": "mxc://example.org/thumbnail"
+        }));
+        assert_eq!(dimensions_of(body), None);
+
+        // and both are needed
+        let body = image(json!({ "size": 1000, "w": 400 }));
+        assert_eq!(dimensions_of(body), None);
     }
 
     #[test]
