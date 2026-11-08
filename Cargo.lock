@@ -3781,6 +3781,7 @@ dependencies = [
  "timeago",
  "tokio",
  "url",
+ "wiremock",
  "zbus",
 ]
 

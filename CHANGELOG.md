@@ -8,6 +8,7 @@
 - Send a small JPEG thumbnail with every uploaded image and video, so other clients can show a preview.
 - Show encrypted messages in the open room as soon as their keys arrive, such as after verifying or recovering, instead of only after switching rooms or restarting.
 - Ask before accepting a verification request, naming the device asking, instead of accepting every request in every running session. Another running matui session no longer takes over a new session's verification.
+- Start the emoji comparison once another device accepts matui's verification request, so one matui session can verify another.
 
 ## [1.1.0] - 2026-10-25
 

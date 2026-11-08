@@ -21,11 +21,9 @@ use crate::handler::MatuiEvent::{
 
 impl Matrix {
     pub fn verify(&self) {
-        let matrix = self.clone();
+        let client = self.client();
 
         App::spawn(async move {
-            let client = matrix.client();
-
             if let Some(user_id) = client.user_id() {
                 match client.encryption().get_user_identity(user_id).await {
                     Ok(Some(identity)) => {
@@ -34,31 +32,13 @@ impl Matrix {
                             .await
                         {
                             Err(err) => error!("could not request verification: {}", err),
-                            Ok(request) => matrix.wait_on_verify_request(request),
+                            Ok(request) => follow_request(request, App::get_sender()).await,
                         }
                     }
                     Ok(None) => error!("no user identity"),
                     Err(err) => error!("could not get user identity: {}", err),
                 };
             };
-        });
-    }
-
-    fn wait_on_verify_request(&self, request: VerificationRequest) {
-        info!("verification requested");
-
-        App::spawn(async move {
-            let mut stream = request.changes();
-
-            while let Some(state) = stream.next().await {
-                if let VerificationRequestState::Transitioned {
-                    verification: Verification::SasV1(s),
-                } = state
-                {
-                    App::spawn(sas_verification_handler(s, App::get_sender()));
-                    break;
-                }
-            }
         });
     }
 
@@ -186,13 +166,30 @@ async fn accept_request(request: VerificationRequest, sender: Sender<Event>) {
         return;
     }
 
+    follow_request(request, sender).await;
+}
+
+/// Follow a request into the emoji comparison. The side that sent the
+/// request starts it once the other side is ready.
+async fn follow_request(request: VerificationRequest, sender: Sender<Event>) {
     let mut stream = request.changes();
 
     while let Some(state) = stream.next().await {
         match state {
             VerificationRequestState::Created { .. }
-            | VerificationRequestState::Requested { .. }
-            | VerificationRequestState::Ready { .. } => (),
+            | VerificationRequestState::Requested { .. } => (),
+            VerificationRequestState::Ready { .. } => {
+                if request.we_started()
+                    && let Err(err) = request.start_sas().await
+                {
+                    error!("could not start SAS verification: {}", err);
+                    let _ = sender.send(Matui(Error(format!(
+                        "Could not start verification: {}",
+                        err
+                    ))));
+                    break;
+                }
+            }
             VerificationRequestState::Transitioned { verification } => {
                 // We only support SAS verification.
                 if let Verification::SasV1(s) = verification {
@@ -251,11 +248,12 @@ mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex};
 
-    use matrix_sdk::encryption::verification::VerificationRequest;
-    use matrix_sdk::ruma::exports::serde_json::{Value, json};
-    use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, device_id, user_id};
+    use matrix_sdk::encryption::verification::{Emoji, VerificationRequest};
+    use matrix_sdk::ruma::exports::serde_json::json;
+    use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, TransactionId, device_id, user_id};
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use matrix_sdk::test_utils::mocks::encryption::PendingToDeviceMessages;
+    use wiremock::ResponseTemplate;
 
     use super::*;
 
@@ -287,7 +285,10 @@ mod tests {
         (server, matui, other, Queue::default(), events)
     }
 
-    /// Deliver the to-device messages waiting for this client.
+    /// Deliver the to-device messages waiting for this client. This builds
+    /// its own sync response: the mock server's sync builder never clears
+    /// to-device events, so it would send each one again on every sync, to
+    /// either client.
     async fn relay(server: &MatrixMockServer, queue: &Queue, to: &Client) {
         let messages: Vec<_> = queue
             .lock()
@@ -296,14 +297,16 @@ mod tests {
             .and_then(|devices| devices.remove(to.device_id().unwrap()))
             .unwrap_or_default();
 
-        for message in messages {
-            server
-                .mock_sync()
-                .ok_and_run(to, |builder| {
-                    builder.add_to_device_event(message.deserialize_as::<Value>().unwrap());
-                })
-                .await;
-        }
+        let _sync = server
+            .mock_sync()
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "next_batch": TransactionId::new(),
+                "to_device": { "events": messages },
+            })))
+            .mount_as_scoped()
+            .await;
+
+        to.sync_once(Default::default()).await.unwrap();
     }
 
     /// Have the other device ask matui to verify, and return its request
@@ -383,6 +386,75 @@ mod tests {
         relay(&server, &queue, &other).await;
 
         assert!(sent.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn starts_the_emoji_comparison_once_accepted() {
+        let (server, matui, other, queue, _events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let request = matui
+            .encryption()
+            .get_device(user, other.device_id().unwrap())
+            .await
+            .unwrap()
+            .expect("matui knows the other device")
+            .request_verification_with_methods(vec![VerificationMethod::SasV1])
+            .await
+            .unwrap();
+
+        let flow_id = request.flow_id().to_owned();
+        let (sender, events) = channel();
+        tokio::spawn(follow_request(request, sender));
+
+        relay(&server, &queue, &other).await;
+        other
+            .encryption()
+            .get_verification_request(user, &flow_id)
+            .await
+            .expect("the other device got the request")
+            .accept()
+            .await
+            .unwrap();
+
+        // matui starts SAS; the other device goes along with it
+        let compared = async {
+            loop {
+                tokio::task::yield_now().await;
+                relay(&server, &queue, &matui).await;
+                relay(&server, &queue, &other).await;
+
+                if let Some(Verification::SasV1(sas)) =
+                    other.encryption().get_verification(user, &flow_id).await
+                {
+                    sas.accept().await.unwrap();
+                }
+
+                if let Ok(event) = events.try_recv() {
+                    return event;
+                }
+            }
+        };
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), compared)
+            .await
+            .expect("matui shows the emoji");
+
+        let Matui(VerificationStarted(_, emoji)) = event else {
+            panic!("expected the emoji, got {:?}", event);
+        };
+
+        let Some(Verification::SasV1(sas)) =
+            other.encryption().get_verification(user, &flow_id).await
+        else {
+            panic!("the other device is comparing emoji");
+        };
+
+        let symbols = |emoji: &[Emoji]| emoji.iter().map(|e| e.symbol).collect::<Vec<_>>();
+        assert_eq!(symbols(&emoji), symbols(&sas.emoji().unwrap()));
     }
 
     #[tokio::test]
