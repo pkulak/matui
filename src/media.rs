@@ -1,6 +1,8 @@
 use std::{fs, io::Cursor, path::Path, process::Command, time::Duration};
 
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
+use image::{
+    DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbImage, Rgba, RgbaImage, imageops,
+};
 use matrix_sdk::attachment::{
     AttachmentInfo, BaseAudioInfo, BaseFileInfo, BaseImageInfo, BaseVideoInfo, Thumbnail,
 };
@@ -91,7 +93,8 @@ fn decode_image(path: &Path) -> anyhow::Result<DynamicImage> {
 /// Grabs a full-size frame from a video or animated image, at `seek` seconds
 /// or else the first.
 fn extract_frame(path: &Path, seek: Option<f32>) -> anyhow::Result<DynamicImage> {
-    let tmpfile = tempfile::Builder::new().suffix(".jpg").tempfile()?;
+    // PNG keeps any transparency for `make_thumbnail` to flatten
+    let tmpfile = tempfile::Builder::new().suffix(".png").tempfile()?;
 
     let mut command = Command::new("ffmpeg");
     command.arg("-y");
@@ -115,11 +118,10 @@ fn extract_frame(path: &Path, seek: Option<f32>) -> anyhow::Result<DynamicImage>
 /// Shrinks `img` to fit within 800×600, keeping its shape, and encodes it as
 /// a JPEG. Smaller images keep their size.
 fn make_thumbnail(img: &DynamicImage) -> anyhow::Result<Thumbnail> {
-    // JPEG has no alpha channel
     let img = if img.width() > THUMBNAIL_WIDTH || img.height() > THUMBNAIL_HEIGHT {
-        img.thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT).to_rgb8()
+        flatten(&img.thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
     } else {
-        img.to_rgb8()
+        flatten(img)
     };
 
     let mut data = Vec::new();
@@ -132,6 +134,19 @@ fn make_thumbnail(img: &DynamicImage) -> anyhow::Result<Thumbnail> {
         width: img.width().into(),
         height: img.height().into(),
     })
+}
+
+/// Lays `img` over white, since JPEG has no alpha channel. Dropping the
+/// channel instead would show the colour hidden under transparent pixels,
+/// usually black.
+fn flatten(img: &DynamicImage) -> RgbImage {
+    if !img.color().has_alpha() {
+        return img.to_rgb8();
+    }
+
+    let mut canvas = RgbaImage::from_pixel(img.width(), img.height(), Rgba([255; 4]));
+    imageops::overlay(&mut canvas, &img.to_rgba8(), 0, 0);
+    DynamicImage::ImageRgba8(canvas).to_rgb8()
 }
 
 fn get_audio_info(path: &Path) -> anyhow::Result<(Option<Thumbnail>, AttachmentInfo)> {
@@ -187,7 +202,9 @@ fn get_media_duration(path: &Path) -> anyhow::Result<f32> {
 mod tests {
     use std::{path::Path, process::Command};
 
-    use image::{Delay, DynamicImage, Frame, ImageFormat, RgbaImage, codecs::gif::GifEncoder};
+    use image::{
+        Delay, DynamicImage, Frame, ImageFormat, Rgba, RgbaImage, codecs::gif::GifEncoder,
+    };
     use matrix_sdk::attachment::{AttachmentInfo, BaseImageInfo, BaseVideoInfo, Thumbnail};
     use matrix_sdk::ruma::UInt;
     use mime::{IMAGE_GIF, IMAGE_JPEG, IMAGE_PNG, Mime};
@@ -219,6 +236,12 @@ mod tests {
         assert_eq!((thumb.width, thumb.height), (width.into(), height.into()));
     }
 
+    fn assert_white(thumb: &Thumbnail) {
+        let decoded = image::load_from_memory(&thumb.data).unwrap().to_rgb8();
+        // JPEG is lossy, so allow a little noise
+        assert!(decoded.pixels().all(|p| p.0.iter().all(|&c| c > 250)));
+    }
+
     fn assert_image_size(info: &AttachmentInfo, width: u32, height: u32) {
         let AttachmentInfo::Image(BaseImageInfo {
             width: w,
@@ -247,6 +270,28 @@ mod tests {
 
         assert_thumbnail(&thumb, 300, 200);
         assert_image_size(&info, 300, 200);
+    }
+
+    #[test]
+    fn it_puts_transparent_images_on_white() {
+        let file = png(300, 200);
+        let (thumb, _) = info(file.path(), &IMAGE_PNG);
+
+        assert_white(&thumb);
+    }
+
+    #[test]
+    fn it_puts_transparent_frames_on_white() {
+        // goes through ffmpeg, like animated images
+        let file = tempfile::Builder::new().suffix(".webp").tempfile().unwrap();
+        // transparent, hiding red
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(300, 200, Rgba([255, 0, 0, 0])))
+            .save_with_format(file.path(), ImageFormat::WebP)
+            .unwrap();
+
+        let (thumb, _) = info(file.path(), &"image/webp".parse().unwrap());
+
+        assert_white(&thumb);
     }
 
     #[test]
