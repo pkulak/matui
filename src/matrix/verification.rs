@@ -7,6 +7,7 @@ use matrix_sdk::encryption::verification::{
     SasState, SasVerification, Verification, VerificationRequest, VerificationRequestState,
 };
 use matrix_sdk::ruma::events::key::verification::VerificationMethod;
+use matrix_sdk::ruma::events::key::verification::cancel::CancelCode;
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
 
@@ -16,30 +17,13 @@ use crate::event::Event;
 use crate::event::Event::Matui;
 use crate::handler::MatuiEvent;
 use crate::handler::MatuiEvent::{
-    Error, VerificationCompleted, VerificationRequested, VerificationStarted,
+    Error, VerificationAnsweredElsewhere, VerificationCancelled, VerificationCompleted,
+    VerificationRequested, VerificationStarted,
 };
 
 impl Matrix {
     pub fn verify(&self) {
-        let client = self.client();
-
-        App::spawn(async move {
-            if let Some(user_id) = client.user_id() {
-                match client.encryption().get_user_identity(user_id).await {
-                    Ok(Some(identity)) => {
-                        match identity
-                            .request_verification_with_methods(vec![VerificationMethod::SasV1])
-                            .await
-                        {
-                            Err(err) => error!("could not request verification: {}", err),
-                            Ok(request) => follow_request(request, App::get_sender()).await,
-                        }
-                    }
-                    Ok(None) => error!("no user identity"),
-                    Err(err) => error!("could not get user identity: {}", err),
-                };
-            };
-        });
+        App::spawn(request_verification(self.client(), App::get_sender()));
     }
 
     pub fn recover(&self, key: &str) {
@@ -56,8 +40,8 @@ impl Matrix {
         });
     }
 
-    /// Accept a request from another device, and follow it into the emoji
-    /// comparison.
+    /// Accept a request from another device. Matui has followed it since
+    /// prompting, and goes on into the emoji comparison.
     pub fn accept_verification(&self, request: VerificationRequest) {
         App::spawn(accept_request(request, App::get_sender()));
     }
@@ -152,8 +136,11 @@ fn ask_to_accept(request: VerificationRequest, sender: &Sender<Event>) {
     };
 
     sender
-        .send(Matui(VerificationRequested(request, message)))
+        .send(Matui(VerificationRequested(request.clone(), message)))
         .expect("could not send verification request event");
+
+    // follow it while the prompt is up too, so a cancellation closes it
+    tokio::spawn(follow_request(request, sender.clone()));
 }
 
 async fn accept_request(request: VerificationRequest, sender: Sender<Event>) {
@@ -163,10 +150,48 @@ async fn accept_request(request: VerificationRequest, sender: Sender<Event>) {
             "Could not accept verification: {}",
             err
         ))));
+    }
+}
+
+/// Ask the user's other cross-signed sessions to verify this one. With none,
+/// the SDK sends the request to every device, this one included, where it
+/// stays pending for ten minutes. Until then, the SDK cancels it along with
+/// any request the user starts from another device.
+async fn request_verification(client: Client, sender: Sender<Event>) {
+    let (Some(user_id), Some(device_id)) = (client.user_id(), client.device_id()) else {
         return;
+    };
+
+    let encryption = client.encryption();
+
+    match encryption.get_user_devices(user_id).await {
+        Ok(devices)
+            if devices
+                .devices()
+                .any(|d| d.device_id() != device_id && d.is_cross_signed_by_owner()) => {}
+        Ok(_) => {
+            info!("no other verified session to ask for verification");
+            return;
+        }
+        Err(err) => {
+            error!("could not get devices: {}", err);
+            return;
+        }
     }
 
-    follow_request(request, sender).await;
+    match encryption.get_user_identity(user_id).await {
+        Ok(Some(identity)) => {
+            match identity
+                .request_verification_with_methods(vec![VerificationMethod::SasV1])
+                .await
+            {
+                Err(err) => error!("could not request verification: {}", err),
+                Ok(request) => follow_request(request, sender).await,
+            }
+        }
+        Ok(None) => error!("no user identity"),
+        Err(err) => error!("could not get user identity: {}", err),
+    };
 }
 
 /// Follow a request into the emoji comparison. The side that sent the
@@ -197,7 +222,25 @@ async fn follow_request(request: VerificationRequest, sender: Sender<Event>) {
                     break;
                 }
             }
-            VerificationRequestState::Done | VerificationRequestState::Cancelled(_) => break,
+            VerificationRequestState::Cancelled(info) => {
+                info!("verification request cancelled: {}", info.reason());
+
+                let event = match info.cancel_code() {
+                    CancelCode::Accepted => Some(VerificationAnsweredElsewhere),
+                    // nobody answered ours. Had another device asked since,
+                    // the SDK would have cancelled both already, so the user
+                    // verified some other way, such as recovery, or ignored it.
+                    CancelCode::Timeout if request.we_started() => None,
+                    _ => Some(VerificationCancelled(info)),
+                };
+
+                if let Some(event) = event {
+                    let _ = sender.send(Matui(event));
+                }
+
+                break;
+            }
+            VerificationRequestState::Done => break,
         }
     }
 }
@@ -237,7 +280,12 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
             SasState::Started { .. } => info!("verification started"),
             SasState::Accepted { .. } => info!("verification accepted"),
             SasState::Confirmed => info!("verification confirmed"),
-            SasState::Cancelled(_) => info!("verification cancelled"),
+            SasState::Cancelled(info) => {
+                info!("verification cancelled: {}", info.reason());
+
+                let _ = sender.send(Matui(VerificationCancelled(info)));
+                break;
+            }
             SasState::Created { .. } => info!("verification created"),
         }
     }
@@ -341,60 +389,46 @@ mod tests {
         (sent, received)
     }
 
-    #[tokio::test]
-    async fn prompts_and_waits_to_accept() {
-        let (server, matui, other, queue, events) = two_sessions().await;
-        let user = matui.user_id().unwrap();
-        let _guard = server
-            .capture_put_to_device_traffic(user, queue.clone())
-            .await;
+    /// Wait for the next event, while tasks such as `follow_request` run.
+    async fn next_event(events: &Receiver<Event>) -> Event {
+        let next = async {
+            loop {
+                if let Ok(event) = events.try_recv() {
+                    return event;
+                }
 
-        let (sent, received) = request_from_other(&server, &matui, &other, &queue, &events).await;
-
-        // the prompt alone answers nothing
-        relay(&server, &queue, &other).await;
-        assert!(!received.is_ready());
-        assert!(!sent.is_ready());
-
-        let (sender, _events) = channel();
-        tokio::spawn(accept_request(received, sender));
-
-        // accepting goes on to follow the request, so wait for its answer
-        let answered = async {
-            while !sent.is_ready() {
                 tokio::task::yield_now().await;
-                relay(&server, &queue, &other).await;
             }
         };
 
-        tokio::time::timeout(std::time::Duration::from_secs(5), answered)
+        tokio::time::timeout(std::time::Duration::from_secs(5), next)
             .await
-            .expect("the other device sees the request accepted");
+            .expect("an event")
     }
 
-    #[tokio::test]
-    async fn declining_cancels_on_the_other_device() {
-        let (server, matui, other, queue, events) = two_sessions().await;
-        let user = matui.user_id().unwrap();
-        let _guard = server
-            .capture_put_to_device_traffic(user, queue.clone())
-            .await;
+    /// The cancellation in an event, as who cancelled and why.
+    fn cancellation(event: Event) -> (bool, &'static str) {
+        let Matui(VerificationCancelled(info)) = event else {
+            panic!("expected a cancellation, got {:?}", event);
+        };
 
-        let (sent, received) = request_from_other(&server, &matui, &other, &queue, &events).await;
-
-        decline_request(received).await;
-        relay(&server, &queue, &other).await;
-
-        assert!(sent.is_cancelled());
+        (info.cancelled_by_us(), info.reason())
     }
 
-    #[tokio::test]
-    async fn starts_the_emoji_comparison_once_accepted() {
-        let (server, matui, other, queue, _events) = two_sessions().await;
+    /// Have matui ask the other device to verify, and both go on into the
+    /// emoji comparison. Returns the rest of what matui sends, and matui's
+    /// comparison with its emoji, then the other device's comparison.
+    async fn compare_emoji(
+        server: &MatrixMockServer,
+        matui: &Client,
+        other: &Client,
+        queue: &Queue,
+    ) -> (
+        Receiver<Event>,
+        (SasVerification, [Emoji; 7]),
+        SasVerification,
+    ) {
         let user = matui.user_id().unwrap();
-        let _guard = server
-            .capture_put_to_device_traffic(user, queue.clone())
-            .await;
 
         let request = matui
             .encryption()
@@ -410,7 +444,7 @@ mod tests {
         let (sender, events) = channel();
         tokio::spawn(follow_request(request, sender));
 
-        relay(&server, &queue, &other).await;
+        relay(server, queue, other).await;
         other
             .encryption()
             .get_verification_request(user, &flow_id)
@@ -424,8 +458,8 @@ mod tests {
         let compared = async {
             loop {
                 tokio::task::yield_now().await;
-                relay(&server, &queue, &matui).await;
-                relay(&server, &queue, &other).await;
+                relay(server, queue, matui).await;
+                relay(server, queue, other).await;
 
                 if let Some(Verification::SasV1(sas)) =
                     other.encryption().get_verification(user, &flow_id).await
@@ -443,18 +477,206 @@ mod tests {
             .await
             .expect("matui shows the emoji");
 
-        let Matui(VerificationStarted(_, emoji)) = event else {
+        let Matui(VerificationStarted(ours, emoji)) = event else {
             panic!("expected the emoji, got {:?}", event);
         };
 
-        let Some(Verification::SasV1(sas)) =
+        let Some(Verification::SasV1(theirs)) =
             other.encryption().get_verification(user, &flow_id).await
         else {
             panic!("the other device is comparing emoji");
         };
 
+        (events, (ours, emoji), theirs)
+    }
+
+    #[tokio::test]
+    async fn prompts_and_waits_to_accept() {
+        let (server, matui, other, queue, events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (sent, received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+
+        // the prompt alone answers nothing
+        relay(&server, &queue, &other).await;
+        assert!(!received.is_ready());
+        assert!(!sent.is_ready());
+
+        let (sender, _events) = channel();
+        accept_request(received, sender).await;
+        relay(&server, &queue, &other).await;
+
+        assert!(sent.is_ready());
+    }
+
+    #[tokio::test]
+    async fn declining_cancels_on_the_other_device() {
+        let (server, matui, other, queue, events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (sent, received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+
+        decline_request(received).await;
+        relay(&server, &queue, &other).await;
+
+        assert!(sent.is_cancelled());
+        assert_eq!(
+            cancellation(next_event(&events).await),
+            (true, "The user cancelled the verification.")
+        );
+    }
+
+    #[tokio::test]
+    async fn shows_a_request_cancelled_by_the_other_device() {
+        let (server, matui, other, queue, events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (sent, _received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+
+        sent.cancel().await.unwrap();
+        relay(&server, &queue, &matui).await;
+
+        assert_eq!(
+            cancellation(next_event(&events).await),
+            (false, "The user cancelled the verification.")
+        );
+    }
+
+    #[tokio::test]
+    async fn closes_a_request_answered_by_another_device() {
+        let (server, matui, other, queue, events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (sent, _received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+
+        // what the asking device sends the rest once one of them accepts
+        server
+            .mock_sync()
+            .ok_and_run(&matui, |builder| {
+                builder.add_to_device_event(json!({
+                    "sender": user,
+                    "type": "m.key.verification.cancel",
+                    "content": {
+                        "transaction_id": sent.flow_id(),
+                        "code": "m.accepted",
+                        "reason": "A m.key.verification.request was accepted by a different device.",
+                    },
+                }));
+            })
+            .await;
+
+        let event = next_event(&events).await;
+        assert!(
+            matches!(event, Matui(VerificationAnsweredElsewhere)),
+            "got {:?}",
+            event
+        );
+    }
+
+    #[tokio::test]
+    async fn shows_a_collision() {
+        let (server, matui, other, queue, events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let pending = matui
+            .encryption()
+            .get_device(user, other.device_id().unwrap())
+            .await
+            .unwrap()
+            .expect("matui knows the other device")
+            .request_verification_with_methods(vec![VerificationMethod::SasV1])
+            .await
+            .unwrap();
+
+        let (sender, mine) = channel();
+        tokio::spawn(follow_request(pending, sender));
+
+        // the user starts another from the other device, before answering
+        other
+            .encryption()
+            .get_device(user, matui.device_id().unwrap())
+            .await
+            .unwrap()
+            .expect("the other device knows matui's")
+            .request_verification()
+            .await
+            .unwrap();
+
+        relay(&server, &queue, &matui).await;
+
+        // the SDK cancels both, as if the user had, and the new one is
+        // cancelled before matui could prompt for it
+        assert_eq!(
+            cancellation(next_event(&mine).await),
+            (true, "The user cancelled the verification.")
+        );
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn shows_the_emoji_not_matching_on_the_other_device() {
+        let (server, matui, other, queue, _events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (events, _, theirs) = compare_emoji(&server, &matui, &other, &queue).await;
+
+        theirs.mismatch().await.unwrap();
+        relay(&server, &queue, &matui).await;
+
+        assert_eq!(
+            cancellation(next_event(&events).await),
+            (false, "The SAS did not match.")
+        );
+    }
+
+    #[tokio::test]
+    async fn shows_the_emoji_not_matching_here() {
+        let (server, matui, other, queue, _events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (events, (ours, _), _) = compare_emoji(&server, &matui, &other, &queue).await;
+
+        ours.mismatch().await.unwrap();
+
+        assert_eq!(
+            cancellation(next_event(&events).await),
+            (true, "The SAS did not match.")
+        );
+    }
+
+    #[tokio::test]
+    async fn starts_the_emoji_comparison_once_accepted() {
+        let (server, matui, other, queue, _events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (_, (_, emoji), theirs) = compare_emoji(&server, &matui, &other, &queue).await;
+
         let symbols = |emoji: &[Emoji]| emoji.iter().map(|e| e.symbol).collect::<Vec<_>>();
-        assert_eq!(symbols(&emoji), symbols(&sas.emoji().unwrap()));
+        assert_eq!(symbols(&emoji), symbols(&theirs.emoji().unwrap()));
     }
 
     #[tokio::test]
@@ -504,5 +726,71 @@ mod tests {
             .await;
 
         assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn asks_nothing_without_another_verified_session() {
+        let (server, matui, _other, queue, _events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        // the first session on an account cross-signs only itself
+        matui
+            .encryption()
+            .bootstrap_cross_signing(None)
+            .await
+            .unwrap();
+
+        let (sender, events) = channel();
+        request_verification(matui, sender).await;
+
+        assert!(queue.lock().unwrap().is_empty());
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn asks_another_verified_session() {
+        let (server, matui, other, queue, _events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        other
+            .encryption()
+            .bootstrap_cross_signing(None)
+            .await
+            .unwrap();
+
+        // matui learns that the other device is cross-signed now
+        server
+            .mock_sync()
+            .ok_and_run(&matui, |builder| {
+                builder.add_change_device(user);
+            })
+            .await;
+        server.mock_sync().ok_and_run(&matui, |_| {}).await;
+
+        let (sender, _events) = channel();
+        tokio::spawn(request_verification(matui.clone(), sender));
+
+        let asked = async {
+            loop {
+                tokio::task::yield_now().await;
+
+                let queue = queue.lock().unwrap();
+                if let Some(devices) = queue.get(user) {
+                    return devices.keys().cloned().collect::<Vec<_>>();
+                }
+            }
+        };
+
+        let asked = tokio::time::timeout(std::time::Duration::from_secs(5), asked)
+            .await
+            .expect("matui sends a request");
+
+        assert_eq!(asked, [other.device_id().unwrap()]);
     }
 }

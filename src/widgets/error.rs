@@ -2,7 +2,7 @@ use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 
 use crate::close;
 use crate::widgets::button::Button;
@@ -76,7 +76,9 @@ impl Widget for ErrorWidget<'_> {
 
         block.render(area, buf);
 
-        Paragraph::new(self.error.message.clone()).render(splits[1], buf);
+        Paragraph::new(self.error.message.clone())
+            .wrap(Wrap { trim: false })
+            .render(splits[1], buf);
 
         // pop the OK button in the middle
         let area = Layout::default()

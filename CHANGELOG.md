@@ -9,6 +9,8 @@
 - Show encrypted messages in the open room as soon as their keys arrive, such as after verifying or recovering, instead of only after switching rooms or restarting.
 - Ask before accepting a verification request, naming the device asking, instead of accepting every request in every running session. Another running matui session no longer takes over a new session's verification.
 - Start the emoji comparison once another device accepts matui's verification request, so one matui session can verify another.
+- Show a popup with the reason when a verification is cancelled, by either side or by two requests colliding, instead of leaving it waiting. A request answered by another session just closes its prompt.
+- Only send a verification request at login when another verified session can answer it. Without one, the request went to every device and blocked any verification started elsewhere for 10 minutes.
 
 ## [1.1.0] - 2026-10-25
 

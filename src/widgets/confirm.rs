@@ -48,6 +48,13 @@ impl Confirm {
         }
     }
 
+    pub fn is_verification(&self) -> bool {
+        matches!(
+            self.behavior,
+            ConfirmBehavior::Verification | ConfirmBehavior::VerificationRequest(_)
+        )
+    }
+
     pub fn widget(&self) -> ConfirmWidget<'_> {
         ConfirmWidget { confirm: self }
     }

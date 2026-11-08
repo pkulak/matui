@@ -23,7 +23,9 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 use crate::event::EventHandler;
-use matrix_sdk::encryption::verification::{Emoji, SasVerification, VerificationRequest};
+use matrix_sdk::encryption::verification::{
+    CancelInfo, Emoji, SasVerification, VerificationRequest,
+};
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 
@@ -69,6 +71,12 @@ pub enum MatuiEvent {
     Typing(Room, Vec<OwnedUserId>),
     /// Another device asks to verify, with a prompt naming it.
     VerificationRequested(VerificationRequest, String),
+    /// A verification request or its emoji comparison was cancelled, by
+    /// either side.
+    VerificationCancelled(CancelInfo),
+    /// Another of the user's devices answered a request, so its prompt
+    /// closes.
+    VerificationAnsweredElsewhere,
     VerificationStarted(SasVerification, [Emoji; 7]),
     VerificationCompleted,
 }
@@ -271,6 +279,27 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 ConfirmBehavior::VerificationRequest(request),
             )));
         }
+        MatuiEvent::VerificationCancelled(info) => {
+            app.sas = None;
+
+            if popup_free_for_verification(app) {
+                let heading = if info.cancelled_by_us() {
+                    "Verification Cancelled by This Session"
+                } else {
+                    "Verification Cancelled by the Other Side"
+                };
+
+                app.set_popup(Popup::Error(Error::with_heading(
+                    heading.to_string(),
+                    format!("{} Try verifying again.", info.reason()),
+                )));
+            }
+        }
+        MatuiEvent::VerificationAnsweredElsewhere => {
+            if popup_free_for_verification(app) {
+                app.close_popup();
+            }
+        }
         MatuiEvent::VerificationStarted(sas, emoji) => {
             app.sas = Some(sas);
 
@@ -289,6 +318,16 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.popup = None;
             app.sas = None;
         }
+    }
+}
+
+/// Whether the popup slot is empty or holds a verification popup, rather
+/// than something such as a message being written.
+fn popup_free_for_verification(app: &App) -> bool {
+    match &app.popup {
+        None => true,
+        Some(Popup::Confirm(confirm)) => confirm.is_verification(),
+        Some(_) => false,
     }
 }
 
