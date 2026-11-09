@@ -88,11 +88,15 @@ impl Matrix {
         task.abort_handle()
     }
 
-    /// Page the timeline back by about this many events. Its items arrive
-    /// separately, before or after it's done. Abort the returned handle to
+    /// Page the timeline back by about this many events, and say when it's
+    /// done, normally after the page's items. Abort the returned handle to
     /// stop, including any retries.
     pub fn paginate(&self, timeline: Arc<Timeline>, events: u16) -> AbortHandle {
         const RETRY_DELAY: Duration = Duration::from_secs(3);
+
+        // the timeline shows a page's items a moment after paging ends, and
+        // a chat that measured itself without them would page again
+        const SHOW_DELAY: Duration = Duration::from_millis(100);
 
         let matrix = self.clone();
 
@@ -100,6 +104,7 @@ impl Matrix {
             loop {
                 match timeline.paginate_backwards(events).await {
                     Ok(hit_start) => {
+                        tokio::time::sleep(SHOW_DELAY).await;
                         matrix.send(MatuiEvent::Paginated(timeline, hit_start));
                         return;
                     }

@@ -65,9 +65,6 @@ pub struct Chat {
     max_events: usize,
     fetching: Cell<bool>,
     fetch: Cell<Option<AbortHandle>>,
-    /// How many events there were when we last paged, until that page's
-    /// items arrive, separately from its end.
-    paged_from: Cell<Option<usize>>,
     follow: Option<AbortHandle>,
     height: Cell<usize>,
     line_types: Mutex<Vec<LineType>>,
@@ -116,7 +113,6 @@ impl Chat {
             max_events: max_events(),
             fetching: Cell::new(true),
             fetch: Cell::new(None),
-            paged_from: Cell::new(None),
             follow: Some(follow),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
@@ -152,7 +148,6 @@ impl Chat {
             max_events: self.max_events,
             fetching: Cell::new(false),
             fetch: Cell::new(None),
-            paged_from: Cell::new(None),
             follow: Some(follow),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
@@ -563,23 +558,15 @@ impl Chat {
         self.pretty_members = OnceCell::new();
         self.set_fully_read();
 
-        // the SDK can drop earlier events while a page is on its way
-        if let Some(from) = self.paged_from.get() {
-            self.paged_from.set(Some(from.min(self.event_count())));
-        }
-
         if reset {
             let mut state = self.list_state.take();
             state.select(Some(0));
             self.list_state.set(state);
         }
 
-        // done loading; now page back until there's enough to show
+        // done loading; drawing it pages back until there's enough to show
         if first {
             self.fetching.set(false);
-            self.try_fetch_previous();
-        } else {
-            self.keep_paging();
         }
     }
 
@@ -635,34 +622,18 @@ impl Chat {
 
         if self.fetch.take().is_some() {
             self.fetching.set(false);
-            self.keep_paging();
         }
     }
 
-    /// A timeline lost its earlier events, so page back to them again.
+    /// A timeline may have lost its earlier events, so page back to them
+    /// again.
     pub fn not_at_start_event(&mut self, timeline: &Arc<SdkTimeline>) {
-        if !self.hit_start
-            || !self
-                .timeline
-                .as_ref()
-                .is_some_and(|t| Arc::ptr_eq(t, timeline))
+        if self
+            .timeline
+            .as_ref()
+            .is_some_and(|t| Arc::ptr_eq(t, timeline))
         {
-            return;
-        }
-
-        self.hit_start = false;
-        self.try_fetch_previous();
-    }
-
-    // page again once the last page is done and its items are here
-    fn keep_paging(&self) {
-        if !self.fetching.get()
-            && self
-                .paged_from
-                .get()
-                .is_some_and(|from| self.event_count() > from)
-        {
-            self.try_fetch_previous();
+            self.hit_start = false;
         }
     }
 
@@ -929,7 +900,6 @@ impl Chat {
         }
 
         let count = self.event_count();
-        self.paged_from.set(None);
 
         let state = self.list_state.take();
         let buffer = self.total_list_items() - state.selected().unwrap_or_default();
@@ -942,7 +912,6 @@ impl Chat {
                 .set(Some(self.matrix.paginate(timeline.clone(), limit)));
 
             self.fetching.set(true);
-            self.paged_from.set(Some(count));
             info!("fetching more events... {}", count)
         }
     }
@@ -1214,6 +1183,10 @@ impl Widget for ChatWidget<'_> {
         let fetches = timeline.render(splits[1], buf, &mut list_state);
         self.chat.list_state.set(list_state);
         self.chat.fetch_pictures(fetches);
+
+        // page back here, where it's known how much is above the selection
+        drop(line_types);
+        self.chat.try_fetch_previous();
 
         // reaction window
         if let Some(react) = self.chat.react.as_ref() {
@@ -1699,6 +1672,10 @@ pub(crate) mod tests {
                         }
                         _ => {}
                     }
+
+                    // draw it after every event, as the app does
+                    let area = Rect::new(0, 0, 80, 24);
+                    chat.render(area, &mut Buffer::empty(area));
                 }
 
                 if matches(chat) {
@@ -2143,6 +2120,109 @@ pub(crate) mod tests {
                     "$2:example.org",
                     "$1:example.org",
                 ]
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn pages_back_again_after_a_reset_short_of_the_start() {
+        let (server, client, room) = joined().await;
+
+        let texts = |events: &[(&str, u64)]| -> Vec<Value> {
+            events
+                .iter()
+                .map(|(id, ts)| text_event(&format!("{id}:example.org"), *ts, id))
+                .collect()
+        };
+
+        for (from, events) in [
+            ("p1", texts(&[("$2", 2000), ("$1", 1000)])),
+            ("p3", texts(&[("$3", 3000), ("$2", 2000)])),
+        ] {
+            server
+                .mock_room_messages()
+                .match_from(from)
+                .ok(RoomMessagesResponseTemplate::default()
+                    .events(raw(events))
+                    .end_token("more"))
+                .mount()
+                .await;
+        }
+
+        let limited = |prev_batch: &str, events: Vec<Value>| {
+            JoinedRoomBuilder::new(room_id())
+                .set_timeline_limited()
+                .set_timeline_prev_batch(prev_batch)
+                .add_timeline_bulk(raw(events))
+        };
+
+        server
+            .sync_room(&client, limited("p1", texts(&[("$3", 3000)])))
+            .await;
+
+        // the room stops paging before its start
+        let (mut chat, events) = chat(&client, room).await;
+        chat.max_events = 3;
+        until(&mut chat, &events, |c| {
+            !c.fetching.get() && ids(c) == ["$3:example.org", "$2:example.org", "$1:example.org"]
+        })
+        .await;
+        assert!(!chat.hit_start);
+
+        server
+            .sync_room(&client, limited("p3", texts(&[("$4", 4000)])))
+            .await;
+
+        // the SDK drops all but the newest, then pages the rest back in from
+        // its store
+        until(&mut chat, &events, |c| {
+            ids(c).len() >= 3 && ids(c)[0] == "$4:example.org"
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn pages_on_past_a_page_with_nothing_to_show() {
+        let (server, client, room) = joined().await;
+
+        // reactions only add to a message that's already showing
+        let pages = [
+            (
+                "p1",
+                Some("p2"),
+                vec![
+                    reaction_event("$r2:example.org", 4000, "$5:example.org", "👍"),
+                    reaction_event("$r1:example.org", 3000, "$5:example.org", "🎉"),
+                ],
+            ),
+            ("p2", None, vec![text_event("$1:example.org", 1000, "one")]),
+        ];
+
+        for (from, end, events) in pages {
+            let mut page = RoomMessagesResponseTemplate::default().events(raw(events));
+
+            if let Some(end) = end {
+                page = page.end_token(end);
+            }
+
+            server
+                .mock_room_messages()
+                .match_from(from)
+                .ok(page)
+                .mount()
+                .await;
+        }
+
+        let newest = JoinedRoomBuilder::new(room_id())
+            .set_timeline_limited()
+            .set_timeline_prev_batch("p1")
+            .add_timeline_bulk(raw(vec![text_event("$5:example.org", 5000, "five")]));
+        server.sync_room(&client, newest).await;
+
+        let (mut chat, events) = chat(&client, room).await;
+
+        until(&mut chat, &events, |c| {
+            c.hit_start && ids(c) == ["$5:example.org", "$1:example.org"]
         })
         .await;
     }
