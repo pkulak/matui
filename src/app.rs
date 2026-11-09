@@ -2,7 +2,6 @@ use crossterm::event::KeyEvent;
 use log::warn;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::OwnedRoomId;
-use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -66,9 +65,6 @@ pub struct App {
     /// And our Matrix client
     pub matrix: Matrix,
 
-    /// Keep old read receipts around
-    pub receipts: VecDeque<(Room, ReceiptEventContent)>,
-
     /// Every room we've already asked about joining
     pub invites_seen: HashSet<OwnedRoomId>,
 }
@@ -84,7 +80,6 @@ impl App {
             chat: None,
             thread: None,
             matrix: Matrix::new(send, handle),
-            receipts: VecDeque::new(),
             invites_seen: HashSet::new(),
         }
     }
@@ -100,16 +95,11 @@ impl App {
         // a new room means any open thread is stale
         self.thread = None;
 
-        let mut chat = Chat::try_new(self.matrix.clone(), room.clone(), self.focus);
+        let chat = Chat::try_new(self.matrix.clone(), room.clone(), self.focus);
 
         if chat.is_none() {
             warn!("could not switch to room");
             return;
-        }
-
-        // feed all the cached read receipts back in
-        for (room, content) in &self.receipts {
-            chat.as_mut().unwrap().receipt_event(room, content);
         }
 
         self.chat = chat;

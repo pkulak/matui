@@ -263,13 +263,15 @@ impl Matrix {
         });
     }
 
-    pub fn read_to(&self, room: Room, to: OwnedEventId) {
+    /// Mark the timeline read to this event. The timeline leaves out
+    /// receipts that wouldn't move forward.
+    pub fn read_to(&self, timeline: Arc<Timeline>, to: OwnedEventId) {
         let receipts = Receipts::new()
             .fully_read_marker(Some(to.clone()))
             .public_read_receipt(Some(to));
 
         self.spawn(async move {
-            if let Err(e) = room.send_multiple_receipts(receipts).await {
+            if let Err(e) = timeline.send_multiple_receipts(receipts).await {
                 error!("could not send read receipt: {}", e);
             }
         });

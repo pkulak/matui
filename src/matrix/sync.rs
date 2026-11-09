@@ -247,19 +247,12 @@ fn add_default_handlers(matrix: &Matrix, client: &Client) {
                 return;
             }
 
-            match event {
-                AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent {
-                    content: c, ..
-                }) => {
-                    handler.send(MatuiEvent::Typing(room, c.user_ids));
-                }
-                AnySyncEphemeralRoomEvent::Receipt(SyncEphemeralRoomEvent {
-                    content: c, ..
-                }) => {
-                    handler.send(MatuiEvent::Receipt(room, c));
-                }
-                _ => {}
-            };
+            if let AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent {
+                content: c, ..
+            }) = event
+            {
+                handler.send(MatuiEvent::Typing(room, c.user_ids));
+            }
         },
     );
 }

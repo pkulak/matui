@@ -151,10 +151,9 @@ mod tests {
     use crate::widgets::message::tests::{
         image_event, join_event, reaction_event, reply_event, text_event, thread_event,
     };
-    use crate::widgets::receipts::Receipts;
     use image::DynamicImage;
     use matrix_sdk::ruma::exports::serde_json::Value;
-    use matrix_sdk::ruma::{OwnedMxcUri, owned_mxc_uri, owned_user_id};
+    use matrix_sdk::ruma::{OwnedMxcUri, owned_mxc_uri};
     use matrix_sdk_ui::timeline::TimelineEventItemId;
     use ratatui_image::FontSize;
     use ratatui_image::picker::ProtocolType;
@@ -181,8 +180,7 @@ mod tests {
         picker: Option<&Picker>,
     ) -> Drawn {
         let items = timeline_items(events).await;
-        let receipts = Receipts::new(owned_user_id!("@me:example.org"));
-        let messages = make_message_list(&items, &vec![], &receipts, "", None);
+        let messages = make_message_list(&items, &vec![], "", None);
 
         let area = Rect::new(0, 0, WIDTH, height);
         let mut buf = Buffer::empty(area);

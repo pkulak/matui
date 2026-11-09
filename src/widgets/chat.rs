@@ -9,7 +9,7 @@ use crate::widgets::EventResult::Consumed;
 use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
 use crate::widgets::members::Members;
-use crate::widgets::message::{LineType, Message, Reaction};
+use crate::widgets::message::{LineType, Message, Reaction, Receipt};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
 use crate::widgets::search::Search;
@@ -24,7 +24,6 @@ use log::info;
 use matrix_sdk::RoomMemberships;
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::StateEventContentChange;
-use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
@@ -38,7 +37,7 @@ use matrix_sdk_ui::timeline::{
 };
 use once_cell::sync::OnceCell;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 use tokio::task::AbortHandle;
@@ -50,14 +49,12 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders, ListItem, ListState, Paragraph, Widget};
 
 use super::confirm::{Confirm, ConfirmBehavior};
-use super::receipts::Receipts;
 
 pub struct Chat {
     matrix: Matrix,
     room: DecoratedRoom,
     timeline: Option<Arc<SdkTimeline>>,
     items: Vector<Arc<SdkItem>>,
-    receipts: Receipts,
     messages: Vec<TimelineItem>,
     window: Range<usize>,
     read_to: Option<OwnedEventId>,
@@ -109,7 +106,6 @@ impl Chat {
             room: decorated_room,
             timeline: None,
             items: Vector::new(),
-            receipts: Receipts::new(matrix.me()),
             messages: vec![],
             window: (0..0),
             read_to: None,
@@ -146,7 +142,6 @@ impl Chat {
             room: self.room.clone(),
             timeline: Some(timeline),
             items: Vector::new(),
-            receipts: self.receipts.clone(),
             messages: vec![],
             window: (0..0),
             read_to: None,
@@ -621,26 +616,6 @@ impl Chat {
         ));
     }
 
-    pub fn receipt_event(&mut self, room: &Room, content: &ReceiptEventContent) {
-        if room.room_id() == self.room.room_id() {
-            self.receipts.apply_event(content);
-            self.set_messages(false);
-            self.pretty_members = OnceCell::new();
-            let me = self.matrix.me();
-
-            // make sure we fetch any users we don't know about
-            for id in Receipts::get_senders(content) {
-                self.check_sender(id);
-
-                // if it's us, that's essentially a room visit (clear notifications)
-                if id == &me {
-                    self.matrix.room_visit_event(room.clone());
-                    info!("room viewed based on receipt");
-                }
-            }
-        }
-    }
-
     /// A timeline paged back.
     pub fn paginated_event(&mut self, timeline: &Arc<SdkTimeline>, hit_start: bool) {
         if !self
@@ -711,6 +686,10 @@ impl Chat {
         for event in items.iter().filter_map(|i| i.as_event()) {
             self.check_sender(event.sender());
 
+            for id in event.read_receipts().keys() {
+                self.check_sender(id);
+            }
+
             // member events also have a target
             if let TimelineItemContent::MembershipChange(change) = event.content() {
                 self.check_sender(change.user_id());
@@ -722,7 +701,6 @@ impl Chat {
         self.messages = make_message_list(
             &self.items,
             &self.members,
-            &self.receipts,
             &self.search_term,
             self.thread_root.as_deref(),
         );
@@ -819,8 +797,8 @@ impl Chat {
             return;
         }
 
-        if let Some(id) = read_to.clone() {
-            self.matrix.read_to(self.room(), id);
+        if let (Some(id), Some(timeline)) = (read_to.clone(), &self.timeline) {
+            self.matrix.read_to(timeline.clone(), id);
             self.read_to = read_to;
         }
     }
@@ -875,7 +853,7 @@ impl Chat {
             let mut members: Vec<&RoomMember> = vec![];
 
             // first grab folks who have sent read receipts
-            let mut receipts = self.receipts.get_all();
+            let mut receipts = receipts(&self.items);
 
             while let Some(receipt) = receipts.pop() {
                 if let Some(member) = self.members.iter().find(|m| m.user_id() == receipt.user_id) {
@@ -1444,10 +1422,23 @@ fn push_group(items: &mut Vec<TimelineItem>, group: RoomEvents) {
     }
 }
 
+/// How far each user has read, from the receipts on the timeline's items.
+fn receipts(items: &Vector<Arc<SdkItem>>) -> BinaryHeap<Receipt> {
+    items
+        .iter()
+        .filter_map(|i| i.as_event())
+        .flat_map(|event| {
+            event.read_receipts().keys().map(|user_id| Receipt {
+                read_to: event.timestamp(),
+                user_id: user_id.clone(),
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn make_message_list(
     items: &Vector<Arc<SdkItem>>,
     members: &Vec<RoomMember>,
-    receipts: &Receipts,
     search_term: &str,
     thread_root: Option<&EventId>,
 ) -> Vec<TimelineItem> {
@@ -1501,9 +1492,9 @@ pub(crate) fn make_message_list(
         messages.iter().for_each(|m| m.set_search_term(search_term));
     }
 
-    // apply our read receipts (they mark room positions, not thread ones)
+    // receipts mark room positions, not thread ones
     if thread_root.is_none() {
-        Message::apply_receipts(&mut messages, &mut receipts.get_all());
+        Message::apply_receipts(&mut messages, &mut receipts(items));
     }
 
     // update senders to friendly names
@@ -1545,18 +1536,19 @@ pub(crate) mod tests {
     use crate::widgets::message::Sending;
     use crate::widgets::message::tests::{reaction_event, reply_event, text_event, thread_event};
     use matrix_sdk::Client;
+    use matrix_sdk::ruma::events::receipt::{ReceiptThread, ReceiptType};
     use matrix_sdk::ruma::events::room::member::RoomMemberEvent;
     use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
     use matrix_sdk::ruma::exports::serde_json::{Value, json};
     use matrix_sdk::ruma::serde::Raw;
-    use matrix_sdk::ruma::{RoomVersionId, event_id, owned_event_id, owned_user_id, room_id};
+    use matrix_sdk::ruma::{RoomVersionId, event_id, owned_event_id, room_id, user_id};
     use matrix_sdk::test_utils::mocks::{
         MatrixMockServer, RoomMessagesResponseTemplate, RoomRelationsResponseTemplate,
     };
     use matrix_sdk_test::JoinedRoomBuilder;
     use matrix_sdk_test::event_factory::EventFactory;
     use matrix_sdk_ui::timeline::RoomExt;
-    use matrix_sdk_ui::timeline::TimelineFocus;
+    use matrix_sdk_ui::timeline::{TimelineFocus, TimelineReadReceiptTracking};
     use std::sync::mpsc::{Receiver, channel};
     use std::time::Duration;
     use tokio::runtime::Handle;
@@ -1597,9 +1589,12 @@ pub(crate) mod tests {
         let focus = TimelineFocus::Live {
             hide_threaded_events: true,
         };
+        // without receipts, which would add a line under each sender's
+        // newest message
         let timeline = room
             .timeline_builder()
             .with_focus(focus)
+            .track_read_marker_and_receipts(TimelineReadReceiptTracking::Disabled)
             .build()
             .await
             .unwrap();
@@ -1653,12 +1648,17 @@ pub(crate) mod tests {
 
     /// A chat on this client's room, and the events it sends the app.
     async fn chat(client: &Client, room: Room) -> (Chat, Receiver<Event>) {
+        focused_chat(client, room, true).await
+    }
+
+    /// A chat opened while the terminal has focus, or doesn't.
+    async fn focused_chat(client: &Client, room: Room, focus: bool) -> (Chat, Receiver<Event>) {
         let (sender, events) = channel();
         let matrix = Matrix::new(sender, Handle::current());
         matrix.set_client(client.clone());
         matrix.add_room(room.clone()).await;
 
-        (Chat::try_new(matrix, room, true).unwrap(), events)
+        (Chat::try_new(matrix, room, focus).unwrap(), events)
     }
 
     /// Hand the chat its timeline's events until it matches.
@@ -1777,6 +1777,127 @@ pub(crate) mod tests {
 
         // newest first, with the root where it was and its reply left out
         assert_eq!(ids(&chat), ["$other:example.org", "$root:example.org"]);
+    }
+
+    /// Bob's read receipt on this event.
+    fn bob_read_to(id: &str) -> JoinedRoomBuilder {
+        let receipt = EventFactory::new()
+            .read_receipts()
+            .add(
+                &OwnedEventId::try_from(id).unwrap(),
+                user_id!("@bob:example.org"),
+                ReceiptType::Read,
+                ReceiptThread::Unthreaded,
+            )
+            .into_event();
+
+        JoinedRoomBuilder::new(room_id()).add_receipt(receipt)
+    }
+
+    fn seen_by_bob(chat: &Chat, id: &str) -> bool {
+        chat.iter_messages()
+            .find_map(|m| m.find_by_id(&TimelineEventItemId::EventId(id.try_into().unwrap())))
+            .is_some_and(|m| m.receipts.iter().any(|u| u.id == "@bob:example.org"))
+    }
+
+    #[tokio::test]
+    async fn a_receipt_shows_on_the_message_read_to() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![
+                text_event("$1:example.org", 1000, "one"),
+                text_event("$2:example.org", 2000, "two"),
+                text_event("$3:example.org", 3000, "three"),
+            ],
+        )
+        .await;
+        server
+            .sync_room(&client, bob_read_to("$2:example.org"))
+            .await;
+
+        until(&mut chat, &events, |c| seen_by_bob(c, "$2:example.org")).await;
+
+        assert!(!seen_by_bob(&chat, "$1:example.org"));
+        assert!(!seen_by_bob(&chat, "$3:example.org"));
+    }
+
+    #[tokio::test]
+    async fn a_receipt_shows_in_each_reply_chain_read_past() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![
+                text_event("$1:example.org", 1000, "one"),
+                text_event("$2:example.org", 2000, "two"),
+                reply_event("$3:example.org", 3000, "$1:example.org", "re: one"),
+                text_event("$4:example.org", 4000, "four"),
+            ],
+        )
+        .await;
+        server
+            .sync_room(&client, bob_read_to("$4:example.org"))
+            .await;
+
+        until(&mut chat, &events, |c| seen_by_bob(c, "$4:example.org")).await;
+
+        // the reply moved up under the first message, behind the second
+        assert!(seen_by_bob(&chat, "$3:example.org"));
+        assert!(!seen_by_bob(&chat, "$1:example.org"));
+        assert!(!seen_by_bob(&chat, "$2:example.org"));
+    }
+
+    /// Open the room with one message, and return whether it's marked read.
+    async fn marks_read(focus: bool) -> bool {
+        let (server, client, room) = joined().await;
+        server.mock_send_read_markers().ok().mount().await;
+
+        let (mut chat, events) = focused_chat(&client, room, focus).await;
+
+        sync(
+            &server,
+            &client,
+            vec![text_event("$1:example.org", 1000, "one")],
+        )
+        .await;
+
+        until(&mut chat, &events, |c| !ids(c).is_empty()).await;
+
+        // give it a chance to send
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let requests = server.server().received_requests().await.unwrap();
+        let marked: Vec<Value> = requests
+            .iter()
+            .filter(|r| r.url.path().ends_with("/read_markers"))
+            .map(|r| r.body_json().unwrap())
+            .collect();
+
+        match marked.as_slice() {
+            [] => false,
+            [body] => {
+                assert_eq!(body["m.fully_read"], "$1:example.org");
+                assert_eq!(body["m.read"], "$1:example.org");
+                true
+            }
+            _ => panic!("marked read more than once: {:?}", marked),
+        }
+    }
+
+    #[tokio::test]
+    async fn opening_a_room_marks_it_read() {
+        assert!(marks_read(true).await);
+    }
+
+    #[tokio::test]
+    async fn opening_a_room_out_of_focus_leaves_it_unread() {
+        assert!(!marks_read(false).await);
     }
 
     /// The thread view of this root, once it's paged back to the root.
@@ -2248,8 +2369,7 @@ pub(crate) mod tests {
         ])
         .await;
 
-        let receipts = Receipts::new(owned_user_id!("@me:example.org"));
-        let list = make_message_list(&items, &vec![], &receipts, "", None);
+        let list = make_message_list(&items, &vec![], "", None);
         let messages: Vec<&Message> = list.iter().filter_map(TimelineItem::message).collect();
 
         // newest first: the plain one stands alone, and the thread reply,

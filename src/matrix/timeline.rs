@@ -13,7 +13,9 @@ use matrix_sdk::ruma::{OwnedEventId, TransactionId};
 use matrix_sdk::send_queue::{LocalEchoContent, RoomSendQueueUpdate};
 use matrix_sdk::store::SerializableEventContent;
 use matrix_sdk_ui::Timeline;
-use matrix_sdk_ui::timeline::{self, RoomExt, TimelineEventItemId, TimelineFocus};
+use matrix_sdk_ui::timeline::{
+    self, RoomExt, TimelineEventItemId, TimelineFocus, TimelineReadReceiptTracking,
+};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::AbortHandle;
 
@@ -23,7 +25,8 @@ use crate::handler::MatuiEvent::Error;
 
 impl Matrix {
     /// Follow the room's timeline, without its threads' messages, sending all
-    /// its items after every change. Abort the returned handle to stop.
+    /// its items, with read receipts, after every change. Abort the returned
+    /// handle to stop.
     pub fn follow_timeline(&self, room: Room) -> AbortHandle {
         let matrix = self.clone();
 
@@ -32,8 +35,22 @@ impl Matrix {
                 hide_threaded_events: true,
             };
 
-            match room.timeline_builder().with_focus(focus).build().await {
-                Ok(timeline) => send_items(&matrix, Arc::new(timeline)).await,
+            let timeline = room
+                .timeline_builder()
+                .with_focus(focus)
+                .track_read_marker_and_receipts(TimelineReadReceiptTracking::MessageLikeEvents)
+                .build()
+                .await;
+
+            match timeline {
+                Ok(timeline) => {
+                    let timeline = Arc::new(timeline);
+
+                    tokio::join!(
+                        send_items(&matrix, timeline.clone()),
+                        visit_on_own_receipts(&matrix, &timeline)
+                    );
+                }
                 Err(err) => matrix.send(Error(err.to_string())),
             }
         });
@@ -191,6 +208,17 @@ async fn send_items(matrix: &Matrix, timeline: Arc<Timeline>) {
     while let Some(diffs) = stream.next().await {
         diffs.into_iter().for_each(|d| d.apply(&mut items));
         matrix.send(MatuiEvent::TimelineItems(timeline.clone(), items.clone()));
+    }
+}
+
+/// Our own receipt moving, such as from reading the room in another session,
+/// counts as visiting the room.
+async fn visit_on_own_receipts(matrix: &Matrix, timeline: &Timeline) {
+    let changes = timeline.subscribe_own_user_read_receipts_changed().await;
+    let mut changes = pin!(changes);
+
+    while changes.next().await.is_some() {
+        matrix.room_visit_event(timeline.room().clone());
     }
 }
 

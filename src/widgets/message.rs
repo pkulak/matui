@@ -41,7 +41,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 
-use super::receipts::Receipt;
+/// How far a user has read: the time of the event their receipt is on.
+#[derive(Eq, PartialEq, Ord, PartialOrd, Debug, Clone)]
+pub struct Receipt {
+    pub read_to: MilliSecondsSinceUnixEpoch,
+    pub user_id: OwnedUserId,
+}
 
 // A Message is a line in the chat window; what a user would generally
 // consider a "message". It has reactions, edits, and is generally in a state
@@ -482,7 +487,8 @@ impl Message {
     /// Given a binary heap (priority queue) of Receipts, run through the
     /// the messages, popping off receipts and attaching them. This way we
     /// only show a single receipt per user (per reply chain), on the latest
-    /// message they have read.
+    /// message they have read. Reply chains move up out of time order, so
+    /// each gets its own.
     pub fn apply_receipts(messages: &mut [Message], heap: &mut BinaryHeap<Receipt>) {
         // hold on to a fresh copy of the heap to clone into each reply chain
         let og_heap = heap.clone();
@@ -493,7 +499,7 @@ impl Message {
             }
 
             while let Some(candidate) = heap.peek() {
-                if candidate.timestamp > &message.sent {
+                if candidate.read_to >= message.sent {
                     message
                         .receipts
                         .push(Username::new(candidate.user_id.clone()));

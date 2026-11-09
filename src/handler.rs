@@ -16,7 +16,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use image::DynamicImage;
 use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
-use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::{OwnedMxcUri, OwnedRoomId, OwnedRoomOrAliasId, OwnedUserId};
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -57,7 +56,6 @@ pub enum MatuiEvent {
     QrLoginDone,
     QrLoginScanned(CheckCodeSender),
     QrLoginSyncing,
-    Receipt(Room, ReceiptEventContent),
     RoomFound(PublicRoomsChunk),
     /// A timeline paged back, and whether it reached the start.
     Paginated(Arc<Timeline>, bool),
@@ -247,17 +245,6 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::Typing(room, ids) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.typing_event(room.clone(), ids.clone());
-            }
-        }
-        MatuiEvent::Receipt(room, content) => {
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
-                c.receipt_event(&room, &content);
-            }
-
-            app.receipts.push_back((room, content));
-
-            if app.receipts.len() > 500 {
-                app.receipts.pop_front();
             }
         }
         MatuiEvent::VerificationOffered { other_session } => {
