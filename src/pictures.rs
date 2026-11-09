@@ -1,9 +1,11 @@
+use crate::settings::images;
 use image::DynamicImage;
 use log::{info, warn};
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Image, Video};
 use matrix_sdk::ruma::events::room::{MediaSource, ThumbnailInfo};
 use matrix_sdk::ruma::{OwnedMxcUri, UInt};
 use ratatui::layout::Size;
+use ratatui_image::errors::Errors;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::SlicedProtocol;
 use ratatui_image::{FontSize, Resize};
@@ -18,23 +20,32 @@ const MAX_ORIGINAL_SIZE: u64 = 2 * 1024 * 1024;
 
 static PICKER: OnceLock<Option<Picker>> = OnceLock::new();
 
-/// Asks the terminal what it can draw. Pictures need Kitty's placeholders,
-/// so any other answer turns them off for the session. Call this before
-/// anything else reads stdin.
+/// Asks the terminal what it can draw, unless the settings turn images off.
+/// Call this before anything else reads stdin.
 pub fn init_picker() {
-    let picker = match Picker::from_query_stdio() {
+    let _ = PICKER.set(choose_picker(images(), Picker::from_query_stdio));
+}
+
+// Pictures are drawn with Kitty's placeholders, or halfblocks anywhere else.
+// Popups can cover both, since they're just text cells, but Sixel and iTerm2
+// draw over popups.
+fn choose_picker(images: bool, query: impl FnOnce() -> Result<Picker, Errors>) -> Option<Picker> {
+    if !images {
+        return None;
+    }
+
+    match query() {
         Ok(p) if p.protocol_type() == ProtocolType::Kitty => Some(p),
-        Ok(p) => {
-            info!("pictures off: {:?} terminal", p.protocol_type());
-            None
+        Ok(mut p) => {
+            info!("halfblock pictures: {:?} terminal", p.protocol_type());
+            p.set_protocol_type(ProtocolType::Halfblocks);
+            Some(p)
         }
         Err(err) => {
             warn!("pictures off: could not query the terminal: {}", err);
             None
         }
-    };
-
-    let _ = PICKER.set(picker);
+    }
 }
 
 pub fn picker() -> Option<&'static Picker> {
@@ -233,6 +244,48 @@ mod tests {
 
     fn uri(source: Option<PictureSource>) -> Option<OwnedMxcUri> {
         source.map(|s| source_uri(&s.media).clone())
+    }
+
+    fn answering(protocol: ProtocolType) -> impl FnOnce() -> Result<Picker, Errors> {
+        move || {
+            let mut picker = Picker::halfblocks();
+            picker.set_protocol_type(protocol);
+            Ok(picker)
+        }
+    }
+
+    fn chosen(picker: Option<Picker>) -> Option<ProtocolType> {
+        picker.map(|p| p.protocol_type())
+    }
+
+    #[test]
+    fn kitty_terminals_draw_with_kitty() {
+        let picker = choose_picker(true, answering(ProtocolType::Kitty));
+        assert_eq!(chosen(picker), Some(ProtocolType::Kitty));
+    }
+
+    #[test]
+    fn other_terminals_draw_with_halfblocks() {
+        for protocol in [
+            ProtocolType::Sixel,
+            ProtocolType::Iterm2,
+            ProtocolType::Halfblocks,
+        ] {
+            let picker = choose_picker(true, answering(protocol));
+            assert_eq!(chosen(picker), Some(ProtocolType::Halfblocks));
+        }
+    }
+
+    #[test]
+    fn query_errors_turn_pictures_off() {
+        let picker = choose_picker(true, || Err(Errors::Tmux("no")));
+        assert_eq!(chosen(picker), None);
+    }
+
+    #[test]
+    fn the_setting_turns_pictures_off_without_asking() {
+        let picker = choose_picker(false, || panic!("queried the terminal"));
+        assert_eq!(chosen(picker), None);
     }
 
     fn dimensions_of(body: MessageType) -> Option<(u32, u32)> {

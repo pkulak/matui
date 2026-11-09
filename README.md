@@ -154,6 +154,14 @@ viewing a thread are sent to the thread.
 To start a new thread, hit T on any message: it opens an empty thread
 view, and your first message there creates the thread.
 
+# Images
+
+Images and video thumbnails show in the timeline, up to 10 rows tall. In
+terminals with Kitty's Unicode placeholders, such as Kitty and Ghostty, they
+show at full quality. Everywhere else, they're drawn with coloured half blocks,
+which are blocky but enough to see what something is. Hit Enter on one to open
+it in your image viewer, or set `images = false` to turn them off.
+
 # External Applications
 
 The only requirement is an editor, and the $EDITOR environmental variable should
@@ -226,6 +234,9 @@ respect_notification_close_reason = false
 # How many lines do we let a message span before we cut it off and make the
 # user view it in the external editor?
 message_line_limit = 20
+
+# Show images in the timeline? Read at startup.
+images = true
 ```
 
 The config file is hot reloaded and can generally be found at
