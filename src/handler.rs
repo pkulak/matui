@@ -422,16 +422,20 @@ pub fn handle_paste_event(value: String, app: &mut App) {
         return;
     }
 
-    let Some(room) = app
+    let Some(timeline) = app
         .thread
         .as_ref()
         .or(app.chat.as_ref())
-        .map(|chat| chat.room())
+        .and_then(|chat| chat.timeline())
     else {
         return;
     };
 
-    app.set_popup(Popup::Upload(Upload::new(app.matrix.clone(), room, paths)));
+    app.set_popup(Popup::Upload(Upload::new(
+        app.matrix.clone(),
+        timeline,
+        paths,
+    )));
 }
 
 pub fn handle_focus_event(app: &mut App) {

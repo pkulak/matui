@@ -1,24 +1,29 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{Sender, TryRecvError, channel};
+use std::thread;
 use std::time::Duration;
-use std::{fs, thread};
 
 use image::{DynamicImage, ImageReader, Limits};
 use log::error;
-use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
+use matrix_sdk::room::edit::EditedContent;
+use matrix_sdk::room::reply::{EnforceThread, Reply};
 use matrix_sdk::room::{Receipts, Room};
 use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, File, Image, Video};
 use matrix_sdk::ruma::events::room::message::{
-    AddMentions, ForwardThread, ReplyWithinThread, RoomMessageEventContent, TextMessageEventContent,
+    AddMentions, ReplyWithinThread, RoomMessageEventContent, TextMessageEventContent,
 };
 use matrix_sdk::ruma::events::{AnyMessageLikeEvent, AnyTimelineEvent, MessageLikeEvent};
 use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId};
+use matrix_sdk_ui::Timeline;
+use matrix_sdk_ui::timeline::{AttachmentConfig, TimelineEventItemId};
 
 use super::Matrix;
 use super::mentions;
@@ -145,153 +150,101 @@ impl Matrix {
         });
     }
 
-    pub fn send_text_message(&self, room: Room, message: String) {
+    /// Run a send in the background, showing any error that keeps it from
+    /// being queued. Once queued, the timeline shows how it goes.
+    fn queue<F>(&self, send: F)
+    where
+        F: Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
         let matrix = self.clone();
 
         self.spawn(async move {
-            let _progress = matrix.progress("Sending message.", 500);
-
-            let content = text_content(&room, &message).await;
-
-            if let Err(err) = room.send(without_me(&room, content)).await {
+            if let Err(err) = send.await {
                 matrix.send(Error(err.to_string()));
             }
         });
     }
 
-    pub fn send_reply(&self, room: Room, message: String, in_reply_to: OwnedEventId) {
-        let matrix = self.clone();
+    pub fn send_text_message(&self, timeline: Arc<Timeline>, message: String) {
+        self.queue(async move {
+            let room = timeline.room();
+            let content = without_me(room, text_content(room, &message).await);
 
-        self.spawn(async move {
-            let _progress = matrix.progress("Sending message.", 500);
+            timeline.send(content.into()).await?;
+            Ok(())
+        });
+    }
 
-            let in_reply_to = match Matrix::get_room_event(&room, &in_reply_to).await {
-                Some(e) => e,
-                None => {
-                    matrix.send(Error("Could not find reply event.".to_string()));
-                    return;
-                }
-            };
+    pub fn send_reply(&self, timeline: Arc<Timeline>, message: String, in_reply_to: OwnedEventId) {
+        self.queue(async move {
+            let room = timeline.room();
+            let content = without_me(room, text_content(room, &message).await);
 
-            let Some(og_in_reply_to) = in_reply_to.as_original() else {
-                return;
-            };
-
-            let reply = text_content(&room, &message).await.make_reply_to(
-                og_in_reply_to,
-                ForwardThread::Yes,
-                AddMentions::Yes,
-            );
-
-            if let Err(err) = room.send(without_me(&room, reply)).await {
-                matrix.send(Error(err.to_string()));
-            }
+            timeline.send_reply(content.into(), in_reply_to).await?;
+            Ok(())
         });
     }
 
     pub fn send_thread_message(
         &self,
-        room: Room,
+        timeline: Arc<Timeline>,
         message: String,
         target: OwnedEventId,
         is_reply: ReplyWithinThread,
     ) {
-        let matrix = self.clone();
+        self.queue(async move {
+            let room = timeline.room();
+            let content = without_me(room, text_content(room, &message).await);
 
-        self.spawn(async move {
-            let _progress = matrix.progress("Sending message.", 500);
-
-            let target = match Matrix::get_room_event(&room, &target).await {
-                Some(e) => e,
-                None => {
-                    matrix.send(Error("Could not find thread event.".to_string()));
-                    return;
-                }
+            // the room's timeline doesn't know about the thread, so add it
+            let reply = Reply {
+                event_id: target,
+                enforce_thread: EnforceThread::Threaded(is_reply),
+                add_mentions: AddMentions::Yes,
             };
 
-            let Some(og_target) = target.as_original() else {
-                return;
-            };
-
-            let reply = text_content(&room, &message).await.make_for_thread(
-                og_target,
-                is_reply,
-                AddMentions::Yes,
-            );
-
-            if let Err(err) = room.send(without_me(&room, reply)).await {
-                matrix.send(Error(err.to_string()));
-            }
+            let content = room.make_reply_event(content.into(), reply).await?;
+            timeline.send(content.into()).await?;
+            Ok(())
         });
     }
 
-    pub fn send_attachments(&self, room: Room, attachments: Vec<(PathBuf, Option<String>)>) {
-        let total = attachments.len();
-        let matrix = self.clone();
-
-        self.spawn(async move {
-            for (i, (path, caption)) in attachments.into_iter().enumerate() {
-                let _progress = matrix.progress(&format!("Uploading {} of {}.", i + 1, total), 0);
-
+    pub fn send_attachments(
+        &self,
+        timeline: Arc<Timeline>,
+        attachments: Vec<(PathBuf, Option<String>)>,
+    ) {
+        self.queue(async move {
+            for (path, caption) in attachments {
                 let content_type = mime_from_path(&path);
 
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_str()
-                    .unwrap_or_default()
-                    .to_string();
-
-                let data = match fs::read(path.to_str().unwrap()) {
-                    Ok(d) => d,
-                    Err(err) => {
-                        matrix.send(Error(err.to_string()));
-                        return;
-                    }
+                let mut config = AttachmentConfig {
+                    caption: caption.map(TextMessageEventContent::plain),
+                    ..Default::default()
                 };
 
                 // try to grab a thumbnail
-                let config = match get_attachment_info(&path, &content_type) {
-                    Ok((thumbnail, info)) => {
-                        AttachmentConfig::new().thumbnail(thumbnail).info(info)
-                    }
-                    _ => AttachmentConfig::new(),
+                if let Ok((thumbnail, info)) = get_attachment_info(&path, &content_type) {
+                    config.thumbnail = thumbnail;
+                    config.info = Some(info);
                 }
-                .caption(caption.map(TextMessageEventContent::plain));
 
-                if let Err(err) = room
-                    .send_attachment(&name, &content_type, data, config)
-                    .await
-                {
-                    matrix.send(Error(err.to_string()));
-                }
+                timeline
+                    .send_attachment(path, content_type, config)
+                    .use_send_queue()
+                    .await?;
             }
+
+            Ok(())
         });
     }
 
-    pub fn redact_event(&self, room: Room, event_id: OwnedEventId) {
-        let matrix = self.clone();
-
-        self.spawn(async move {
-            let _progress = matrix.progress("Removing.", 500);
-
-            if let Err(err) = room.redact(&event_id, None, None).await {
-                matrix.send(Error(err.to_string()));
-            }
+    /// Delete a message, or stop sending it if it isn't sent yet.
+    pub fn redact_event(&self, timeline: Arc<Timeline>, id: TimelineEventItemId) {
+        self.queue(async move {
+            timeline.redact(&id, None).await?;
+            Ok(())
         });
-    }
-
-    async fn get_room_event(
-        room: &Room,
-        id: &OwnedEventId,
-    ) -> Option<MessageLikeEvent<RoomMessageEventContent>> {
-        match room.event(id, Option::None).await {
-            Ok(event) => Matrix::get_room_message_event(room, &event),
-            Err(err) => {
-                error!("could not get room event: {}", err);
-                None
-            }
-        }
     }
 
     pub fn deserialize_event(
@@ -324,25 +277,16 @@ impl Matrix {
         Some(event)
     }
 
-    pub fn replace_event(&self, room: Room, id: OwnedEventId, message: String) {
-        let matrix = self.clone();
+    pub fn replace_event(&self, timeline: Arc<Timeline>, id: OwnedEventId, message: String) {
+        self.queue(async move {
+            let room = timeline.room();
+            let content = without_me(room, text_content(room, &message).await);
+            let id = TimelineEventItemId::EventId(id);
 
-        self.spawn(async move {
-            let _progress = matrix.progress("Editing message.", 500);
-
-            let Some(event) = Matrix::get_room_event(&room, &id).await else {
-                return;
-            };
-
-            let Some(event) = event.as_original() else {
-                return;
-            };
-
-            let content = without_me(&room, text_content(&room, &message).await);
-
-            if let Err(err) = room.send(content.make_replacement(event)).await {
-                matrix.send(Error(err.to_string()));
-            }
+            timeline
+                .edit(&id, EditedContent::RoomMessage(content.into()))
+                .await?;
+            Ok(())
         });
     }
 

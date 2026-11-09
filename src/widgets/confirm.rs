@@ -2,11 +2,14 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use matrix_sdk::encryption::verification::{SasVerification, VerificationRequest};
 use matrix_sdk::room::Room;
-use matrix_sdk::ruma::{OwnedEventId, OwnedRoomOrAliasId};
+use matrix_sdk::ruma::OwnedRoomOrAliasId;
+use matrix_sdk_ui::Timeline;
+use matrix_sdk_ui::timeline::TimelineEventItemId;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
+use std::sync::Arc;
 
 use crate::app::{NoticeId, Popup};
 use crate::widgets::button::Button;
@@ -26,7 +29,7 @@ pub enum ConfirmBehavior {
     Verification(NoticeId, SasVerification),
     /// A prompt to accept a request, withdrawn by its verification's ID.
     VerificationRequest(NoticeId, VerificationRequest),
-    DeleteMessage(Room, OwnedEventId),
+    DeleteMessage(Arc<Timeline>, TimelineEventItemId),
     JoinRoom(Room),
     JoinPublicRoom(OwnedRoomOrAliasId),
 }
@@ -139,9 +142,9 @@ impl Confirm {
                     app.close_popup();
                 }))
             }
-            ConfirmBehavior::DeleteMessage(room, id) if focused => {
+            ConfirmBehavior::DeleteMessage(timeline, id) if focused => {
                 EventResult::Consumed(Box::new(|app| {
-                    app.matrix.redact_event(room, id);
+                    app.matrix.redact_event(timeline, id);
                     app.close_popup();
                 }))
             }

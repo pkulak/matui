@@ -33,7 +33,9 @@ use matrix_sdk::ruma::events::{
     AnySyncMessageLikeEvent, AnySyncTimelineEvent, MessageLikeEvent, SyncMessageLikeEvent,
 };
 use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId};
-use matrix_sdk_ui::timeline::{EventTimelineItem, MsgLikeKind};
+use matrix_sdk_ui::timeline::{
+    EventSendState, EventTimelineItem, MsgLikeKind, TimelineEventItemId,
+};
 use once_cell::unsync::OnceCell;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -45,7 +47,8 @@ use super::receipts::Receipt;
 // consider a "message". It has reactions, edits, and is generally in a state
 // of constant mutation, as opposed to "events", which come in, in order.
 pub struct Message {
-    pub id: OwnedEventId,
+    /// The event ID, or the transaction ID until it's sent.
+    pub id: TimelineEventItemId,
     pub in_reply_to: Option<OwnedEventId>,
     pub thread_root: Option<OwnedEventId>,
     pub sent: MilliSecondsSinceUnixEpoch,
@@ -56,6 +59,8 @@ pub struct Message {
     pub replies: Vec<Message>,
     pub thread: Vec<Message>,
     pub receipts: Vec<Username>,
+    /// Where sending it, or its latest edit, stands, until it's sent.
+    pub sending: Option<Sending>,
 
     body_lower: OnceCell<String>,
     search_term: OnceCell<String>,
@@ -89,9 +94,45 @@ fn encrypted_relation(item: &EventTimelineItem) -> Option<EncryptedRelation> {
     event.content.relates_to
 }
 
+/// A message or edit of ours the server doesn't have yet.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Sending {
+    Pending,
+    /// Failed, but matui retries it.
+    Failed(String),
+    /// Failed for good, holding back everything sent after it.
+    Stuck(String),
+}
+
+impl Sending {
+    fn from_state(state: &EventSendState) -> Option<Self> {
+        match state {
+            EventSendState::NotSentYet { .. } => Some(Sending::Pending),
+            EventSendState::SendingFailed {
+                error,
+                is_recoverable: true,
+            } => Some(Sending::Failed(error.to_string())),
+            EventSendState::SendingFailed { error, .. } => Some(Sending::Stuck(error.to_string())),
+            EventSendState::Sent { .. } => None,
+        }
+    }
+
+    // shown under the body
+    fn failure(&self) -> Option<String> {
+        match self {
+            Sending::Pending => None,
+            Sending::Failed(error) => Some(format!("Not sent: {}", error)),
+            Sending::Stuck(error) => Some(format!(
+                "Not sent: {}. Delete it to send later messages.",
+                error
+            )),
+        }
+    }
+}
+
 impl Message {
     fn new(
-        id: OwnedEventId,
+        id: TimelineEventItemId,
         sent: MilliSecondsSinceUnixEpoch,
         body: MessageType,
         sender: OwnedUserId,
@@ -108,6 +149,7 @@ impl Message {
             replies: Vec::new(),
             thread: Vec::new(),
             receipts: Vec::new(),
+            sending: None,
             body_lower: OnceCell::new(),
             search_term: OnceCell::new(),
             display_cache: OnceCell::new(),
@@ -116,7 +158,6 @@ impl Message {
 
     /// The message an item of the room's timeline shows, if it shows one.
     pub fn from_item(item: &EventTimelineItem) -> Option<Self> {
-        let id = item.event_id()?.to_owned();
         let content = item.content().as_msglike()?;
 
         let mut thread_root = content.thread_root.clone();
@@ -144,8 +185,17 @@ impl Message {
             _ => return None,
         };
 
-        let mut message = Message::new(id, item.timestamp(), body, item.sender().to_owned());
+        let mut message = Message::new(
+            item.identifier(),
+            item.timestamp(),
+            body,
+            item.sender().to_owned(),
+        );
         message.edited = edited;
+        message.sending = item
+            .send_state()
+            .or(item.edit_send_state())
+            .and_then(Sending::from_state);
         message.in_reply_to = content.in_reply_to.as_ref().map(|r| r.event_id.clone());
         message.thread_root = thread_root;
         message.reactions = content
@@ -174,13 +224,21 @@ impl Message {
         match &c.content.msgtype {
             body @ (Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)) => {
                 Some(Message::new(
-                    c.event_id.clone(),
+                    TimelineEventItemId::EventId(c.event_id.clone()),
                     c.origin_server_ts,
                     body.clone(),
                     c.sender.clone(),
                 ))
             }
             _ => None,
+        }
+    }
+
+    /// The event ID, once it's sent.
+    pub fn event_id(&self) -> Option<&OwnedEventId> {
+        match &self.id {
+            TimelineEventItemId::EventId(id) => Some(id),
+            TimelineEventItemId::TransactionId(_) => None,
         }
     }
 
@@ -403,7 +461,7 @@ impl Message {
         thread: bool,
         depth: usize,
     ) -> Option<Message> {
-        if let Some(i) = messages.iter().position(|m| &m.id == target) {
+        if let Some(i) = messages.iter().position(|m| m.event_id() == Some(target)) {
             if !thread && depth > 3 {
                 messages.push(message);
             } else {
@@ -505,11 +563,11 @@ impl Message {
         }
     }
 
-    pub fn contains_id(&self, id: &OwnedEventId) -> bool {
+    pub fn contains_id(&self, id: &TimelineEventItemId) -> bool {
         self.find_by_id(id).is_some()
     }
 
-    pub fn find_by_id(&self, id: &OwnedEventId) -> Option<&Message> {
+    pub fn find_by_id(&self, id: &TimelineEventItemId) -> Option<&Message> {
         if &self.id == id {
             return Some(self);
         }
@@ -610,6 +668,13 @@ impl Message {
             author.push(Span::styled(" (edited)", Style::default().fg(Color::Red)))
         }
 
+        if self.sending == Some(Sending::Pending) {
+            author.push(Span::styled(
+                " (sending)",
+                Style::default().fg(Color::DarkGray),
+            ))
+        }
+
         lines.push(author);
         sidecar.push(LineType::MessageStart(self.id.clone()));
 
@@ -664,6 +729,17 @@ impl Message {
             if message_overlap || self.reactions.len() > 5 {
                 lines.push(vec![Span::styled(
                     "* overflow: type \"v\" to view entire message",
+                    Style::default().fg(Color::Red),
+                )]);
+
+                sidecar.push(LineType::MessageContent);
+            }
+        }
+
+        if let Some(failure) = self.sending.as_ref().and_then(Sending::failure) {
+            for line in textwrap::wrap(&failure, width) {
+                lines.push(vec![Span::styled(
+                    line.into_owned(),
                     Style::default().fg(Color::Red),
                 )]);
 
@@ -729,7 +805,7 @@ impl Message {
 // We need to bookkeep exactly what every line represents.
 #[derive(PartialEq)]
 pub enum LineType {
-    MessageStart(OwnedEventId),
+    MessageStart(TimelineEventItemId),
     MessageContent,
     DeadSpace,
     RoomEvent,
@@ -783,6 +859,7 @@ pub(crate) mod tests {
     use matrix_sdk::ruma::{
         MilliSecondsSinceUnixEpoch, OwnedEventId, owned_event_id, owned_user_id,
     };
+    use matrix_sdk_ui::timeline::TimelineEventItemId;
 
     pub(crate) fn text_event(id: &str, ts: u64, body: &str) -> Value {
         json!({
@@ -895,7 +972,7 @@ pub(crate) mod tests {
 
     fn test_message(id: OwnedEventId) -> Message {
         Message::new(
-            id,
+            TimelineEventItemId::EventId(id),
             MilliSecondsSinceUnixEpoch::now(),
             Text(TextMessageEventContent::plain("body")),
             owned_user_id!("@alice:example.org"),
@@ -937,9 +1014,11 @@ pub(crate) mod tests {
 
     #[test]
     fn finds_replies_recursively() {
-        let reply_id = owned_event_id!("$reply:example.org");
+        let reply_id = TimelineEventItemId::EventId(owned_event_id!("$reply:example.org"));
         let mut message = test_message(owned_event_id!("$root:example.org"));
-        message.replies.push(test_message(reply_id.clone()));
+        message
+            .replies
+            .push(test_message(owned_event_id!("$reply:example.org")));
 
         assert_eq!(
             message.find_by_id(&reply_id).map(|m| &m.id),

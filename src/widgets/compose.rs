@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::Room;
 use matrix_sdk::ruma::OwnedEventId;
 use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
+use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -19,6 +22,7 @@ use crate::{KeyCombo, consumed};
 pub struct Compose {
     input: TextInput,
     room: DecoratedRoom,
+    timeline: Arc<Timeline>,
     thread: Option<OwnedEventId>,
     combo: KeyCombo,
     matrix: Matrix,
@@ -27,6 +31,7 @@ pub struct Compose {
 impl Compose {
     pub fn new(
         room: DecoratedRoom,
+        timeline: Arc<Timeline>,
         matrix: Matrix,
         thread: Option<OwnedEventId>,
         text: &str,
@@ -39,6 +44,7 @@ impl Compose {
         Self {
             input,
             room,
+            timeline,
             thread,
             combo: KeyCombo::new(vec!['j', 'j']),
             matrix,
@@ -52,12 +58,14 @@ impl Compose {
     fn send(&self, message: String) {
         match &self.thread {
             Some(target) => self.matrix.send_thread_message(
-                self.room(),
+                self.timeline.clone(),
                 message,
                 target.clone(),
                 ReplyWithinThread::No,
             ),
-            None => self.matrix.send_text_message(self.room(), message),
+            None => self
+                .matrix
+                .send_text_message(self.timeline.clone(), message),
         }
     }
 

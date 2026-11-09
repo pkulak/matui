@@ -1,3 +1,7 @@
+// the SDK's send futures nest deeper than the default allows, as in the
+// SDK itself
+#![recursion_limit = "256"]
+
 use std::time::{Duration, Instant};
 
 extern crate core;

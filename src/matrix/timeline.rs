@@ -7,10 +7,14 @@ use log::error;
 use matrix_sdk::HttpError;
 use matrix_sdk::event_cache::EventCacheError;
 use matrix_sdk::room::Room;
-use matrix_sdk::ruma::OwnedEventId;
+use matrix_sdk::ruma::events::room::encrypted;
 use matrix_sdk::ruma::events::room::message::MessageType;
+use matrix_sdk::ruma::{OwnedEventId, TransactionId};
+use matrix_sdk::send_queue::{LocalEchoContent, RoomSendQueueUpdate};
+use matrix_sdk::store::SerializableEventContent;
 use matrix_sdk_ui::Timeline;
 use matrix_sdk_ui::timeline::{self, RoomExt, TimelineEventItemId};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::task::AbortHandle;
 
 use super::Matrix;
@@ -78,16 +82,63 @@ impl Matrix {
         task.abort_handle()
     }
 
-    /// Add our reaction to the event, or take it back if it's there.
-    pub fn toggle_reaction(&self, timeline: Arc<Timeline>, id: OwnedEventId, key: String) {
+    /// Add our reaction to the message, or take it back if it's there.
+    pub fn toggle_reaction(&self, timeline: Arc<Timeline>, id: TimelineEventItemId, key: String) {
         let matrix = self.clone();
 
         self.spawn(async move {
             let _progress = matrix.progress("Reacting.", 500);
-            let id = TimelineEventItemId::EventId(id);
 
             if let Err(err) = timeline.toggle_reaction(&id, &key).await {
                 matrix.send(Error(err.to_string()));
+            }
+        });
+    }
+
+    /// Keep each room's send queue going, since any error turns it off: try
+    /// again a little later after an error that may pass, and right away
+    /// after a request gets stuck, which holds back the ones after it. A
+    /// stuck edit or delete has nothing on screen to remove it by, so cancel
+    /// it and show its error.
+    pub fn watch_send_queue(&self) {
+        const RETRY_DELAY: Duration = Duration::from_secs(5);
+
+        let client = self.client();
+        let mut updates = client.send_queue().subscribe();
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            loop {
+                let update = match updates.recv().await {
+                    Ok(update) => update,
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => return,
+                };
+
+                let RoomSendQueueUpdate::SendError {
+                    transaction_id,
+                    error,
+                    is_recoverable,
+                } = update.update
+                else {
+                    continue;
+                };
+
+                let Some(room) = client.get_room(&update.room_id) else {
+                    continue;
+                };
+
+                if is_recoverable {
+                    matrix.spawn(async move {
+                        tokio::time::sleep(RETRY_DELAY).await;
+                        room.send_queue().set_enabled(true);
+                    });
+
+                    continue;
+                }
+
+                cancel_stuck_change(&matrix, &room, &transaction_id, &error).await;
+                room.send_queue().set_enabled(true);
             }
         });
     }
@@ -112,6 +163,59 @@ impl Matrix {
             .filter_map(|r| r.content.as_message().map(|m| m.msgtype().clone()))
             .collect()
     }
+}
+
+/// Cancel a request that got stuck if it's an edit or a delete, and show why.
+async fn cancel_stuck_change(
+    matrix: &Matrix,
+    room: &Room,
+    transaction_id: &TransactionId,
+    error: &matrix_sdk::Error,
+) {
+    let echoes = match room.send_queue().subscribe().await {
+        Ok((echoes, _)) => echoes,
+        Err(err) => {
+            error!("could not read the send queue: {}", err);
+            return;
+        }
+    };
+
+    let Some(echo) = echoes
+        .into_iter()
+        .find(|e| e.transaction_id == transaction_id)
+    else {
+        return;
+    };
+
+    let aborted = match echo.content {
+        LocalEchoContent::Event {
+            serialized_event,
+            send_handle,
+            ..
+        } if is_edit(&serialized_event) => send_handle
+            .abort()
+            .await
+            .map(|_| format!("Could not edit the message: {}", error)),
+        LocalEchoContent::Redaction { send_handle, .. } => send_handle
+            .abort()
+            .await
+            .map(|_| format!("Could not delete the message: {}", error)),
+        _ => return,
+    };
+
+    match aborted {
+        Ok(message) => matrix.send(Error(message)),
+        Err(err) => error!("could not cancel a stuck request: {}", err),
+    }
+}
+
+fn is_edit(content: &SerializableEventContent) -> bool {
+    content.deserialize().is_ok_and(|content| {
+        matches!(
+            content.relation(),
+            Some(encrypted::Relation::Replacement(_))
+        )
+    })
 }
 
 fn lost_connection(err: &timeline::Error) -> bool {

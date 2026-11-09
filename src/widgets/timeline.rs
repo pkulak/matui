@@ -155,6 +155,7 @@ mod tests {
     use image::DynamicImage;
     use matrix_sdk::ruma::exports::serde_json::Value;
     use matrix_sdk::ruma::{OwnedMxcUri, owned_mxc_uri, owned_user_id};
+    use matrix_sdk_ui::timeline::TimelineEventItemId;
     use ratatui_image::FontSize;
     use ratatui_image::picker::ProtocolType;
 
@@ -391,7 +392,9 @@ mod tests {
 
         // the reply's author line starts a message of its own, so it can be
         // selected and acted on separately
-        assert!(matches!(&line_types[1], LineType::MessageStart(id) if id == "$reply:example.org"));
+        assert!(
+            matches!(&line_types[1], LineType::MessageStart(TimelineEventItemId::EventId(id)) if id == "$reply:example.org")
+        );
     }
 
     #[tokio::test]
@@ -460,7 +463,9 @@ mod tests {
         let (rows, line_types) = draw(events, 13).await;
 
         assert_eq!(line_types.len(), 15);
-        assert!(matches!(&line_types[13], LineType::MessageStart(id) if id == "$1:example.org"));
+        assert!(
+            matches!(&line_types[13], LineType::MessageStart(TimelineEventItemId::EventId(id)) if id == "$1:example.org")
+        );
 
         assert_eq!(rows[0], "> @alice:example.org <time>");
         assert_eq!(rows[1], "  message 1");

@@ -341,6 +341,7 @@ mod tests {
     };
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use matrix_sdk::test_utils::mocks::encryption::PendingToDeviceMessages;
+    use matrix_sdk_ui::timeline::RoomExt;
     use tokio::runtime::Handle;
     use wiremock::ResponseTemplate;
 
@@ -693,9 +694,11 @@ mod tests {
         let room = server
             .sync_joined_room(&matui, room_id!("!room:example.org"))
             .await;
+        let timeline = Arc::new(room.timeline().await.unwrap());
         let room = DecoratedRoom::from_room(room).await;
         app.set_popup(Popup::Compose(Compose::new(
             room,
+            timeline,
             app.matrix.clone(),
             None,
             "half-written",

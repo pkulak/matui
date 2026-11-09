@@ -1,8 +1,10 @@
 use std::mem;
 use std::path::PathBuf;
 
+use std::sync::Arc;
+
 use crossterm::event::{KeyCode, KeyEvent};
-use matrix_sdk::room::Room;
+use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -17,19 +19,19 @@ use crate::{close, consumed};
 pub struct Upload {
     input: TextInput,
     matrix: Matrix,
-    room: Room,
+    timeline: Arc<Timeline>,
     paths: Vec<PathBuf>,
     captions: Vec<Option<String>>,
 }
 
 impl Upload {
-    pub fn new(matrix: Matrix, room: Room, paths: Vec<PathBuf>) -> Self {
+    pub fn new(matrix: Matrix, timeline: Arc<Timeline>, paths: Vec<PathBuf>) -> Self {
         debug_assert!(!paths.is_empty());
 
         Self {
             input: TextInput::new("Caption (optional):".to_string(), true, false),
             matrix,
-            room,
+            timeline,
             paths,
             captions: Vec::new(),
         }
@@ -68,10 +70,10 @@ impl Upload {
                     .zip(mem::take(&mut self.captions))
                     .collect();
                 let matrix = self.matrix.clone();
-                let room = self.room.clone();
+                let timeline = self.timeline.clone();
 
                 EventResult::Consumed(Box::new(move |app| {
-                    matrix.send_attachments(room, attachments);
+                    matrix.send_attachments(timeline, attachments);
                     app.close_popup();
                 }))
             }

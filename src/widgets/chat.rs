@@ -35,7 +35,7 @@ use matrix_sdk::ruma::{
 use matrix_sdk_ui::eyeball_im::Vector;
 use matrix_sdk_ui::timeline::{
     AnyOtherStateEventContentChange, EventTimelineItem, MembershipChange, Timeline as SdkTimeline,
-    TimelineItem as SdkItem, TimelineItemContent,
+    TimelineEventItemId, TimelineItem as SdkItem, TimelineItemContent,
 };
 use once_cell::sync::OnceCell;
 use std::cell::{Cell, RefCell};
@@ -233,9 +233,8 @@ impl Chat {
             && input.modifiers.is_empty()
             && self.delete_combo.record(c)
         {
-            let message = match self.selected_reply() {
-                Some(m) => m,
-                None => return Ok(EventResult::Ignored),
+            let (Some(message), Some(timeline)) = (self.selected_reply(), &self.timeline) else {
+                return Ok(EventResult::Ignored);
             };
 
             let preview = truncate(message.display().to_string(), 16);
@@ -246,7 +245,7 @@ impl Chat {
                 warning,
                 "Yes".to_string(),
                 "No".to_string(),
-                ConfirmBehavior::DeleteMessage(self.room(), message.id.clone()),
+                ConfirmBehavior::DeleteMessage(timeline.clone(), message.id.clone()),
             );
 
             return Ok(Consumed(Box::new(|app| {
@@ -284,8 +283,11 @@ impl Chat {
                 } else if let Some(message) = self.selected_reply() {
                     // opening a thread gets its own window; everything else
                     // opens the message itself
-                    if self.thread_root.is_none() && !message.thread.is_empty() {
-                        let thread = self.thread(message.id.clone());
+                    if self.thread_root.is_none()
+                        && !message.thread.is_empty()
+                        && let Some(id) = message.event_id()
+                    {
+                        let thread = self.thread(id.clone());
 
                         return Ok(Consumed(Box::new(move |app| app.thread = Some(thread))));
                     }
@@ -308,9 +310,14 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('c') => {
-                let message = match self.selected_reply() {
-                    Some(m) => m,
-                    None => return Ok(EventResult::Ignored),
+                let (Some(message), Some(timeline)) = (self.selected_reply(), &self.timeline)
+                else {
+                    return Ok(EventResult::Ignored);
+                };
+
+                // only a sent message can be edited
+                let Some(id) = message.event_id() else {
+                    return Ok(EventResult::Ignored);
                 };
 
                 if matches!(message.body, Text(_)) {
@@ -334,7 +341,7 @@ impl Chat {
                             }
 
                             self.matrix
-                                .replace_event(self.room(), message.id.clone(), edit);
+                                .replace_event(timeline.clone(), id.clone(), edit);
 
                             return Ok(consumed!());
                         } else {
@@ -348,15 +355,25 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('i') => {
+                let Some(timeline) = self.timeline.clone() else {
+                    return Ok(EventResult::Ignored);
+                };
+
                 let room = self.room.clone();
                 let matrix = self.matrix.clone();
                 let thread = self.thread_target();
 
                 Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Compose(Compose::new(room, matrix, thread, "")))
+                    app.set_popup(Popup::Compose(Compose::new(
+                        room, timeline, matrix, thread, "",
+                    )))
                 })))
             }
             KeyCode::Char('@') => {
+                let Some(timeline) = self.timeline.clone() else {
+                    return Ok(EventResult::Ignored);
+                };
+
                 // normally a local store read, like V
                 let members = self
                     .matrix
@@ -365,6 +382,7 @@ impl Chat {
 
                 let members = Members::new(
                     self.room.clone(),
+                    timeline,
                     self.matrix.clone(),
                     self.thread_target(),
                     members,
@@ -376,6 +394,10 @@ impl Chat {
                 })))
             }
             KeyCode::Char('I') => {
+                let Some(timeline) = self.timeline.clone() else {
+                    return Ok(EventResult::Ignored);
+                };
+
                 let result = spawn_editor(
                     handler,
                     Some((&self.matrix, self.room())),
@@ -391,21 +413,26 @@ impl Chat {
                 {
                     match self.thread_target() {
                         Some(target) => self.matrix.send_thread_message(
-                            self.room(),
+                            timeline,
                             message,
                             target,
                             ReplyWithinThread::No,
                         ),
-                        None => self.matrix.send_text_message(self.room(), message),
+                        None => self.matrix.send_text_message(timeline, message),
                     }
                 }
 
                 Ok(consumed!())
             }
             KeyCode::Char('R') => {
-                let message = match self.selected_reply() {
-                    Some(m) => m,
-                    None => return Ok(consumed!()),
+                let (Some(message), Some(timeline)) = (self.selected_reply(), &self.timeline)
+                else {
+                    return Ok(consumed!());
+                };
+
+                // only a sent message can be replied to
+                let Some(id) = message.event_id() else {
+                    return Ok(consumed!());
                 };
 
                 let wrap_options = textwrap::Options::new(60)
@@ -425,14 +452,13 @@ impl Chat {
                     if let Some(input) = input {
                         if self.thread_root.is_some() {
                             self.matrix.send_thread_message(
-                                self.room(),
+                                timeline.clone(),
                                 input,
-                                message.id.clone(),
+                                id.clone(),
                                 ReplyWithinThread::Yes,
                             );
                         } else {
-                            self.matrix
-                                .send_reply(self.room(), input, message.id.clone());
+                            self.matrix.send_reply(timeline.clone(), input, id.clone());
                         }
                         Ok(consumed!())
                     } else {
@@ -448,14 +474,13 @@ impl Chat {
                     return Ok(EventResult::Ignored);
                 }
 
-                let message = match self.selected_reply() {
-                    Some(m) => m,
-                    None => return Ok(EventResult::Ignored),
+                let Some(id) = self.selected_reply().and_then(Message::event_id) else {
+                    return Ok(EventResult::Ignored);
                 };
 
                 // open the thread view, empty or not; sending the first
                 // message is what actually creates the thread
-                let thread = self.thread(message.id.clone());
+                let thread = self.thread(id.clone());
 
                 Ok(Consumed(Box::new(move |app| app.thread = Some(thread))))
             }
@@ -465,9 +490,9 @@ impl Chat {
                     None => return Ok(EventResult::Ignored),
                 };
 
-                let history = match &self.timeline {
-                    Some(timeline) if message.edited => {
-                        self.matrix.edit_history(timeline, &message.id)
+                let history = match (&self.timeline, message.event_id()) {
+                    (Some(timeline), Some(id)) if message.edited => {
+                        self.matrix.edit_history(timeline, id)
                     }
                     _ => vec![],
                 };
@@ -495,6 +520,10 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('u') => {
+                let Some(timeline) = self.timeline.clone() else {
+                    return Ok(EventResult::Ignored);
+                };
+
                 let paths = get_file_paths(self.matrix.handle())?;
 
                 handler.sender().send(Event::Redraw)?;
@@ -504,10 +533,9 @@ impl Chat {
                 }
 
                 let matrix = self.matrix.clone();
-                let room = self.room();
 
                 Ok(Consumed(Box::new(move |app| {
-                    app.set_popup(Popup::Upload(Upload::new(matrix, room, paths)))
+                    app.set_popup(Popup::Upload(Upload::new(matrix, timeline, paths)))
                 })))
             }
             KeyCode::Char('/') => Ok(Consumed(Box::new(|app| {
@@ -798,7 +826,7 @@ impl Chat {
             return;
         }
 
-        let read_to = self.iter_messages().next().map(|m| m.id.clone());
+        let read_to = self.iter_messages().find_map(|m| m.event_id().cloned());
 
         if read_to == self.read_to {
             return;
@@ -848,6 +876,11 @@ impl Chat {
 
     pub fn room(&self) -> Room {
         self.room.inner()
+    }
+
+    /// The room's timeline, once it's loaded.
+    pub fn timeline(&self) -> Option<Arc<SdkTimeline>> {
+        self.timeline.clone()
     }
 
     fn pretty_members(&self) -> &str {
@@ -1035,10 +1068,10 @@ impl Chat {
         self.line_types.lock().unwrap().len()
     }
 
-    // when viewing a thread, new messages attach to the newest one
+    // when viewing a thread, new messages attach to the newest sent one
     fn thread_target(&self) -> Option<OwnedEventId> {
         self.thread_root.as_ref()?;
-        self.iter_messages().next().map(|m| m.id.clone())
+        self.iter_messages().find_map(|m| m.event_id().cloned())
     }
 
     // the message (or reply) currently selected by the UI
@@ -1076,7 +1109,7 @@ impl Chat {
 
 pub struct Bookmark {
     // which message are we pointing at?
-    message_id: OwnedEventId,
+    message_id: TimelineEventItemId,
 
     // how many lines down from the top?
     offset: usize,
@@ -1457,7 +1490,9 @@ pub(crate) fn make_message_list(
 
         // the thread view shows the root, then its messages, like a room
         if let Some(root) = thread_root {
-            if *message.id == *root || message.thread_root.as_deref() == Some(root) {
+            if message.event_id().is_some_and(|id| id == root)
+                || message.thread_root.as_deref() == Some(root)
+            {
                 messages.push(message);
             }
 
@@ -1526,6 +1561,7 @@ const REPLY_TEMPLATE: &str = "<!--
 pub(crate) mod tests {
     use super::*;
     use crate::handler::MatuiEvent;
+    use crate::widgets::message::Sending;
     use crate::widgets::message::tests::{reaction_event, reply_event, text_event, thread_event};
     use matrix_sdk::Client;
     use matrix_sdk::ruma::events::room::member::RoomMemberEvent;
@@ -1540,6 +1576,7 @@ pub(crate) mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::time::Duration;
     use tokio::runtime::Handle;
+    use wiremock::ResponseTemplate;
 
     fn room_id() -> &'static RoomId {
         room_id!("!room:example.org")
@@ -1629,12 +1666,17 @@ pub(crate) mod tests {
     }
 
     fn message<'a>(chat: &'a Chat, id: &str) -> Option<&'a Message> {
-        chat.iter_messages().find(|m| m.id.as_str() == id)
+        chat.iter_messages().find(|m| event_id(m) == id)
     }
 
     /// The chat's messages, newest first.
     fn ids(chat: &Chat) -> Vec<&str> {
-        chat.iter_messages().map(|m| m.id.as_str()).collect()
+        chat.iter_messages().map(event_id).collect()
+    }
+
+    /// The message's event ID, or nothing until it's sent.
+    fn event_id(message: &Message) -> &str {
+        message.event_id().map_or("", |id| id.as_str())
     }
 
     fn edit_event(id: &str, ts: u64, target: &str, body: &str) -> Value {
@@ -1685,7 +1727,7 @@ pub(crate) mod tests {
         assert_eq!(text.display(), "hello there");
         assert_eq!(text.reactions.len(), 1);
         assert_eq!(text.reactions[0].body, "👍");
-        assert_eq!(text.replies[0].id.as_str(), "$reply:example.org");
+        assert_eq!(event_id(&text.replies[0]), "$reply:example.org");
         assert_eq!(text.replies[0].display(), "hi back");
     }
 
@@ -1876,6 +1918,191 @@ pub(crate) mod tests {
         .await;
     }
 
+    /// A chat that sends, once its timeline has loaded, with these events.
+    async fn sending_chat(
+        events: Vec<Value>,
+    ) -> (MatrixMockServer, Chat, Receiver<Event>, Arc<SdkTimeline>) {
+        let (server, client, room) = joined().await;
+        let (mut chat, receiver) = chat(&client, room).await;
+        chat.matrix.watch_send_queue();
+
+        let count = events.len();
+        sync(&server, &client, events).await;
+        until(&mut chat, &receiver, |c| c.iter_messages().count() == count).await;
+
+        let timeline = chat.timeline().unwrap();
+        (server, chat, receiver, timeline)
+    }
+
+    /// A message of ours, from the server.
+    fn own_text_event(id: &str, body: &str) -> Value {
+        let mut event = text_event(id, 1000, body);
+        event["sender"] = json!("@example:localhost");
+        event
+    }
+
+    /// A failure retrying can't fix, late enough to see what came before it.
+    fn too_large_later() -> ResponseTemplate {
+        ResponseTemplate::new(413)
+            .set_body_json(json!({ "errcode": "M_TOO_LARGE", "error": "Too large" }))
+            .set_delay(Duration::from_millis(300))
+    }
+
+    fn by_body<'a>(chat: &'a Chat, body: &str) -> Option<&'a Message> {
+        chat.iter_messages().find(|m| m.display() == body)
+    }
+
+    /// Hand the chat its timeline's events until the app gets an error,
+    /// and return the error.
+    async fn until_error(chat: &mut Chat, events: &Receiver<Event>) -> String {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                while let Ok(event) = events.try_recv() {
+                    match event {
+                        Event::Matui(MatuiEvent::TimelineItems(timeline, items)) => {
+                            chat.items_event(&timeline, &items)
+                        }
+                        Event::Matui(MatuiEvent::Error(error)) => return error,
+                        _ => {}
+                    }
+                }
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the app never got an error")
+    }
+
+    #[tokio::test]
+    async fn a_sent_message_shows_as_sending_then_sent() {
+        let (server, mut chat, events, timeline) = sending_chat(vec![]).await;
+
+        server
+            .mock_room_send()
+            .ok_with_delay(event_id!("$sent:example.org"), Duration::from_millis(500))
+            .mock_once()
+            .mount()
+            .await;
+
+        chat.matrix.send_text_message(timeline, "hello".to_string());
+
+        until(&mut chat, &events, |c| by_body(c, "hello").is_some()).await;
+        let pending = by_body(&chat, "hello").unwrap();
+        assert_eq!(pending.sending, Some(Sending::Pending));
+        assert_eq!(pending.event_id(), None);
+
+        until(&mut chat, &events, |c| {
+            message(c, "$sent:example.org").is_some_and(|m| m.sending.is_none())
+        })
+        .await;
+        assert_eq!(ids(&chat), ["$sent:example.org"]);
+    }
+
+    #[tokio::test]
+    async fn a_stuck_message_shows_its_error_until_deleted() {
+        let (server, mut chat, events, timeline) = sending_chat(vec![]).await;
+
+        server
+            .mock_room_send()
+            .error_too_large()
+            .mock_once()
+            .mount()
+            .await;
+
+        chat.matrix
+            .send_text_message(timeline.clone(), "too big".to_string());
+
+        until(&mut chat, &events, |c| {
+            by_body(c, "too big").is_some_and(|m| matches!(m.sending, Some(Sending::Stuck(_))))
+        })
+        .await;
+
+        let Some(Sending::Stuck(error)) = &by_body(&chat, "too big").unwrap().sending else {
+            unreachable!()
+        };
+        assert!(error.contains("M_TOO_LARGE"), "{}", error);
+
+        // deleting it lets the next message through
+        let id = by_body(&chat, "too big").unwrap().id.clone();
+        chat.matrix.redact_event(timeline.clone(), id);
+        until(&mut chat, &events, |c| by_body(c, "too big").is_none()).await;
+
+        server
+            .mock_room_send()
+            .ok(event_id!("$next:example.org"))
+            .mock_once()
+            .mount()
+            .await;
+
+        chat.matrix.send_text_message(timeline, "next".to_string());
+
+        until(&mut chat, &events, |c| {
+            message(c, "$next:example.org").is_some_and(|m| m.sending.is_none())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_stuck_edit_is_cancelled_with_its_error() {
+        let (server, mut chat, events, timeline) =
+            sending_chat(vec![own_text_event("$text:example.org", "hello")]).await;
+
+        server
+            .mock_room_send()
+            .respond_with(too_large_later())
+            .mount()
+            .await;
+
+        chat.matrix.replace_event(
+            timeline,
+            owned_event_id!("$text:example.org"),
+            "goodbye".to_string(),
+        );
+
+        until(&mut chat, &events, |c| by_body(c, "goodbye").is_some()).await;
+
+        let error = until_error(&mut chat, &events).await;
+        assert!(
+            error.starts_with("Could not edit the message:"),
+            "{}",
+            error
+        );
+
+        // nothing is pending anymore, though the SDK's open timeline keeps
+        // the new text until the room is opened again
+        until(&mut chat, &events, |c| {
+            message(c, "$text:example.org").is_some_and(|m| m.sending.is_none())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_stuck_delete_is_cancelled_with_its_error() {
+        let (server, mut chat, events, timeline) =
+            sending_chat(vec![text_event("$text:example.org", 1000, "hello")]).await;
+
+        server
+            .mock_room_redact()
+            .respond_with(too_large_later())
+            .mount()
+            .await;
+
+        let id = TimelineEventItemId::EventId(owned_event_id!("$text:example.org"));
+        chat.matrix.redact_event(timeline, id);
+
+        until(&mut chat, &events, |c| ids(c).is_empty()).await;
+
+        let error = until_error(&mut chat, &events).await;
+        assert!(
+            error.starts_with("Could not delete the message:"),
+            "{}",
+            error
+        );
+
+        until(&mut chat, &events, |c| ids(c) == ["$text:example.org"]).await;
+    }
+
     // an event nobody has the key for, with its relation in the clear
     fn encrypted_event(id: &str, ts: u64, relates_to: Option<Value>) -> Value {
         let mut content = json!({
@@ -1935,11 +2162,11 @@ pub(crate) mod tests {
 
         // newest first: the plain one stands alone, the thread reply sits in
         // its thread, and the edit and reaction don't show
-        let ids: Vec<&str> = messages.iter().map(|m| m.id.as_str()).collect();
+        let ids: Vec<&str> = messages.iter().map(|m| event_id(m)).collect();
         assert_eq!(ids, ["$plain:example.org", root]);
         assert_eq!(messages[0].display(), "Unable to decrypt this message.");
 
-        let thread: Vec<&str> = messages[1].thread.iter().map(|m| m.id.as_str()).collect();
+        let thread: Vec<&str> = messages[1].thread.iter().map(event_id).collect();
         assert_eq!(thread, ["$thread:example.org"]);
     }
 

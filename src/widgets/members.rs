@@ -6,6 +6,7 @@ use crate::{close, consumed};
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::room::RoomMember;
 use matrix_sdk::ruma::{OwnedEventId, OwnedUserId, UserId};
+use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -14,6 +15,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, List, ListItem, ListState, StatefulWidget, Widget,
 };
 use std::cell::Cell;
+use std::sync::Arc;
 
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::get_margin;
@@ -27,6 +29,7 @@ pub struct Members {
     members: Vec<(Option<String>, OwnedUserId)>,
     list_state: Cell<ListState>,
     room: DecoratedRoom,
+    timeline: Arc<Timeline>,
     matrix: Matrix,
     thread: Option<OwnedEventId>,
 }
@@ -34,6 +37,7 @@ pub struct Members {
 impl Members {
     pub fn new(
         room: DecoratedRoom,
+        timeline: Arc<Timeline>,
         matrix: Matrix,
         thread: Option<OwnedEventId>,
         members: Vec<RoomMember>,
@@ -56,6 +60,7 @@ impl Members {
             members,
             list_state: Cell::new(list_state),
             room,
+            timeline,
             matrix,
             thread,
         }
@@ -95,6 +100,7 @@ impl Members {
 
                 let compose = Compose::new(
                     self.room.clone(),
+                    self.timeline.clone(),
                     self.matrix.clone(),
                     self.thread.clone(),
                     &format!("{} ", id),
