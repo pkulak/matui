@@ -119,23 +119,33 @@ impl Notify {
         self.focus.store(false, Ordering::Relaxed);
     }
 
-    pub fn room_visit_event(&self, room: Room) {
-        self.close_notification(room.room_id().as_str());
+    pub fn room_visit_event(&self, matrix: &Matrix, room: Room) {
+        self.close_notification(matrix, room.room_id().as_str());
         *self.room_id.lock().unwrap() = Some(room.room_id().to_owned());
     }
 
+    // Rooms are visited from Tokio tasks too, where blocking on D-Bus panics.
     #[cfg(not(target_os = "macos"))]
-    fn close_notification(&self, room_id: &str) {
-        let mut map = self.rooms.lock().expect("could not lock rooms");
-        if let Some(handle_id) = map.remove(room_id)
-            && let Ok(handle) = notify_rust::Notification::new().id(handle_id).show()
-        {
-            handle.close();
+    fn close_notification(&self, matrix: &Matrix, room_id: &str) {
+        let handle_id = self
+            .rooms
+            .lock()
+            .expect("could not lock rooms")
+            .remove(room_id);
+
+        if let Some(handle_id) = handle_id {
+            matrix.spawn(async move {
+                let notification = notify_rust::Notification::new().id(handle_id).finalize();
+
+                if let Ok(handle) = notification.show_async().await {
+                    handle.close_async().await;
+                }
+            });
         }
     }
 
     #[cfg(target_os = "macos")]
-    fn close_notification(&self, room_id: &str) {
+    fn close_notification(&self, _matrix: &Matrix, room_id: &str) {
         self.rooms
             .lock()
             .expect("could not lock rooms")
@@ -353,9 +363,13 @@ fn mentions_user(event: &AnyTimelineEvent, me: &UserId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{Notify, mentions_user, should_notify};
+    use crate::matrix::Matrix;
     use matrix_sdk::ruma::events::AnyTimelineEvent;
     use matrix_sdk::ruma::exports::serde_json::{Value, from_value, json};
     use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, UInt, room_id, user_id};
+    use matrix_sdk::test_utils::mocks::MatrixMockServer;
+    use std::sync::mpsc::channel;
+    use tokio::runtime::Handle;
 
     fn message_event(mentions: Option<Value>) -> AnyTimelineEvent {
         event_from("@bob:example.org", 1_000, mentions)
@@ -426,6 +440,27 @@ mod tests {
         let mark = MilliSecondsSinceUnixEpoch(UInt::from(2_000u32));
         assert_eq!(notify.raise_mark(&event, started()), mark);
         assert_eq!(notify.raise_mark(&older, started()), mark);
+    }
+
+    // The timeline visits the room on our own read receipt, from a Tokio
+    // task. The test ends before the close it spawns runs, so it doesn't
+    // reach D-Bus.
+    #[tokio::test]
+    async fn it_closes_a_notification_from_a_task() {
+        let (sender, _events) = channel();
+        let matrix = Matrix::new(sender, Handle::current());
+        let server = MatrixMockServer::new().await;
+        let client = server.client_builder().build().await;
+        let room = server
+            .sync_joined_room(&client, room_id!("!room:localhost"))
+            .await;
+
+        let rooms = matrix.notify.rooms.clone();
+        rooms.lock().unwrap().insert(room.room_id().to_string(), 1);
+
+        matrix.room_visit_event(room);
+
+        assert!(rooms.lock().unwrap().is_empty());
     }
 
     #[test]

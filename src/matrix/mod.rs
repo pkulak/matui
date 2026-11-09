@@ -190,7 +190,7 @@ impl Matrix {
     }
 
     pub fn room_visit_event(&self, room: Room) {
-        self.notify.room_visit_event(room.clone());
+        self.notify.room_visit_event(self, room.clone());
         self.room_cache.room_visit_event(room);
     }
 }
