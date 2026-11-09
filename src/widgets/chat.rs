@@ -1562,6 +1562,7 @@ pub(crate) mod tests {
     use matrix_sdk::ruma::exports::serde_json::{Value, json};
     use matrix_sdk::ruma::serde::Raw;
     use matrix_sdk::ruma::{RoomVersionId, event_id, owned_event_id, room_id, user_id};
+    use matrix_sdk::send_queue::RoomSendQueueUpdate;
     use matrix_sdk::test_utils::mocks::{
         MatrixMockServer, RoomMessagesResponseTemplate, RoomRelationsResponseTemplate,
     };
@@ -2216,9 +2217,18 @@ pub(crate) mod tests {
     async fn sending_chat(
         events: Vec<Value>,
     ) -> (MatrixMockServer, Chat, Receiver<Event>, Arc<SdkTimeline>) {
+        let loaded = loaded_chat(events).await;
+        loaded.1.matrix.watch_send_queue();
+        loaded
+    }
+
+    /// A chat once its timeline has loaded, with these events, without
+    /// matui watching the send queue.
+    async fn loaded_chat(
+        events: Vec<Value>,
+    ) -> (MatrixMockServer, Chat, Receiver<Event>, Arc<SdkTimeline>) {
         let (server, client, room) = joined().await;
         let (mut chat, receiver) = chat(&client, room).await;
-        chat.matrix.watch_send_queue();
 
         let count = events.len();
         sync(&server, &client, events).await;
@@ -2395,6 +2405,87 @@ pub(crate) mod tests {
         );
 
         until(&mut chat, &events, |c| ids(c) == ["$text:example.org"]).await;
+    }
+
+    /// React to the message, which the server refuses for good.
+    async fn react_and_get_stuck(server: &MatrixMockServer, chat: &Chat, id: &str) {
+        server
+            .mock_room_send()
+            .error_too_large()
+            .mock_once()
+            .mount()
+            .await;
+
+        let id = TimelineEventItemId::EventId(id.try_into().unwrap());
+        chat.matrix
+            .toggle_reaction(chat.timeline().unwrap(), id, "👍".to_string());
+    }
+
+    /// Send a message, and wait until the server has it.
+    async fn sends(server: &MatrixMockServer, chat: &mut Chat, events: &Receiver<Event>) {
+        server
+            .mock_room_send()
+            .ok(event_id!("$next:example.org"))
+            .mock_once()
+            .mount()
+            .await;
+
+        chat.matrix
+            .send_text_message(chat.timeline().unwrap(), "next".to_string());
+
+        until(chat, events, |c| {
+            message(c, "$next:example.org").is_some_and(|m| m.sending.is_none())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_stuck_reaction_is_cancelled_with_its_error() {
+        let (server, mut chat, events, _) =
+            sending_chat(vec![text_event("$text:example.org", 1000, "hello")]).await;
+
+        react_and_get_stuck(&server, &chat, "$text:example.org").await;
+
+        let error = until_error(&mut chat, &events).await;
+        assert!(
+            error.starts_with("Could not react to the message:"),
+            "{}",
+            error
+        );
+
+        sends(&server, &mut chat, &events).await;
+    }
+
+    #[tokio::test]
+    async fn a_request_stuck_before_matui_watched_is_cancelled() {
+        let (server, mut chat, events, timeline) =
+            loaded_chat(vec![text_event("$text:example.org", 1000, "hello")]).await;
+
+        let client = timeline.room().client();
+        let mut updates = client.send_queue().subscribe();
+
+        react_and_get_stuck(&server, &chat, "$text:example.org").await;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !matches!(
+                updates.recv().await.unwrap().update,
+                RoomSendQueueUpdate::SendError { .. }
+            ) {}
+        })
+        .await
+        .expect("the reaction never got stuck");
+
+        // as when matui starts
+        chat.matrix.watch_send_queue();
+
+        let error = until_error(&mut chat, &events).await;
+        assert!(
+            error.starts_with("Could not react to the message:"),
+            "{}",
+            error
+        );
+
+        sends(&server, &mut chat, &events).await;
     }
 
     // an event nobody has the key for, with its relation in the clear

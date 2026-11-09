@@ -5,11 +5,12 @@ use std::time::Duration;
 use futures::StreamExt;
 use log::error;
 use matrix_sdk::HttpError;
+use matrix_sdk::QueueWedgeError;
 use matrix_sdk::event_cache::{EventCacheError, PaginationStatus};
 use matrix_sdk::room::Room;
-use matrix_sdk::ruma::events::room::encrypted;
-use matrix_sdk::ruma::events::room::message::MessageType;
-use matrix_sdk::ruma::{OwnedEventId, TransactionId};
+use matrix_sdk::ruma::OwnedEventId;
+use matrix_sdk::ruma::events::AnyMessageLikeEventContent;
+use matrix_sdk::ruma::events::room::message::{MessageType, Relation};
 use matrix_sdk::send_queue::{LocalEchoContent, RoomSendQueueUpdate};
 use matrix_sdk::store::SerializableEventContent;
 use matrix_sdk_ui::Timeline;
@@ -133,9 +134,10 @@ impl Matrix {
 
     /// Keep each room's send queue going, since any error turns it off: try
     /// again a little later after an error that may pass, and right away
-    /// after a request gets stuck, which holds back the ones after it. A
-    /// stuck edit or delete has nothing on screen to remove it by, so cancel
-    /// it and show its error.
+    /// after a request gets stuck, which holds back the ones after it. Only
+    /// a stuck message stays, showing its error until it's deleted; any
+    /// other stuck request is cancelled, with its error in a popup. This
+    /// also sends what was waiting when matui last quit.
     pub fn watch_send_queue(&self) {
         const RETRY_DELAY: Duration = Duration::from_secs(5);
 
@@ -144,19 +146,21 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
+            // what got stuck while matui wasn't running
+            matrix.unblock_send_queues().await;
+
             loop {
                 let update = match updates.recv().await {
                     Ok(update) => update,
-                    Err(RecvError::Lagged(_)) => continue,
+                    // a missed update may have been an error
+                    Err(RecvError::Lagged(_)) => {
+                        matrix.unblock_send_queues().await;
+                        continue;
+                    }
                     Err(RecvError::Closed) => return,
                 };
 
-                let RoomSendQueueUpdate::SendError {
-                    transaction_id,
-                    error,
-                    is_recoverable,
-                } = update.update
-                else {
+                let RoomSendQueueUpdate::SendError { is_recoverable, .. } = update.update else {
                     continue;
                 };
 
@@ -173,10 +177,26 @@ impl Matrix {
                     continue;
                 }
 
-                cancel_stuck_change(&matrix, &room, &transaction_id, &error).await;
-                room.send_queue().set_enabled(true);
+                unblock(&matrix, &room).await;
             }
         });
+    }
+
+    /// Unblock every room with requests waiting to send.
+    async fn unblock_send_queues(&self) {
+        let client = self.client();
+
+        let room_ids = match client.state_store().load_rooms_with_unsent_requests().await {
+            Ok(room_ids) => room_ids,
+            Err(err) => {
+                error!("could not read the send queues: {}", err);
+                return;
+            }
+        };
+
+        for room in room_ids.iter().filter_map(|id| client.get_room(id)) {
+            unblock(self, &room).await;
+        }
     }
 
     /// Every earlier body of an edited message, oldest first. Normally a
@@ -242,57 +262,73 @@ async fn visit_on_own_receipts(matrix: &Matrix, timeline: &Timeline) {
     }
 }
 
-/// Cancel a request that got stuck if it's an edit or a delete, and show why.
-async fn cancel_stuck_change(
-    matrix: &Matrix,
-    room: &Room,
-    transaction_id: &TransactionId,
-    error: &matrix_sdk::Error,
-) {
-    let echoes = match room.send_queue().subscribe().await {
-        Ok((echoes, _)) => echoes,
-        Err(err) => {
-            error!("could not read the send queue: {}", err);
-            return;
+/// Cancel every request stuck in the room's send queue but a message, and
+/// show why, then turn the queue back on, since the error turned it off.
+async fn unblock(matrix: &Matrix, room: &Room) {
+    let queue = room.send_queue();
+
+    match queue.subscribe().await {
+        Ok((echoes, _)) => {
+            for echo in echoes {
+                cancel_if_stuck(matrix, echo.content).await;
+            }
         }
-    };
+        Err(err) => error!("could not read the send queue: {}", err),
+    }
 
-    let Some(echo) = echoes
-        .into_iter()
-        .find(|e| e.transaction_id == transaction_id)
-    else {
-        return;
-    };
+    queue.set_enabled(true);
+}
 
-    let aborted = match echo.content {
+async fn cancel_if_stuck(matrix: &Matrix, echo: LocalEchoContent) {
+    let (cancelled, failed, error) = match echo {
         LocalEchoContent::Event {
             serialized_event,
             send_handle,
+            send_error: Some(error),
+        } => {
+            let Some(failed) = what_failed(&serialized_event) else {
+                return;
+            };
+
+            (send_handle.abort().await, failed, error)
+        }
+        LocalEchoContent::Redaction {
+            send_handle,
+            send_error: Some(error),
             ..
-        } if is_edit(&serialized_event) => send_handle
-            .abort()
-            .await
-            .map(|_| format!("Could not edit the message: {}", error)),
-        LocalEchoContent::Redaction { send_handle, .. } => send_handle
-            .abort()
-            .await
-            .map(|_| format!("Could not delete the message: {}", error)),
+        } => (
+            send_handle.abort().await,
+            "Could not delete the message",
+            error,
+        ),
         _ => return,
     };
 
-    match aborted {
-        Ok(message) => matrix.send(Error(message)),
+    match cancelled {
+        Ok(true) => matrix.send(Error(format!("{}: {}", failed, reason(&error)))),
+        Ok(false) => {}
         Err(err) => error!("could not cancel a stuck request: {}", err),
     }
 }
 
-fn is_edit(content: &SerializableEventContent) -> bool {
-    content.deserialize().is_ok_and(|content| {
-        matches!(
-            content.relation(),
-            Some(encrypted::Relation::Replacement(_))
-        )
-    })
+/// What a stuck event failed to do, or nothing for a message, which the
+/// room shows with its error until it's deleted.
+fn what_failed(content: &SerializableEventContent) -> Option<&'static str> {
+    match content.deserialize() {
+        Ok(AnyMessageLikeEventContent::RoomMessage(message)) => match message.relates_to {
+            Some(Relation::Replacement(_)) => Some("Could not edit the message"),
+            _ => None,
+        },
+        Ok(AnyMessageLikeEventContent::Reaction(_)) => Some("Could not react to the message"),
+        _ => Some("Could not send to the room"),
+    }
+}
+
+fn reason(error: &QueueWedgeError) -> String {
+    match error {
+        QueueWedgeError::GenericApiError { msg } => msg.clone(),
+        error => error.to_string(),
+    }
 }
 
 fn lost_connection(err: &timeline::Error) -> bool {

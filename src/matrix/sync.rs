@@ -48,14 +48,7 @@ impl Matrix {
             self.clone(),
         ));
 
-        // send what was still waiting when matui last quit
         self.watch_send_queue();
-        let send_queue = client.send_queue();
-        self.spawn(async move {
-            send_queue
-                .respawn_tasks_for_rooms_with_unsent_requests()
-                .await
-        });
 
         let sync_service = match SyncService::builder(client.clone())
             .with_offline_mode()
