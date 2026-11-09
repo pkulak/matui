@@ -80,13 +80,7 @@ impl Confirm {
                 focus_next(self.focus_order());
                 consumed!()
             }
-            // an invite has to be popped off the queue even on escape, or the
-            // next tick will just show it again
             KeyCode::Esc => match self.behavior.clone() {
-                ConfirmBehavior::JoinRoom(_) => EventResult::Consumed(Box::new(|app| {
-                    app.invites.pop_front();
-                    app.close_popup();
-                })),
                 // a request left pending makes the SDK cancel the next one
                 // from the same user, such as a retry
                 ConfirmBehavior::VerificationRequest(request) => {
@@ -151,12 +145,10 @@ impl Confirm {
             }
             ConfirmBehavior::DeleteMessage(_, _) => close!(),
             ConfirmBehavior::JoinRoom(room) if focused => EventResult::Consumed(Box::new(|app| {
-                app.invites.pop_front();
                 app.matrix.join_room(room);
                 app.close_popup();
             })),
             ConfirmBehavior::JoinRoom(room) => EventResult::Consumed(Box::new(|app| {
-                app.invites.pop_front();
                 app.matrix.leave_room(room, false);
                 app.close_popup();
             })),

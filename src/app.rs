@@ -14,7 +14,7 @@ use crate::widgets::EventResult;
 use crate::widgets::chat::Chat;
 use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
-use crate::widgets::confirm::{Confirm, ConfirmBehavior};
+use crate::widgets::confirm::Confirm;
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
@@ -60,8 +60,7 @@ pub struct App {
     /// Keep old read receipts around
     pub receipts: VecDeque<(Room, ReceiptEventContent)>,
 
-    /// Invites waiting to be shown, and every room we've already asked about
-    pub invites: VecDeque<(Room, String)>,
+    /// Every room we've already asked about joining
     pub invites_seen: HashSet<OwnedRoomId>,
 }
 
@@ -78,7 +77,6 @@ impl App {
             matrix: Matrix::new(send, handle),
             sas: None,
             receipts: VecDeque::new(),
-            invites: VecDeque::new(),
             invites_seen: HashSet::new(),
         }
     }
@@ -127,12 +125,22 @@ impl App {
 
     /// Close the popup showing, and show the next notice waiting. A progress
     /// popup gives way to anything behind it, since its work might have
-    /// ended with an error instead of a completion.
+    /// ended with an error instead of a completion. With nothing waiting and
+    /// no room open, there's nothing behind the popups, so go back to the
+    /// room switcher.
     pub fn close_popup(&mut self) {
         self.popup = self.notices.pop_front();
 
         while matches!(self.popup, Some(Popup::Progress(_))) && !self.notices.is_empty() {
             self.popup = self.notices.pop_front();
+        }
+
+        if self.popup.is_none() && self.chat.is_none() {
+            let rooms = Rooms::new(self.matrix.clone(), None);
+
+            if !rooms.room.is_empty() {
+                self.popup = Some(Popup::Rooms(rooms));
+            }
         }
     }
 
@@ -167,33 +175,6 @@ impl App {
         }
 
         let mut render = false;
-
-        // show the next pending invite whenever the popup slot is free; it
-        // stays at the front of the queue until answered, so a stomped popup
-        // comes right back
-        if self.popup.is_none()
-            && let Some((room, msg)) = self.invites.front().cloned()
-        {
-            self.set_popup(Popup::Confirm(Confirm::new(
-                "Invite".to_string(),
-                msg,
-                "Yes".to_string(),
-                "No".to_string(),
-                ConfirmBehavior::JoinRoom(room),
-            )));
-            render = true;
-        }
-
-        // with no room open there's nothing behind the popups, so once they
-        // close, such as after verifying, go back to the room chooser
-        if self.popup.is_none() && self.chat.is_none() {
-            let rooms = Rooms::new(self.matrix.clone(), None);
-
-            if !rooms.room.is_empty() {
-                self.set_popup(Popup::Rooms(rooms));
-                render = true;
-            }
-        }
 
         // send out the ticks
         if let Some(w) = self.popup.as_mut() {
@@ -325,6 +306,10 @@ mod tests {
     use std::sync::mpsc::{Receiver, channel};
 
     use crossterm::event::{KeyCode, KeyModifiers};
+    use matrix_sdk::Client;
+    use matrix_sdk::ruma::room_id;
+    use matrix_sdk::test_utils::mocks::MatrixMockServer;
+    use matrix_sdk_test::InvitedRoomBuilder;
 
     use super::*;
     use crate::handler::{MatuiEvent, handle_app_event};
@@ -332,6 +317,79 @@ mod tests {
     fn test_app() -> (App, Receiver<Event>) {
         let (sender, receiver) = channel();
         (App::new(sender, Handle::current()), receiver)
+    }
+
+    /// An app signed in to a mock server, with one joined room in its room
+    /// list.
+    async fn app_with_room() -> (MatrixMockServer, Client, App, Room, Receiver<Event>) {
+        let (app, events) = test_app();
+        let server = MatrixMockServer::new().await;
+        let client = server.client_builder().build().await;
+        let room = server
+            .sync_joined_room(&client, room_id!("!room:localhost"))
+            .await;
+
+        app.matrix.set_client(client.clone());
+        app.matrix.add_room(room.clone()).await;
+
+        (server, client, app, room, events)
+    }
+
+    #[tokio::test]
+    async fn the_switcher_gives_way_to_a_notice_and_comes_back() {
+        let (_server, _client, mut app, _room, _events) = app_with_room().await;
+        handle_app_event(MatuiEvent::SyncComplete, &mut app);
+        assert!(matches!(app.popup, Some(Popup::Rooms(_))));
+
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+        offer_verification(&mut app);
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+
+        // not while anything is queued
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Confirm(_))));
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Rooms(_))));
+    }
+
+    #[tokio::test]
+    async fn closing_every_popup_leaves_an_open_room_showing() {
+        let (_server, _client, mut app, room, _events) = app_with_room().await;
+        app.select_room(room);
+        assert!(app.chat.is_some());
+
+        app.set_popup(Popup::Help(Help::default()));
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+
+        app.close_popup();
+        app.close_popup();
+        assert!(app.popup.is_none());
+    }
+
+    #[tokio::test]
+    async fn each_invite_is_asked_about_once() {
+        let (server, client, mut app, _room, _events) = app_with_room().await;
+        let invited = server
+            .sync_room(
+                &client,
+                InvitedRoomBuilder::new(room_id!("!invite:localhost")),
+            )
+            .await;
+        app.set_popup(Popup::Help(Help::default()));
+
+        for _ in 0..2 {
+            handle_app_event(
+                MatuiEvent::Invited(invited.clone(), "Join?".to_string()),
+                &mut app,
+            );
+        }
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Confirm(_))));
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Rooms(_))));
     }
 
     #[tokio::test]

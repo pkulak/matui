@@ -104,6 +104,17 @@ impl Matrix {
         self.room_cache.get_rooms()
     }
 
+    #[cfg(test)]
+    pub fn set_client(&self, client: Client) {
+        self.client.set(client).expect("client already set");
+    }
+
+    /// Put a room in the room list, as the room list sync would.
+    #[cfg(test)]
+    pub async fn add_room(&self, room: Room) {
+        self.room_cache.add_room(room).await;
+    }
+
     pub fn me(&self) -> OwnedUserId {
         self.client().user_id().unwrap().to_owned()
     }

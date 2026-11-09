@@ -292,9 +292,11 @@ impl Matrix {
     async fn open_room(&self, result: matrix_sdk::Result<Room>) {
         match result {
             Ok(room) => {
+                // open the room first, so the progress closing doesn't bring
+                // back the room switcher
                 self.room_cache.add_room(room.clone()).await;
-                self.send(ProgressComplete);
                 self.send(MatuiEvent::RoomSelected(room));
+                self.send(ProgressComplete);
             }
             Err(err) => {
                 self.send(ProgressComplete);

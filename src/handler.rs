@@ -113,7 +113,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             // only prompt once per session, no matter how many times we hear
             // about the invite
             if app.invites_seen.insert(room.room_id().to_owned()) {
-                app.invites.push_back((room, msg));
+                app.show_notice(Popup::Confirm(Confirm::new(
+                    "Invite".to_string(),
+                    msg,
+                    "Yes".to_string(),
+                    "No".to_string(),
+                    ConfirmBehavior::JoinRoom(room),
+                )));
             }
         }
         MatuiEvent::LoggedOut => {
