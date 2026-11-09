@@ -204,6 +204,7 @@ mod tests {
     use matrix_sdk::ruma::events::AnyTimelineEvent;
     use matrix_sdk::ruma::exports::serde_json::{self, json};
     use matrix_sdk::ruma::{OwnedMxcUri, owned_event_id, owned_mxc_uri, owned_user_id};
+    use ratatui::style::Color;
     use ratatui_image::FontSize;
     use ratatui_image::picker::ProtocolType;
     use std::collections::BTreeSet;
@@ -215,7 +216,8 @@ mod tests {
     const PLACEHOLDER: char = '\u{10EEEE}';
 
     struct Drawn {
-        // each screen row as text, top to bottom, with picture cells as #
+        // each screen row as text, top to bottom, with picture cells (Kitty's
+        // placeholders, or halfblocks' coloured cells) as #
         rows: Vec<String>,
         line_types: Vec<LineType>,
         fetches: Vec<OwnedMxcUri>,
@@ -262,9 +264,10 @@ mod tests {
         let rows = (0..height)
             .map(|y| {
                 let row: String = (0..WIDTH)
-                    .map(|x| match buf[(x, y)].symbol() {
-                        s if s.contains(PLACEHOLDER) => "#",
-                        s => s,
+                    .map(|x| match &buf[(x, y)] {
+                        c if c.symbol().contains(PLACEHOLDER) => "#",
+                        c if matches!(c.bg, Color::Rgb(..)) => "#",
+                        c => c.symbol(),
                     })
                     .collect();
 
@@ -567,6 +570,19 @@ mod tests {
         }
 
         assert_eq!(drawn.rows[9], "  @alice:example.org <time>");
+    }
+
+    #[test]
+    fn halfblock_pictures_take_the_same_cells() {
+        let picker = Picker::halfblocks();
+        let drawn = draw_with(vec![dog(None)], 0, 20, &mut ready(400, 300), Some(&picker));
+        let rows = picture_rows(&drawn.rows);
+
+        assert_eq!(rows, (10..20).collect::<Vec<_>>());
+
+        for i in rows {
+            assert_eq!(drawn.rows[i].matches('#').count(), 27);
+        }
     }
 
     #[test]

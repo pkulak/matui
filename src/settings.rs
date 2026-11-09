@@ -129,6 +129,10 @@ pub fn mentions_override_mute() -> bool {
     get_settings().get("mentions_override_mute").unwrap_or(true)
 }
 
+pub fn images() -> bool {
+    get_settings().get("images").unwrap_or(true)
+}
+
 pub fn message_line_limit() -> usize {
     let limit: Option<i32> = get_settings().get("message_line_limit").ok();
 
