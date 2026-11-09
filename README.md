@@ -146,7 +146,7 @@ a time.
 
 # Threads
 
-A message that starts a thread shows a gray "Thread: N messages" line.
+A message that starts a thread shows a gray "N replies" line.
 Hit Enter on that message to open the thread in its own view, and Esc to
 go right back to where you were in the room. Messages composed while
 viewing a thread are sent to the thread.

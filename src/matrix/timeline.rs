@@ -13,7 +13,7 @@ use matrix_sdk::ruma::{OwnedEventId, TransactionId};
 use matrix_sdk::send_queue::{LocalEchoContent, RoomSendQueueUpdate};
 use matrix_sdk::store::SerializableEventContent;
 use matrix_sdk_ui::Timeline;
-use matrix_sdk_ui::timeline::{self, RoomExt, TimelineEventItemId};
+use matrix_sdk_ui::timeline::{self, RoomExt, TimelineEventItemId, TimelineFocus};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::AbortHandle;
 
@@ -22,29 +22,49 @@ use crate::handler::MatuiEvent;
 use crate::handler::MatuiEvent::Error;
 
 impl Matrix {
-    /// Follow the room's timeline, sending all its items after every change.
-    /// Abort the returned handle to stop.
+    /// Follow the room's timeline, without its threads' messages, sending all
+    /// its items after every change. Abort the returned handle to stop.
     pub fn follow_timeline(&self, room: Room) -> AbortHandle {
         let matrix = self.clone();
 
         let task = self.spawn(async move {
-            let timeline = match room.timeline_builder().build().await {
-                Ok(timeline) => Arc::new(timeline),
-                Err(err) => {
-                    matrix.send(Error(err.to_string()));
-                    return;
-                }
+            let focus = TimelineFocus::Live {
+                hide_threaded_events: true,
             };
 
-            let (mut items, stream) = timeline.subscribe().await;
-            let mut stream = pin!(stream);
-            matrix.send(MatuiEvent::TimelineItems(timeline.clone(), items.clone()));
-
-            while let Some(diffs) = stream.next().await {
-                diffs.into_iter().for_each(|d| d.apply(&mut items));
-                matrix.send(MatuiEvent::TimelineItems(timeline.clone(), items.clone()));
+            match room.timeline_builder().with_focus(focus).build().await {
+                Ok(timeline) => send_items(&matrix, Arc::new(timeline)).await,
+                Err(err) => matrix.send(Error(err.to_string())),
             }
         });
+
+        task.abort_handle()
+    }
+
+    /// A timeline of the thread with this root. Normally a read from the
+    /// event cache.
+    pub fn thread_timeline(
+        &self,
+        room: &Room,
+        root: OwnedEventId,
+    ) -> anyhow::Result<Arc<Timeline>> {
+        let focus = TimelineFocus::Thread {
+            root_event_id: root,
+        };
+
+        let timeline = self
+            .handle
+            .block_on(room.timeline_builder().with_focus(focus).build())?;
+
+        Ok(Arc::new(timeline))
+    }
+
+    /// Follow the timeline, sending all its items after every change. Abort
+    /// the returned handle to stop.
+    pub fn follow(&self, timeline: Arc<Timeline>) -> AbortHandle {
+        let matrix = self.clone();
+
+        let task = self.spawn(async move { send_items(&matrix, timeline).await });
 
         task.abort_handle()
     }
@@ -58,12 +78,10 @@ impl Matrix {
         let matrix = self.clone();
 
         let task = self.spawn(async move {
-            let room_id = timeline.room().room_id().to_owned();
-
             loop {
                 match timeline.paginate_backwards(events).await {
                     Ok(hit_start) => {
-                        matrix.send(MatuiEvent::Paginated(room_id, hit_start));
+                        matrix.send(MatuiEvent::Paginated(timeline, hit_start));
                         return;
                     }
                     // a lost connection comes back by itself, so wait it out
@@ -162,6 +180,17 @@ impl Matrix {
             .take(earlier)
             .filter_map(|r| r.content.as_message().map(|m| m.msgtype().clone()))
             .collect()
+    }
+}
+
+async fn send_items(matrix: &Matrix, timeline: Arc<Timeline>) {
+    let (mut items, stream) = timeline.subscribe().await;
+    let mut stream = pin!(stream);
+    matrix.send(MatuiEvent::TimelineItems(timeline.clone(), items.clone()));
+
+    while let Some(diffs) = stream.next().await {
+        diffs.into_iter().for_each(|d| d.apply(&mut items));
+        matrix.send(MatuiEvent::TimelineItems(timeline.clone(), items.clone()));
     }
 }
 

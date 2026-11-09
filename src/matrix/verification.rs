@@ -700,7 +700,6 @@ mod tests {
             room,
             timeline,
             app.matrix.clone(),
-            None,
             "half-written",
         )));
 

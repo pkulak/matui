@@ -12,14 +12,11 @@ use log::error;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
 use matrix_sdk::room::edit::EditedContent;
-use matrix_sdk::room::reply::{EnforceThread, Reply};
 use matrix_sdk::room::{Receipts, Room};
 use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, File, Image, Video};
-use matrix_sdk::ruma::events::room::message::{
-    AddMentions, ReplyWithinThread, RoomMessageEventContent, TextMessageEventContent,
-};
+use matrix_sdk::ruma::events::room::message::{RoomMessageEventContent, TextMessageEventContent};
 use matrix_sdk::ruma::events::{AnyMessageLikeEvent, AnyTimelineEvent, MessageLikeEvent};
 use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId};
 use matrix_sdk_ui::Timeline;
@@ -181,30 +178,6 @@ impl Matrix {
             let content = without_me(room, text_content(room, &message).await);
 
             timeline.send_reply(content.into(), in_reply_to).await?;
-            Ok(())
-        });
-    }
-
-    pub fn send_thread_message(
-        &self,
-        timeline: Arc<Timeline>,
-        message: String,
-        target: OwnedEventId,
-        is_reply: ReplyWithinThread,
-    ) {
-        self.queue(async move {
-            let room = timeline.room();
-            let content = without_me(room, text_content(room, &message).await);
-
-            // the room's timeline doesn't know about the thread, so add it
-            let reply = Reply {
-                event_id: target,
-                enforce_thread: EnforceThread::Threaded(is_reply),
-                add_mentions: AddMentions::Yes,
-            };
-
-            let content = room.make_reply_event(content.into(), reply).await?;
-            timeline.send(content.into()).await?;
             Ok(())
         });
     }

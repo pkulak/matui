@@ -5,7 +5,7 @@ use crate::widgets::compose::Compose;
 use crate::{close, consumed};
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::room::RoomMember;
-use matrix_sdk::ruma::{OwnedEventId, OwnedUserId, UserId};
+use matrix_sdk::ruma::{OwnedUserId, UserId};
 use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -31,7 +31,6 @@ pub struct Members {
     room: DecoratedRoom,
     timeline: Arc<Timeline>,
     matrix: Matrix,
-    thread: Option<OwnedEventId>,
 }
 
 impl Members {
@@ -39,7 +38,6 @@ impl Members {
         room: DecoratedRoom,
         timeline: Arc<Timeline>,
         matrix: Matrix,
-        thread: Option<OwnedEventId>,
         members: Vec<RoomMember>,
         me: &UserId,
     ) -> Self {
@@ -62,7 +60,6 @@ impl Members {
             room,
             timeline,
             matrix,
-            thread,
         }
     }
 
@@ -102,7 +99,6 @@ impl Members {
                     self.room.clone(),
                     self.timeline.clone(),
                     self.matrix.clone(),
-                    self.thread.clone(),
                     &format!("{} ", id),
                 );
 

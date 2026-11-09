@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use matrix_sdk::Room;
-use matrix_sdk::ruma::OwnedEventId;
-use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
 use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -23,19 +21,12 @@ pub struct Compose {
     input: TextInput,
     room: DecoratedRoom,
     timeline: Arc<Timeline>,
-    thread: Option<OwnedEventId>,
     combo: KeyCombo,
     matrix: Matrix,
 }
 
 impl Compose {
-    pub fn new(
-        room: DecoratedRoom,
-        timeline: Arc<Timeline>,
-        matrix: Matrix,
-        thread: Option<OwnedEventId>,
-        text: &str,
-    ) -> Self {
+    pub fn new(room: DecoratedRoom, timeline: Arc<Timeline>, matrix: Matrix, text: &str) -> Self {
         let mut input = TextInput::new("Message".to_string(), true, false);
 
         // pasting leaves the cursor at the end
@@ -45,7 +36,6 @@ impl Compose {
             input,
             room,
             timeline,
-            thread,
             combo: KeyCombo::new(vec!['j', 'j']),
             matrix,
         }
@@ -56,17 +46,8 @@ impl Compose {
     }
 
     fn send(&self, message: String) {
-        match &self.thread {
-            Some(target) => self.matrix.send_thread_message(
-                self.timeline.clone(),
-                message,
-                target.clone(),
-                ReplyWithinThread::No,
-            ),
-            None => self
-                .matrix
-                .send_text_message(self.timeline.clone(), message),
-        }
+        self.matrix
+            .send_text_message(self.timeline.clone(), message)
     }
 
     pub fn widget(&self) -> ComposeWidget<'_> {

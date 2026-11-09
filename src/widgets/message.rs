@@ -57,7 +57,8 @@ pub struct Message {
     pub sender: Username,
     pub reactions: Vec<Reaction>,
     pub replies: Vec<Message>,
-    pub thread: Vec<Message>,
+    /// How many messages are in the thread this message started.
+    pub thread_replies: u32,
     pub receipts: Vec<Username>,
     /// Where sending it, or its latest edit, stands, until it's sent.
     pub sending: Option<Sending>,
@@ -147,7 +148,7 @@ impl Message {
             sender: Username::new(sender),
             reactions: Vec::new(),
             replies: Vec::new(),
-            thread: Vec::new(),
+            thread_replies: 0,
             receipts: Vec::new(),
             sending: None,
             body_lower: OnceCell::new(),
@@ -170,7 +171,8 @@ impl Message {
                 _ => return None,
             },
             MsgLikeKind::UnableToDecrypt(_) => {
-                // only messages get a placeholder, in their thread
+                // only messages get a placeholder; a thread's stays out of
+                // the room
                 match encrypted_relation(item) {
                     Some(Annotation(_) | Replacement(_)) => return None,
                     Some(Thread(thread)) => thread_root = Some(thread.event_id),
@@ -198,6 +200,7 @@ impl Message {
             .and_then(Sending::from_state);
         message.in_reply_to = content.in_reply_to.as_ref().map(|r| r.event_id.clone());
         message.thread_root = thread_root;
+        message.thread_replies = content.thread_summary.as_ref().map_or(0, |s| s.num_replies);
         message.reactions = content
             .reactions
             .iter()
@@ -247,10 +250,6 @@ impl Message {
 
         if let Some(reply) = self.replies.last() {
             ts = ts.max(&reply.sent);
-        }
-
-        if let Some(message) = self.thread.last() {
-            ts = ts.max(&message.sent);
         }
 
         ts
@@ -450,28 +449,21 @@ impl Message {
         self.replies.iter().for_each(|m| m.set_search_term(term));
     }
 
-    /// Put a message under its target in this tree: in the target's thread,
-    /// or among its replies, until replies nest too deep to show. The target
-    /// moves to the end, since it has something new. Hands the message back
-    /// if its target isn't here.
+    /// Put a message among its target's replies in this tree, until replies
+    /// nest too deep to show. The target moves to the end, since it has
+    /// something new. Hands the message back if its target isn't here.
     pub fn nest(
         messages: &mut Vec<Message>,
         message: Message,
         target: &OwnedEventId,
-        thread: bool,
         depth: usize,
     ) -> Option<Message> {
         if let Some(i) = messages.iter().position(|m| m.event_id() == Some(target)) {
-            if !thread && depth > 3 {
+            if depth > 3 {
                 messages.push(message);
             } else {
                 let mut found = messages.remove(i);
-
-                match thread {
-                    true => found.thread.push(message),
-                    false => found.replies.push(message),
-                }
-
+                found.replies.push(message);
                 messages.push(found);
             }
 
@@ -481,8 +473,7 @@ impl Message {
         let mut message = message;
 
         for m in messages.iter_mut() {
-            message = Message::nest(&mut m.replies, message, target, thread, depth + 1)?;
-            message = Message::nest(&mut m.thread, message, target, thread, depth + 1)?;
+            message = Message::nest(&mut m.replies, message, target, depth + 1)?;
         }
 
         Some(message)
@@ -573,11 +564,6 @@ impl Message {
         }
 
         self.replies.iter().find_map(|r| r.find_by_id(id))
-    }
-
-    // how many messages are in this tree, including this one?
-    fn tree_len(&self) -> usize {
-        1 + self.replies.iter().map(Message::tree_len).sum::<usize>()
     }
 
     fn highlight<'a>(&self, line: Cow<'a, str>) -> Vec<Span<'a>> {
@@ -777,8 +763,8 @@ impl Message {
         }
 
         // the thread, if this message started one
-        if !self.thread.is_empty() {
-            let count: usize = self.thread.iter().map(Message::tree_len).sum();
+        if self.thread_replies > 0 {
+            let count = self.thread_replies;
             let noun = if count == 1 { "reply" } else { "replies" };
 
             lines.push(vec![Span::styled(

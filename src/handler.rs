@@ -59,8 +59,8 @@ pub enum MatuiEvent {
     QrLoginSyncing,
     Receipt(Room, ReceiptEventContent),
     RoomFound(PublicRoomsChunk),
-    /// A room's timeline paged back, and whether it reached the start.
-    Paginated(OwnedRoomId, bool),
+    /// A timeline paged back, and whether it reached the start.
+    Paginated(Arc<Timeline>, bool),
     RoomLeft(Room),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
@@ -239,9 +239,9 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.items_event(&timeline, &items);
             }
         }
-        MatuiEvent::Paginated(room_id, hit_start) => {
+        MatuiEvent::Paginated(timeline, hit_start) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
-                c.paginated_event(&room_id, hit_start);
+                c.paginated_event(&timeline, hit_start);
             }
         }
         MatuiEvent::Typing(room, ids) => {

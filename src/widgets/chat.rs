@@ -27,7 +27,6 @@ use matrix_sdk::ruma::events::StateEventContentChange;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
-use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 use matrix_sdk::ruma::{
     EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedMxcUri, OwnedUserId, RoomId, UserId,
@@ -137,14 +136,16 @@ impl Chat {
         })
     }
 
-    // a new chat viewing a single thread in this room, seeded with
-    // everything we've already loaded
-    pub fn thread(&self, root: OwnedEventId) -> Self {
-        let mut chat = Self {
+    /// A new chat viewing a single thread in this room, on its own timeline.
+    pub fn thread(&self, root: OwnedEventId) -> anyhow::Result<Self> {
+        let timeline = self.matrix.thread_timeline(&self.room(), root.clone())?;
+        let follow = self.matrix.follow(timeline.clone());
+
+        let chat = Self {
             matrix: self.matrix.clone(),
             room: self.room.clone(),
-            timeline: self.timeline.clone(),
-            items: self.items.clone(),
+            timeline: Some(timeline),
+            items: Vector::new(),
             receipts: self.receipts.clone(),
             messages: vec![],
             window: (0..0),
@@ -152,12 +153,12 @@ impl Chat {
             react: None,
             typing: None,
             list_state: Cell::new(ListState::default()),
-            hit_start: self.hit_start,
+            hit_start: false,
             max_events: self.max_events,
             fetching: Cell::new(false),
             fetch: Cell::new(None),
             paged_from: Cell::new(None),
-            follow: None,
+            follow: Some(follow),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
             pictures: RefCell::default(),
@@ -171,12 +172,9 @@ impl Chat {
             checked: self.checked.clone(),
         };
 
-        let mut state = chat.list_state.take();
-        state.select(Some(0));
-        chat.list_state.set(state);
-
-        chat.set_messages(false);
-        chat
+        // the root comes once paging reaches the start of the thread
+        chat.try_fetch_previous();
+        Ok(chat)
     }
 
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -284,10 +282,10 @@ impl Chat {
                     // opening a thread gets its own window; everything else
                     // opens the message itself
                     if self.thread_root.is_none()
-                        && !message.thread.is_empty()
+                        && message.thread_replies > 0
                         && let Some(id) = message.event_id()
                     {
-                        let thread = self.thread(id.clone());
+                        let thread = self.thread(id.clone())?;
 
                         return Ok(Consumed(Box::new(move |app| app.thread = Some(thread))));
                     }
@@ -361,12 +359,9 @@ impl Chat {
 
                 let room = self.room.clone();
                 let matrix = self.matrix.clone();
-                let thread = self.thread_target();
 
                 Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Compose(Compose::new(
-                        room, timeline, matrix, thread, "",
-                    )))
+                    app.set_popup(Popup::Compose(Compose::new(room, timeline, matrix, "")))
                 })))
             }
             KeyCode::Char('@') => {
@@ -384,7 +379,6 @@ impl Chat {
                     self.room.clone(),
                     timeline,
                     self.matrix.clone(),
-                    self.thread_target(),
                     members,
                     &self.matrix.me(),
                 );
@@ -411,15 +405,7 @@ impl Chat {
                 if let Ok(Some(message)) = result
                     && !message.trim().is_empty()
                 {
-                    match self.thread_target() {
-                        Some(target) => self.matrix.send_thread_message(
-                            timeline,
-                            message,
-                            target,
-                            ReplyWithinThread::No,
-                        ),
-                        None => self.matrix.send_text_message(timeline, message),
-                    }
+                    self.matrix.send_text_message(timeline, message);
                 }
 
                 Ok(consumed!())
@@ -450,16 +436,7 @@ impl Chat {
 
                 if let Ok(input) = result {
                     if let Some(input) = input {
-                        if self.thread_root.is_some() {
-                            self.matrix.send_thread_message(
-                                timeline.clone(),
-                                input,
-                                id.clone(),
-                                ReplyWithinThread::Yes,
-                            );
-                        } else {
-                            self.matrix.send_reply(timeline.clone(), input, id.clone());
-                        }
+                        self.matrix.send_reply(timeline.clone(), input, id.clone());
                         Ok(consumed!())
                     } else {
                         bail!("Ignoring blank message.")
@@ -480,7 +457,7 @@ impl Chat {
 
                 // open the thread view, empty or not; sending the first
                 // message is what actually creates the thread
-                let thread = self.thread(id.clone());
+                let thread = self.thread(id.clone())?;
 
                 Ok(Consumed(Box::new(move |app| app.thread = Some(thread))))
             }
@@ -569,9 +546,15 @@ impl Chat {
         self.focus = false;
     }
 
-    /// The room's timeline changed, to these items.
+    /// A timeline changed, to these items. The room chat takes the room's
+    /// first timeline that isn't a thread's; a thread chat has its own.
     pub fn items_event(&mut self, timeline: &Arc<SdkTimeline>, items: &Vector<Arc<SdkItem>>) {
-        if timeline.room().room_id() != self.room.room_id() {
+        let ours = match &self.timeline {
+            Some(own) => Arc::ptr_eq(own, timeline),
+            None => timeline.room().room_id() == self.room.room_id() && !timeline.is_threaded(),
+        };
+
+        if !ours {
             return;
         }
 
@@ -658,9 +641,13 @@ impl Chat {
         }
     }
 
-    /// The room's timeline paged back.
-    pub fn paginated_event(&mut self, room_id: &RoomId, hit_start: bool) {
-        if room_id != self.room.room_id() {
+    /// A timeline paged back.
+    pub fn paginated_event(&mut self, timeline: &Arc<SdkTimeline>, hit_start: bool) {
+        if !self
+            .timeline
+            .as_ref()
+            .is_some_and(|t| Arc::ptr_eq(t, timeline))
+        {
             return;
         }
 
@@ -939,9 +926,7 @@ impl Chat {
             return;
         };
 
-        // a thread is newer than its root, so it's all loaded already, and
-        // the room chat underneath does the paging
-        if self.hit_start || self.fetching.get() || self.thread_root.is_some() {
+        if self.hit_start || self.fetching.get() {
             return;
         }
 
@@ -1066,12 +1051,6 @@ impl Chat {
 
     fn total_list_items(&self) -> usize {
         self.line_types.lock().unwrap().len()
-    }
-
-    // when viewing a thread, new messages attach to the newest sent one
-    fn thread_target(&self) -> Option<OwnedEventId> {
-        self.thread_root.as_ref()?;
-        self.iter_messages().find_map(|m| m.event_id().cloned())
     }
 
     // the message (or reply) currently selected by the UI
@@ -1488,23 +1467,25 @@ pub(crate) fn make_message_list(
             continue;
         };
 
-        // the thread view shows the root, then its messages, like a room
-        if let Some(root) = thread_root {
-            if message.event_id().is_some_and(|id| id == root)
-                || message.thread_root.as_deref() == Some(root)
-            {
-                messages.push(message);
-            }
-
+        // the thread view shows the root, then its messages, like a room,
+        // with the root's reply count left to the room
+        if thread_root.is_some() {
+            let mut message = message;
+            message.thread_replies = 0;
+            messages.push(message);
             continue;
         }
 
-        // thread messages and replies go under the message they're for, if
-        // it's here
-        let message = match (message.thread_root.clone(), message.in_reply_to.clone()) {
-            (Some(root), _) => Message::nest(&mut messages, message, &root, true, 0),
-            (None, Some(target)) => Message::nest(&mut messages, message, &target, false, 0),
-            (None, None) => Some(message),
+        // the room's timeline leaves out its threads' messages, except
+        // those it can't decrypt yet
+        if message.thread_root.is_some() {
+            continue;
+        }
+
+        // replies go under the message they're for, if it's here
+        let message = match message.in_reply_to.clone() {
+            Some(target) => Message::nest(&mut messages, message, &target, 0),
+            None => Some(message),
         };
 
         if let Some(message) = message {
@@ -1569,10 +1550,13 @@ pub(crate) mod tests {
     use matrix_sdk::ruma::exports::serde_json::{Value, json};
     use matrix_sdk::ruma::serde::Raw;
     use matrix_sdk::ruma::{RoomVersionId, event_id, owned_event_id, owned_user_id, room_id};
-    use matrix_sdk::test_utils::mocks::{MatrixMockServer, RoomMessagesResponseTemplate};
+    use matrix_sdk::test_utils::mocks::{
+        MatrixMockServer, RoomMessagesResponseTemplate, RoomRelationsResponseTemplate,
+    };
     use matrix_sdk_test::JoinedRoomBuilder;
     use matrix_sdk_test::event_factory::EventFactory;
     use matrix_sdk_ui::timeline::RoomExt;
+    use matrix_sdk_ui::timeline::TimelineFocus;
     use std::sync::mpsc::{Receiver, channel};
     use std::time::Duration;
     use tokio::runtime::Handle;
@@ -1610,15 +1594,20 @@ pub(crate) mod tests {
     /// The items of a room's timeline, once it has these events.
     pub(crate) async fn timeline_items(events: Vec<Value>) -> Vector<Arc<SdkItem>> {
         let (server, client, room) = joined().await;
-        let timeline = room.timeline().await.unwrap();
-        let last = events
-            .last()
-            .map(|e| OwnedEventId::try_from(e["event_id"].as_str().unwrap()).unwrap());
+        let focus = TimelineFocus::Live {
+            hide_threaded_events: true,
+        };
+        let timeline = room
+            .timeline_builder()
+            .with_focus(focus)
+            .build()
+            .await
+            .unwrap();
 
-        sync(&server, &client, events).await;
+        sync(&server, &client, events.clone()).await;
 
         tokio::time::timeout(Duration::from_secs(5), async {
-            while timeline.latest_event_id().await != last {
+            while !shows(&timeline, &events).await {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -1626,6 +1615,40 @@ pub(crate) mod tests {
         .expect("the timeline never caught up");
 
         timeline.items().await
+    }
+
+    /// The root of the thread the event is in, from its relation.
+    fn in_thread(event: &Value) -> Option<&str> {
+        let relation = &event["content"]["m.relates_to"];
+        (relation["rel_type"] == "m.thread").then(|| relation["event_id"].as_str().unwrap())
+    }
+
+    /// Whether the room's timeline has caught up with these events: its
+    /// newest is the newest outside a thread, and each thread root counts
+    /// its replies.
+    async fn shows(timeline: &SdkTimeline, events: &[Value]) -> bool {
+        let last = events
+            .iter()
+            .rev()
+            .find(|e| in_thread(e).is_none())
+            .map(|e| OwnedEventId::try_from(e["event_id"].as_str().unwrap()).unwrap());
+
+        if timeline.latest_event_id().await != last {
+            return false;
+        }
+
+        let items = timeline.items().await;
+
+        events.iter().filter_map(in_thread).all(|root| {
+            let replies = events.iter().filter(|e| in_thread(e) == Some(root)).count();
+
+            items
+                .iter()
+                .filter_map(|i| i.as_event())
+                .find(|e| e.event_id().is_some_and(|id| id == root))
+                .and_then(|e| e.content().thread_summary())
+                .is_some_and(|s| s.num_replies as usize == replies)
+        })
     }
 
     /// A chat on this client's room, and the events it sends the app.
@@ -1647,8 +1670,8 @@ pub(crate) mod tests {
                         Event::Matui(MatuiEvent::TimelineItems(timeline, items)) => {
                             chat.items_event(&timeline, &items)
                         }
-                        Event::Matui(MatuiEvent::Paginated(room_id, hit_start)) => {
-                            chat.paginated_event(&room_id, hit_start)
+                        Event::Matui(MatuiEvent::Paginated(timeline, hit_start)) => {
+                            chat.paginated_event(&timeline, hit_start)
                         }
                         _ => {}
                     }
@@ -1732,7 +1755,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn threads_show_under_their_root() {
+    async fn a_thread_shows_as_a_reply_count_on_its_root() {
         let (server, client, room) = joined().await;
         let (mut chat, events) = chat(&client, room).await;
 
@@ -1748,19 +1771,40 @@ pub(crate) mod tests {
         .await;
 
         until(&mut chat, &events, |c| {
-            message(c, "$root:example.org").is_some_and(|m| !m.thread.is_empty())
+            message(c, "$root:example.org").is_some_and(|m| m.thread_replies == 1)
         })
         .await;
 
-        // the root bounced to the bottom (newest first)
-        assert_eq!(ids(&chat), ["$root:example.org", "$other:example.org"]);
-        assert_eq!(message(&chat, "$root:example.org").unwrap().thread.len(), 1);
+        // newest first, with the root where it was and its reply left out
+        assert_eq!(ids(&chat), ["$other:example.org", "$root:example.org"]);
     }
 
-    #[tokio::test]
+    /// The thread view of this root, once it's paged back to the root.
+    async fn thread_view(chat: &Chat, events: &Receiver<Event>, root: &str) -> Chat {
+        let root = OwnedEventId::try_from(root).unwrap();
+        let mut thread = tokio::task::block_in_place(|| chat.thread(root.clone())).unwrap();
+
+        until(&mut thread, events, |c| {
+            c.hit_start && message(c, root.as_str()).is_some()
+        })
+        .await;
+
+        thread
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn the_thread_view_shows_only_the_thread() {
         let (server, client, room) = joined().await;
-        let (mut chat, events) = chat(&client, room).await;
+        let (chat, events) = chat(&client, room).await;
+
+        let t1 = thread_event("$t1:example.org", 2000, "$root:example.org", None);
+        let t2 = thread_event(
+            "$t2:example.org",
+            3000,
+            "$root:example.org",
+            Some("$t1:example.org"),
+        );
+        let r1 = reaction_event("$r1:example.org", 4000, "$t1:example.org", "👍");
 
         sync(
             &server,
@@ -1768,35 +1812,83 @@ pub(crate) mod tests {
             vec![
                 text_event("$root:example.org", 1000, "root"),
                 text_event("$other:example.org", 1500, "other"),
-                thread_event("$t1:example.org", 2000, "$root:example.org", None),
-                thread_event(
-                    "$t2:example.org",
-                    3000,
-                    "$root:example.org",
-                    Some("$t1:example.org"),
-                ),
-                reaction_event("$r1:example.org", 4000, "$t1:example.org", "👍"),
+                t1.clone(),
+                t2.clone(),
+                r1.clone(),
             ],
         )
         .await;
 
-        until(&mut chat, &events, |c| {
-            message(c, "$root:example.org")
-                .is_some_and(|m| m.thread.len() == 2 && !m.thread[0].reactions.is_empty())
+        server
+            .mock_room_relations()
+            .match_target_event(owned_event_id!("$root:example.org"))
+            .ok(RoomRelationsResponseTemplate::default().events(raw(vec![r1, t2, t1])))
+            .mount()
+            .await;
+
+        let mut thread = thread_view(&chat, &events, "$root:example.org").await;
+
+        until(&mut thread, &events, |c| {
+            message(c, "$t1:example.org").is_some_and(|m| m.reactions.len() == 1)
         })
         .await;
-
-        let thread = chat.thread(owned_event_id!("$root:example.org"));
 
         // newest first, flat, without the unrelated message
         assert_eq!(
             ids(&thread),
             ["$t2:example.org", "$t1:example.org", "$root:example.org"]
         );
+
+        // the root's reply count belongs to the room
         assert_eq!(
-            message(&thread, "$t1:example.org").unwrap().reactions.len(),
-            1
+            message(&thread, "$root:example.org")
+                .unwrap()
+                .thread_replies,
+            0
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_first_message_in_an_empty_thread_view_starts_the_thread() {
+        let (server, client, room) = joined().await;
+        let (chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![text_event("$root:example.org", 1000, "root")],
+        )
+        .await;
+
+        server
+            .mock_room_relations()
+            .match_target_event(owned_event_id!("$root:example.org"))
+            .ok(RoomRelationsResponseTemplate::default())
+            .mount()
+            .await;
+
+        let mut thread = thread_view(&chat, &events, "$root:example.org").await;
+        assert_eq!(ids(&thread), ["$root:example.org"]);
+
+        let (sent, mock) = server
+            .mock_room_send()
+            .ok_with_capture(event_id!("$first:example.org"), client.user_id().unwrap());
+        mock.mock_once().mount().await;
+
+        thread
+            .matrix
+            .send_text_message(thread.timeline().unwrap(), "first".to_string());
+
+        let sent = sent.await.unwrap().deserialize_as::<Value>().unwrap();
+        let relation = &sent["content"]["m.relates_to"];
+        assert_eq!(relation["rel_type"], "m.thread");
+        assert_eq!(relation["event_id"], "$root:example.org");
+
+        until(&mut thread, &events, |c| {
+            message(c, "$first:example.org").is_some_and(|m| m.sending.is_none())
+        })
+        .await;
+        assert_eq!(ids(&thread), ["$first:example.org", "$root:example.org"]);
     }
 
     #[tokio::test]
@@ -2160,14 +2252,11 @@ pub(crate) mod tests {
         let list = make_message_list(&items, &vec![], &receipts, "", None);
         let messages: Vec<&Message> = list.iter().filter_map(TimelineItem::message).collect();
 
-        // newest first: the plain one stands alone, the thread reply sits in
-        // its thread, and the edit and reaction don't show
+        // newest first: the plain one stands alone, and the thread reply,
+        // edit and reaction don't show
         let ids: Vec<&str> = messages.iter().map(|m| event_id(m)).collect();
         assert_eq!(ids, ["$plain:example.org", root]);
         assert_eq!(messages[0].display(), "Unable to decrypt this message.");
-
-        let thread: Vec<&str> = messages[1].thread.iter().map(event_id).collect();
-        assert_eq!(thread, ["$thread:example.org"]);
     }
 
     fn member(kind: MemberKind, name: &str) -> StateEntry {
