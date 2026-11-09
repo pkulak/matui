@@ -175,6 +175,17 @@ impl App {
             render = true;
         }
 
+        // with no room open there's nothing behind the popups, so once they
+        // close, such as after verifying, go back to the room chooser
+        if self.popup.is_none() && self.chat.is_none() {
+            let rooms = Rooms::new(self.matrix.clone(), None);
+
+            if !rooms.room.is_empty() {
+                self.set_popup(Popup::Rooms(rooms));
+                render = true;
+            }
+        }
+
         // send out the ticks
         if let Some(w) = self.popup.as_mut() {
             w.tick_event(self.timestamp);
