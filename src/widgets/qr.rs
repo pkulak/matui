@@ -6,7 +6,6 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use crate::app::App;
 use crate::event::EventHandler;
 use crate::handler::MatuiEvent;
 use crate::spawn::spawn_editor;
@@ -73,15 +72,16 @@ impl Qr {
                         };
 
                         let sender = sender.clone();
-                        Consumed(Box::new(move |_| {
-                            App::send(MatuiEvent::ProgressStarted(
+                        Consumed(Box::new(move |app| {
+                            app.matrix.send(MatuiEvent::ProgressStarted(
                                 "Checking QR login code.".to_string(),
                                 0,
                             ));
 
-                            App::spawn(async move {
+                            let matrix = app.matrix.clone();
+                            app.matrix.spawn(async move {
                                 if let Err(err) = sender.send(code).await {
-                                    App::send(MatuiEvent::Error(err.to_string()));
+                                    matrix.send(MatuiEvent::Error(err.to_string()));
                                 }
                             });
                         }))

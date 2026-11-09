@@ -4,14 +4,11 @@ use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::OwnedRoomId;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
-use once_cell::sync::OnceCell;
 use std::collections::{HashSet, VecDeque};
-use std::future::Future;
 use std::sync::mpsc::Sender;
 use tokio::runtime::Handle;
 
 use crate::event::{Event, EventHandler};
-use crate::handler::MatuiEvent;
 use crate::matrix::Matrix;
 use crate::widgets::EventResult;
 use crate::widgets::chat::Chat;
@@ -32,9 +29,6 @@ use crate::widgets::search::Search;
 use crate::widgets::signin::Signin;
 use crate::widgets::upload::Upload;
 use ratatui::Frame;
-
-static SENDER: OnceCell<Sender<Event>> = OnceCell::new();
-static HANDLE: OnceCell<Handle> = OnceCell::new();
 
 /// Application.
 pub struct App {
@@ -70,12 +64,6 @@ pub struct App {
 
 impl App {
     pub fn new(send: Sender<Event>, handle: Handle) -> Self {
-        let matrix = Matrix::new(send.clone(), handle.clone());
-
-        // Save the sender and handle for future threads.
-        SENDER.set(send).expect("could not set sender");
-        HANDLE.set(handle).expect("could not set handle");
-
         Self {
             running: true,
             timestamp: 0,
@@ -83,33 +71,12 @@ impl App {
             popup: None,
             chat: None,
             thread: None,
-            matrix,
+            matrix: Matrix::new(send, handle),
             sas: None,
             receipts: VecDeque::new(),
             invites: VecDeque::new(),
             invites_seen: HashSet::new(),
         }
-    }
-
-    pub fn get_sender() -> Sender<Event> {
-        SENDER.get().expect("could not lock sender").clone()
-    }
-
-    pub fn get_handle() -> Handle {
-        HANDLE.get().expect("could not get handle").clone()
-    }
-
-    pub fn send(event: MatuiEvent) {
-        App::get_sender()
-            .send(Event::Matui(event))
-            .expect("could not send event");
-    }
-
-    pub fn spawn<F>(future: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        App::get_handle().spawn(future);
     }
 
     pub fn select_room(&mut self, room: Room) {
@@ -309,5 +276,50 @@ impl Popup {
             Popup::Help(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Upload(w) => frame.render_widget(w.widget(), frame.area()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::{Receiver, channel};
+
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    use super::*;
+    use crate::handler::{MatuiEvent, handle_app_event};
+
+    fn test_app() -> (App, Receiver<Event>) {
+        let (sender, receiver) = channel();
+        (App::new(sender, Handle::current()), receiver)
+    }
+
+    #[tokio::test]
+    async fn an_error_shows_its_popup() {
+        let (mut app, _events) = test_app();
+
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn search_sends_on_the_apps_channel() {
+        let (mut app, events) = test_app();
+        app.set_popup(Popup::Search(Search::default()));
+
+        let Some(Popup::Search(search)) = app.popup.as_mut() else {
+            unreachable!()
+        };
+
+        let key = KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT);
+        let EventResult::Consumed(f) = search.key_event(&key) else {
+            panic!("search ignored a key");
+        };
+        f(&mut app);
+
+        assert!(matches!(
+            events.try_recv(),
+            Ok(Event::Matui(MatuiEvent::Search(term))) if term == "a"
+        ));
     }
 }

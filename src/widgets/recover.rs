@@ -4,9 +4,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use crate::app::App;
 use crate::consumed;
-use crate::event::Event;
 use crate::handler::MatuiEvent;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::textinput::TextInput;
@@ -43,11 +41,10 @@ impl Recover {
                 app.close_popup();
             })),
             KeyCode::Enter => {
-                App::get_sender()
-                    .send(Event::Matui(MatuiEvent::Recover(self.input.value.clone())))
-                    .expect("to send recover event");
-
-                consumed!()
+                let key = self.input.value.clone();
+                EventResult::Consumed(Box::new(move |app| {
+                    app.matrix.send(MatuiEvent::Recover(key));
+                }))
             }
             _ => Ignored,
         }

@@ -21,9 +21,9 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::Builder;
+use tokio::runtime::Handle;
 use url::Url;
 
-use crate::app::App;
 use crate::event::{Event, EventHandler};
 use crate::matrix::Matrix;
 use crate::settings::clean_vim;
@@ -34,10 +34,10 @@ lazy_static! {
 }
 
 #[cfg(target_os = "linux")]
-pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
+pub fn get_file_paths(handle: &Handle) -> anyhow::Result<Vec<PathBuf>> {
     let home = dirs::home_dir().context("no home directory")?;
 
-    let files = App::get_handle().block_on(async {
+    let files = handle.block_on(async {
         SelectedFiles::open_file()
             .title("Upload files")
             .accept_label("Upload")
@@ -70,7 +70,7 @@ fn file_uri_to_path(uri: &ashpd::Uri) -> anyhow::Result<PathBuf> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn get_file_paths() -> anyhow::Result<Vec<PathBuf>> {
+pub fn get_file_paths(_handle: &Handle) -> anyhow::Result<Vec<PathBuf>> {
     let home = dirs::home_dir().context("no home directory")?;
 
     let path = DialogBuilder::file()
@@ -140,7 +140,7 @@ pub fn spawn_editor(
     }
 
     // make sure we redraw the whole app when we come back
-    let _ = App::get_sender().send(Event::Redraw);
+    let _ = handler.sender().send(Event::Redraw);
 
     result
 }

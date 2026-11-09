@@ -63,17 +63,21 @@ impl Matrix {
         }
     }
 
-    fn send(&self, event: MatuiEvent) {
+    pub fn send(&self, event: MatuiEvent) {
         self.sender
             .send(Event::Matui(event))
             .expect("could not send event");
     }
 
-    fn spawn<F>(&self, future: F) -> JoinHandle<()>
+    pub fn spawn<F>(&self, future: F) -> JoinHandle<()>
     where
         F: Future<Output = ()> + Send + 'static,
     {
         self.handle.spawn(future)
+    }
+
+    pub fn handle(&self) -> &Handle {
+        &self.handle
     }
 
     fn dirs() -> (PathBuf, PathBuf) {

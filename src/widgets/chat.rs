@@ -1,4 +1,4 @@
-use crate::app::{App, Popup};
+use crate::app::Popup;
 use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::roomcache::DecoratedRoom;
@@ -352,7 +352,9 @@ impl Chat {
             }
             KeyCode::Char('@') => {
                 // normally a local store read, like V
-                let members = App::get_handle()
+                let members = self
+                    .matrix
+                    .handle()
                     .block_on(async { self.room().members(RoomMemberships::JOIN).await })?;
 
                 let members = Members::new(
@@ -480,9 +482,9 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('u') => {
-                let paths = get_file_paths()?;
+                let paths = get_file_paths(self.matrix.handle())?;
 
-                App::get_sender().send(Event::Redraw)?;
+                handler.sender().send(Event::Redraw)?;
 
                 if paths.is_empty() {
                     return Ok(EventResult::Ignored);
@@ -825,7 +827,9 @@ impl Chat {
     fn display_full(&self) -> anyhow::Result<String> {
         // normally a local store read; the app syncs the full member
         // list the first time a room's senders are resolved
-        let mut members = App::get_handle()
+        let mut members = self
+            .matrix
+            .handle()
             .block_on(async { self.room().members(RoomMemberships::JOIN).await })?;
 
         members.sort_by_key(|m| {

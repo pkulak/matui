@@ -4,9 +4,6 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use crate::app::App;
-use crate::consumed;
-use crate::event::Event;
 use crate::handler::MatuiEvent;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::textinput::TextInput;
@@ -31,8 +28,7 @@ impl Search {
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {
         if let Consumed(_) = self.input.paste_event(value) {
-            App::send(MatuiEvent::Search(self.input.value.to_lowercase()));
-            consumed!()
+            self.search()
         } else {
             Ignored
         }
@@ -40,30 +36,26 @@ impl Search {
 
     pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
         if let Consumed(_) = self.input.key_event(input) {
-            App::get_sender()
-                .send(Event::Matui(MatuiEvent::Search(
-                    self.input.value.to_lowercase(),
-                )))
-                .unwrap();
-
-            return consumed!();
+            return self.search();
         }
 
         match input.code {
-            KeyCode::Esc => {
-                App::get_sender()
-                    .send(Event::Matui(MatuiEvent::Search("".to_string())))
-                    .unwrap();
-
-                EventResult::Consumed(Box::new(move |app| {
-                    app.close_popup();
-                }))
-            }
+            KeyCode::Esc => EventResult::Consumed(Box::new(move |app| {
+                app.matrix.send(MatuiEvent::Search("".to_string()));
+                app.close_popup();
+            })),
             KeyCode::Enter => EventResult::Consumed(Box::new(move |app| {
                 app.close_popup();
             })),
             _ => Ignored,
         }
+    }
+
+    fn search(&self) -> EventResult {
+        let term = self.input.value.to_lowercase();
+        Consumed(Box::new(move |app| {
+            app.matrix.send(MatuiEvent::Search(term))
+        }))
     }
 }
 
