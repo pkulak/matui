@@ -57,6 +57,8 @@ pub enum MatuiEvent {
     QrLoginScanned(CheckCodeSender),
     QrLoginSyncing,
     RoomFound(PublicRoomsChunk),
+    /// A timeline may have earlier events to page back to again.
+    NotAtStart(Arc<Timeline>),
     /// A timeline paged back, and whether it reached the start.
     Paginated(Arc<Timeline>, bool),
     RoomLeft(Room),
@@ -240,6 +242,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::Paginated(timeline, hit_start) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.paginated_event(&timeline, hit_start);
+            }
+        }
+        MatuiEvent::NotAtStart(timeline) => {
+            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+                c.not_at_start_event(&timeline);
             }
         }
         MatuiEvent::Typing(room, ids) => {

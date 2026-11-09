@@ -5,7 +5,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use log::error;
 use matrix_sdk::HttpError;
-use matrix_sdk::event_cache::EventCacheError;
+use matrix_sdk::event_cache::{EventCacheError, PaginationStatus};
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::encrypted;
 use matrix_sdk::ruma::events::room::message::MessageType;
@@ -48,7 +48,8 @@ impl Matrix {
 
                     tokio::join!(
                         send_items(&matrix, timeline.clone()),
-                        visit_on_own_receipts(&matrix, &timeline)
+                        visit_on_own_receipts(&matrix, &timeline),
+                        send_not_at_start(&matrix, timeline.clone())
                     );
                 }
                 Err(err) => matrix.send(Error(err.to_string())),
@@ -208,6 +209,25 @@ async fn send_items(matrix: &Matrix, timeline: Arc<Timeline>) {
     while let Some(diffs) = stream.next().await {
         diffs.into_iter().for_each(|d| d.apply(&mut items));
         matrix.send(MatuiEvent::TimelineItems(timeline.clone(), items.clone()));
+    }
+}
+
+/// The SDK can drop the earlier events of a live timeline, such as after a
+/// sync with a gap in it, leaving it no longer at its start.
+async fn send_not_at_start(matrix: &Matrix, timeline: Arc<Timeline>) {
+    let Some((_, statuses)) = timeline.live_back_pagination_status().await else {
+        return;
+    };
+
+    let mut statuses = pin!(statuses);
+
+    while let Some(status) = statuses.next().await {
+        if let PaginationStatus::Idle {
+            hit_timeline_start: false,
+        } = status
+        {
+            matrix.send(MatuiEvent::NotAtStart(timeline.clone()));
+        }
     }
 }
 

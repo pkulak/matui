@@ -563,6 +563,11 @@ impl Chat {
         self.pretty_members = OnceCell::new();
         self.set_fully_read();
 
+        // the SDK can drop earlier events while a page is on its way
+        if let Some(from) = self.paged_from.get() {
+            self.paged_from.set(Some(from.min(self.event_count())));
+        }
+
         if reset {
             let mut state = self.list_state.take();
             state.select(Some(0));
@@ -632,6 +637,21 @@ impl Chat {
             self.fetching.set(false);
             self.keep_paging();
         }
+    }
+
+    /// A timeline lost its earlier events, so page back to them again.
+    pub fn not_at_start_event(&mut self, timeline: &Arc<SdkTimeline>) {
+        if !self.hit_start
+            || !self
+                .timeline
+                .as_ref()
+                .is_some_and(|t| Arc::ptr_eq(t, timeline))
+        {
+            return;
+        }
+
+        self.hit_start = false;
+        self.try_fetch_previous();
     }
 
     // page again once the last page is done and its items are here
@@ -1673,6 +1693,9 @@ pub(crate) mod tests {
                         Event::Matui(MatuiEvent::Paginated(timeline, hit_start)) => {
                             chat.paginated_event(&timeline, hit_start)
                         }
+                        Event::Matui(MatuiEvent::NotAtStart(timeline)) => {
+                            chat.not_at_start_event(&timeline)
+                        }
                         _ => {}
                     }
                 }
@@ -2063,6 +2086,64 @@ pub(crate) mod tests {
 
         assert_eq!(chat.event_count(), 5);
         assert_eq!(ids(&chat), ["$2:example.org"]);
+    }
+
+    #[tokio::test]
+    async fn pages_back_again_after_a_limited_sync_resets_the_timeline() {
+        let (server, client, room) = joined().await;
+
+        let texts = |events: &[(&str, u64)]| -> Vec<Value> {
+            events
+                .iter()
+                .map(|(id, ts)| text_event(&format!("{id}:example.org"), *ts, id))
+                .collect()
+        };
+
+        // pages without an end token reach the start of the room
+        for (from, events) in [
+            ("p1", texts(&[("$2", 2000), ("$1", 1000)])),
+            ("p2", texts(&[("$3", 3000), ("$2", 2000), ("$1", 1000)])),
+        ] {
+            server
+                .mock_room_messages()
+                .match_from(from)
+                .ok(RoomMessagesResponseTemplate::default().events(raw(events)))
+                .mount()
+                .await;
+        }
+
+        let limited = |prev_batch: &str, events: Vec<Value>| {
+            JoinedRoomBuilder::new(room_id())
+                .set_timeline_limited()
+                .set_timeline_prev_batch(prev_batch)
+                .add_timeline_bulk(raw(events))
+        };
+
+        server
+            .sync_room(&client, limited("p1", texts(&[("$3", 3000)])))
+            .await;
+
+        let (mut chat, events) = chat(&client, room).await;
+        until(&mut chat, &events, |c| {
+            c.hit_start && ids(c) == ["$3:example.org", "$2:example.org", "$1:example.org"]
+        })
+        .await;
+
+        // a gap since the last sync makes the SDK drop all but the newest
+        server
+            .sync_room(&client, limited("p2", texts(&[("$4", 4000)])))
+            .await;
+
+        until(&mut chat, &events, |c| {
+            ids(c)
+                == [
+                    "$4:example.org",
+                    "$3:example.org",
+                    "$2:example.org",
+                    "$1:example.org",
+                ]
+        })
+        .await;
     }
 
     #[tokio::test]
