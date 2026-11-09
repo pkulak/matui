@@ -9,7 +9,7 @@ use matrix_sdk::ruma::{OwnedRoomOrAliasId, OwnedUserId, RoomOrAliasId};
 
 use super::Matrix;
 use crate::handler::MatuiEvent;
-use crate::handler::MatuiEvent::{Error, ProgressComplete, ProgressStarted};
+use crate::handler::MatuiEvent::Error;
 
 #[derive(Clone, Copy)]
 pub enum Moderation {
@@ -35,7 +35,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Joining.".to_string(), 500));
+            let _progress = matrix.progress("Joining.", 500);
 
             let result = room.join().await.map(|_| room);
             matrix.open_room(result).await;
@@ -46,7 +46,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Joining.".to_string(), 500));
+            let _progress = matrix.progress("Joining.", 500);
 
             let result = matrix.client().join_room_by_id_or_alias(&target, &[]).await;
             matrix.open_room(result).await;
@@ -57,7 +57,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Joining.".to_string(), 500));
+            let _progress = matrix.progress("Joining.", 500);
 
             // a single token might be an alias on our own server
             if !name.contains(char::is_whitespace)
@@ -77,11 +77,9 @@ impl Matrix {
             match matrix.client().public_rooms_filtered(request).await {
                 Ok(response) => match response.chunk.into_iter().next() {
                     Some(chunk) => {
-                        matrix.send(ProgressComplete);
                         matrix.send(MatuiEvent::RoomFound(chunk));
                     }
                     None => {
-                        matrix.send(ProgressComplete);
                         matrix.send(Error(format!(
                             "No public room found matching \"{}\".",
                             name
@@ -89,7 +87,6 @@ impl Matrix {
                     }
                 },
                 Err(err) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(Error(err.to_string()));
                 }
             }
@@ -100,12 +97,11 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Leaving.".to_string(), 500));
+            let _progress = matrix.progress("Leaving.", 500);
 
             match room.leave().await {
                 Ok(_) => {
                     matrix.room_cache.remove_room(&room);
-                    matrix.send(ProgressComplete);
 
                     if forget && let Err(err) = room.forget().await {
                         matrix.send(Error(err.to_string()));
@@ -114,7 +110,6 @@ impl Matrix {
                     matrix.send(MatuiEvent::RoomLeft(room));
                 }
                 Err(err) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(Error(err.to_string()));
                 }
             }
@@ -132,7 +127,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Creating.".to_string(), 500));
+            let _progress = matrix.progress("Creating.", 500);
 
             let mut request = create_room::v3::Request::new();
             request.name = name;
@@ -171,7 +166,7 @@ impl Matrix {
                 return;
             }
 
-            matrix.send(ProgressStarted("Creating.".to_string(), 500));
+            let _progress = matrix.progress("Creating.", 500);
 
             let result = if encrypted {
                 matrix.client().create_dm(&user_id).await
@@ -193,18 +188,16 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Inviting.".to_string(), 500));
+            let _progress = matrix.progress("Inviting.", 500);
 
             match room.invite_user_by_id(&user_id).await {
                 Ok(_) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(MatuiEvent::Confirm(
                         "Invited".to_string(),
                         format!("{} has been invited.", user_id),
                     ));
                 }
                 Err(err) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(Error(err.to_string()));
                 }
             }
@@ -227,7 +220,7 @@ impl Matrix {
                 Moderation::Kick => ("Kicking", "Kicked"),
             };
 
-            matrix.send(ProgressStarted(format!("{}.", verb), 500));
+            let _progress = matrix.progress(&format!("{}.", verb), 500);
 
             let result = match action {
                 Moderation::Ban => room.ban_user(&user_id, reason.as_deref()).await,
@@ -237,14 +230,12 @@ impl Matrix {
 
             match result {
                 Ok(_) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(MatuiEvent::Confirm(
                         past.to_string(),
                         format!("{} has been {}.", user_id, past.to_lowercase()),
                     ));
                 }
                 Err(err) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(Error(err.to_string()));
                 }
             }
@@ -261,7 +252,7 @@ impl Matrix {
                 ("Unignoring", "Unignored")
             };
 
-            matrix.send(ProgressStarted(format!("{}.", verb), 500));
+            let _progress = matrix.progress(&format!("{}.", verb), 500);
 
             let account = matrix.client().account();
 
@@ -273,14 +264,12 @@ impl Matrix {
 
             match result {
                 Ok(_) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(MatuiEvent::Confirm(
                         past.to_string(),
                         format!("{} has been {}.", user_id, past.to_lowercase()),
                     ));
                 }
                 Err(err) => {
-                    matrix.send(ProgressComplete);
                     matrix.send(Error(err.to_string()));
                 }
             }
@@ -288,18 +277,15 @@ impl Matrix {
     }
 
     /// Finish joining or creating a room: add it to the room list and open
-    /// it, or show why it failed.
+    /// it, or show why it failed. The caller's progress closes after this,
+    /// so it doesn't bring back the room switcher over the room.
     async fn open_room(&self, result: matrix_sdk::Result<Room>) {
         match result {
             Ok(room) => {
-                // open the room first, so the progress closing doesn't bring
-                // back the room switcher
                 self.room_cache.add_room(room.clone()).await;
                 self.send(MatuiEvent::RoomSelected(room));
-                self.send(ProgressComplete);
             }
             Err(err) => {
-                self.send(ProgressComplete);
                 self.send(Error(err.to_string()));
             }
         }

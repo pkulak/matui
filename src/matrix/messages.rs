@@ -28,7 +28,7 @@ use tokio::task::AbortHandle;
 use super::Matrix;
 use super::mentions;
 use super::mime::mime_from_path;
-use crate::handler::MatuiEvent::{Error, ProgressComplete, ProgressStarted};
+use crate::handler::MatuiEvent::Error;
 use crate::handler::{Batch, MatuiEvent};
 use crate::media::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, decode_upright, get_attachment_info};
 use crate::pictures::source_uri;
@@ -100,7 +100,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Downloading file.".to_string(), 250));
+            let progress = matrix.progress("Downloading file.", 250);
 
             let (file_name, mimetype, source) = match message {
                 Image(c) => (
@@ -149,7 +149,7 @@ impl Matrix {
                 Ok(mfh) => mfh,
             };
 
-            matrix.send(ProgressComplete);
+            drop(progress);
 
             match after {
                 AfterDownload::View => {
@@ -203,15 +203,13 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Sending message.".to_string(), 500));
+            let _progress = matrix.progress("Sending message.", 500);
 
             let content = text_content(&room, &message).await;
 
             if let Err(err) = room.send(without_me(&room, content)).await {
                 matrix.send(Error(err.to_string()));
             }
-
-            matrix.send(ProgressComplete);
         });
     }
 
@@ -219,7 +217,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Sending message.".to_string(), 500));
+            let _progress = matrix.progress("Sending message.", 500);
 
             let in_reply_to = match Matrix::get_room_event(&room, &in_reply_to).await {
                 Some(e) => e,
@@ -242,8 +240,6 @@ impl Matrix {
             if let Err(err) = room.send(without_me(&room, reply)).await {
                 matrix.send(Error(err.to_string()));
             }
-
-            matrix.send(ProgressComplete);
         });
     }
 
@@ -257,7 +253,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Sending message.".to_string(), 500));
+            let _progress = matrix.progress("Sending message.", 500);
 
             let target = match Matrix::get_room_event(&room, &target).await {
                 Some(e) => e,
@@ -280,8 +276,6 @@ impl Matrix {
             if let Err(err) = room.send(without_me(&room, reply)).await {
                 matrix.send(Error(err.to_string()));
             }
-
-            matrix.send(ProgressComplete);
         });
     }
 
@@ -291,10 +285,7 @@ impl Matrix {
 
         self.spawn(async move {
             for (i, (path, caption)) in attachments.into_iter().enumerate() {
-                matrix.send(ProgressStarted(
-                    format!("Uploading {} of {}.", i + 1, total),
-                    0,
-                ));
+                let _progress = matrix.progress(&format!("Uploading {} of {}.", i + 1, total), 0);
 
                 let content_type = mime_from_path(&path);
 
@@ -328,8 +319,6 @@ impl Matrix {
                 {
                     matrix.send(Error(err.to_string()));
                 }
-
-                matrix.send(ProgressComplete);
             }
         });
     }
@@ -338,7 +327,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Sending reaction.".to_string(), 500));
+            let _progress = matrix.progress("Sending reaction.", 500);
 
             if let Err(err) = room
                 .send(ReactionEventContent::new(Annotation::new(event_id, key)))
@@ -346,8 +335,6 @@ impl Matrix {
             {
                 matrix.send(Error(err.to_string()));
             }
-
-            matrix.send(ProgressComplete);
         });
     }
 
@@ -355,13 +342,11 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Removing.".to_string(), 500));
+            let _progress = matrix.progress("Removing.", 500);
 
             if let Err(err) = room.redact(&event_id, None, None).await {
                 matrix.send(Error(err.to_string()));
             }
-
-            matrix.send(ProgressComplete);
         });
     }
 
@@ -412,7 +397,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Editing message.".to_string(), 500));
+            let _progress = matrix.progress("Editing message.", 500);
 
             let Some(event) = Matrix::get_room_event(&room, &id).await else {
                 return;
@@ -427,8 +412,6 @@ impl Matrix {
             if let Err(err) = room.send(content.make_replacement(event)).await {
                 matrix.send(Error(err.to_string()));
             }
-
-            matrix.send(ProgressComplete);
         });
     }
 

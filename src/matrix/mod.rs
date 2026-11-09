@@ -33,8 +33,24 @@ use tokio::task::JoinHandle;
 
 use crate::event::Event;
 use crate::handler::MatuiEvent;
+use crate::widgets::progress::ProgressId;
 use notify::Notify;
 use roomcache::{DecoratedRoom, RoomCache};
+
+/// A progress popup that closes when this drops, however its work ends.
+pub struct InProgress {
+    id: ProgressId,
+    sender: Sender<Event>,
+}
+
+impl Drop for InProgress {
+    fn drop(&mut self) {
+        // the app may already be gone
+        let _ = self
+            .sender
+            .send(Event::Matui(MatuiEvent::ProgressComplete(self.id)));
+    }
+}
 
 /// A Matrix client that maintains it's own Tokio runtime
 #[derive(Clone)]
@@ -67,6 +83,18 @@ impl Matrix {
         self.sender
             .send(Event::Matui(event))
             .expect("could not send event");
+    }
+
+    /// Show a progress popup until the returned handle drops.
+    #[must_use]
+    pub fn progress(&self, text: &str, delay: u64) -> InProgress {
+        let id = ProgressId::next();
+        self.send(MatuiEvent::ProgressStarted(id, text.to_string(), delay));
+
+        InProgress {
+            id,
+            sender: self.sender.clone(),
+        }
     }
 
     pub fn spawn<F>(&self, future: F) -> JoinHandle<()>

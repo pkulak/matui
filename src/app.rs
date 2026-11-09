@@ -21,7 +21,7 @@ use crate::widgets::help::Help;
 use crate::widgets::homeserver::Homeserver;
 use crate::widgets::members::Members;
 use crate::widgets::oauth::Oauth;
-use crate::widgets::progress::Progress;
+use crate::widgets::progress::{Progress, ProgressId};
 use crate::widgets::qr::Qr;
 use crate::widgets::recover::Recover;
 use crate::widgets::rooms::Rooms;
@@ -124,10 +124,9 @@ impl App {
     }
 
     /// Close the popup showing, and show the next notice waiting. A progress
-    /// popup gives way to anything behind it, since its work might have
-    /// ended with an error instead of a completion. With nothing waiting and
-    /// no room open, there's nothing behind the popups, so go back to the
-    /// room switcher.
+    /// popup gives way to anything behind it, since its work sends any error
+    /// before its completion. With nothing waiting and no room open, there's
+    /// nothing behind the popups, so go back to the room switcher.
     pub fn close_popup(&mut self) {
         self.popup = self.notices.pop_front();
 
@@ -144,17 +143,15 @@ impl App {
         }
     }
 
-    /// Some progress finished: close the progress popup showing, or else
-    /// the oldest one waiting.
-    pub fn complete_progress(&mut self) {
-        if matches!(self.popup, Some(Popup::Progress(_))) {
+    /// Some progress finished: close its popup, whether it's showing or
+    /// waiting.
+    pub fn complete_progress(&mut self, id: ProgressId) {
+        let is_it = |p: &Popup| matches!(p, Popup::Progress(w) if w.id == id);
+
+        if self.popup.as_ref().is_some_and(is_it) {
             self.close_popup();
-        } else if let Some(i) = self
-            .notices
-            .iter()
-            .position(|p| matches!(p, Popup::Progress(_)))
-        {
-            self.notices.remove(i);
+        } else {
+            self.notices.retain(|p| !is_it(p));
         }
     }
 
@@ -458,26 +455,77 @@ mod tests {
 
         // the compose popup closes as it sends, then the send shows progress
         app.close_popup();
-        handle_app_event(
-            MatuiEvent::ProgressStarted("Sending message.".to_string(), 500),
-            &mut app,
-        );
+        let sending = start_progress(&mut app);
         assert!(matches!(app.popup, Some(Popup::Confirm(_))));
 
-        handle_app_event(MatuiEvent::ProgressComplete, &mut app);
+        handle_app_event(MatuiEvent::ProgressComplete(sending), &mut app);
         assert!(matches!(app.popup, Some(Popup::Confirm(_))));
 
         app.close_popup();
         assert!(app.popup.is_none());
     }
 
+    fn start_progress(app: &mut App) -> ProgressId {
+        let id = ProgressId::next();
+        handle_app_event(
+            MatuiEvent::ProgressStarted(id, "Working.".to_string(), 0),
+            app,
+        );
+        id
+    }
+
+    fn showing_progress(app: &App) -> Option<ProgressId> {
+        match &app.popup {
+            Some(Popup::Progress(p)) => Some(p.id),
+            _ => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn completing_progress_closes_only_its_own_popup() {
+        let (mut app, _events) = test_app();
+
+        // recovering shows its progress, then the backup download's
+        let recovering = start_progress(&mut app);
+        let downloading = start_progress(&mut app);
+
+        handle_app_event(MatuiEvent::ProgressComplete(recovering), &mut app);
+        assert_eq!(showing_progress(&app), Some(downloading));
+
+        handle_app_event(MatuiEvent::ProgressComplete(downloading), &mut app);
+        assert!(app.popup.is_none());
+    }
+
+    #[tokio::test]
+    async fn completing_queued_progress_unqueues_only_it() {
+        let (mut app, _events) = test_app();
+        app.set_popup(Popup::Search(Search::default()));
+
+        let first = start_progress(&mut app);
+        let second = start_progress(&mut app);
+
+        handle_app_event(MatuiEvent::ProgressComplete(first), &mut app);
+        assert!(matches!(app.popup, Some(Popup::Search(_))));
+
+        app.close_popup();
+        assert_eq!(showing_progress(&app), Some(second));
+    }
+
+    #[tokio::test]
+    async fn completing_replaced_progress_leaves_the_notice_alone() {
+        let (mut app, _events) = test_app();
+        let working = start_progress(&mut app);
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+
+        handle_app_event(MatuiEvent::ProgressComplete(working), &mut app);
+
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+    }
+
     #[tokio::test]
     async fn a_notice_replaces_progress() {
         let (mut app, _events) = test_app();
-        handle_app_event(
-            MatuiEvent::ProgressStarted("Working.".to_string(), 0),
-            &mut app,
-        );
+        start_progress(&mut app);
 
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
 
@@ -490,11 +538,8 @@ mod tests {
         let (mut app, _events) = test_app();
         app.set_popup(Popup::Search(Search::default()));
 
-        // work that failed sends an error, but no completion
-        handle_app_event(
-            MatuiEvent::ProgressStarted("Working.".to_string(), 0),
-            &mut app,
-        );
+        // work that failed sends its error before its completion
+        start_progress(&mut app);
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
 
         app.close_popup();

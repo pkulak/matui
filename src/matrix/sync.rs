@@ -15,17 +15,23 @@ use matrix_sdk::ruma::events::{
 use matrix_sdk_ui::room_list_service::State as RoomListState;
 use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 
-use super::Matrix;
 use super::decryption::RoomKey;
 use super::verification::add_verification_handlers;
+use super::{InProgress, Matrix};
 use crate::handler::MatuiEvent::Error;
 use crate::handler::{MatuiEvent, SyncType};
 
 impl Matrix {
     /// Start syncing forever, and show the rooms: a restored session's from
     /// the store right away, and a new login's once the room list has synced.
-    /// Returns false if the room list never syncs.
-    pub(super) async fn start_sync(&self, client: Client, sync_type: SyncType) -> bool {
+    /// The sync's progress closes once the rooms show. Returns false if the
+    /// room list never syncs.
+    pub(super) async fn start_sync(
+        &self,
+        client: Client,
+        sync_type: SyncType,
+        progress: InProgress,
+    ) -> bool {
         if client.available_sliding_sync_versions().await.is_empty() {
             self.send(Error(
                 "Matui needs a homeserver that supports sliding sync (MSC4186), \
@@ -103,6 +109,7 @@ impl Matrix {
             return false;
         }
 
+        drop(progress);
         self.send(MatuiEvent::SyncComplete);
 
         if restored {
@@ -291,7 +298,7 @@ async fn show_backup_downloads<E>(
     matrix: Matrix,
 ) {
     let mut states = pin!(states);
-    let mut downloading = false;
+    let mut progress = None;
 
     while let Some(state) = states.next().await {
         // a missed state is fine: the next one says whether it's still going
@@ -299,21 +306,11 @@ async fn show_backup_downloads<E>(
             continue;
         };
 
-        let now = state == BackupState::Downloading;
-
-        if now == downloading {
-            continue;
+        if state != BackupState::Downloading {
+            progress = None;
+        } else if progress.is_none() {
+            progress = Some(matrix.progress("Downloading encryption keys.", 250));
         }
-
-        downloading = now;
-
-        let event = if downloading {
-            MatuiEvent::ProgressStarted("Downloading encryption keys.".to_string(), 250)
-        } else {
-            MatuiEvent::ProgressComplete
-        };
-
-        matrix.send(event);
     }
 }
 
@@ -360,7 +357,7 @@ mod tests {
             .try_iter()
             .map(|event| match event {
                 Matui(MatuiEvent::ProgressStarted(..)) => "started",
-                Matui(MatuiEvent::ProgressComplete) => "complete",
+                Matui(MatuiEvent::ProgressComplete(_)) => "complete",
                 event => panic!("expected progress, got {:?}", event),
             })
             .collect()

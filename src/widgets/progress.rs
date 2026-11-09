@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::widgets::get_margin;
@@ -12,7 +13,19 @@ const FRAMES: &[&str] = &[
     "⣿", "⡿", "⠿", "⢟", "⠟", "⡛", "⠛", "⠫", "⢋", "⠋", "⠍", "⡉", "⠉", "⠑", "⠡", "⢁",
 ];
 
+/// Which progress popup a completion closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProgressId(u64);
+
+impl ProgressId {
+    pub fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        ProgressId(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 pub struct Progress {
+    pub id: ProgressId,
     text: String,
     tail: String,
     created: Instant,
@@ -20,8 +33,9 @@ pub struct Progress {
 }
 
 impl Progress {
-    pub fn new(text: &str, delay: u64) -> Progress {
+    pub fn new(id: ProgressId, text: &str, delay: u64) -> Progress {
         Progress {
+            id,
             text: text.to_string(),
             tail: "".to_string(),
             created: Instant::now(),

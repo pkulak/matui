@@ -17,7 +17,7 @@ use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
 
 use super::Matrix;
 use super::session::{build_client, persist_session, restore_session};
-use crate::handler::MatuiEvent::{Error, ProgressComplete, ProgressStarted};
+use crate::handler::MatuiEvent::Error;
 use crate::handler::{MatuiEvent, SyncType};
 
 impl Matrix {
@@ -34,7 +34,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(MatuiEvent::SyncStarted(SyncType::Latest));
+            let progress = matrix.progress("Syncing", 0);
 
             let client = match restore_session(session_file.as_path()).await {
                 Ok(client) => client,
@@ -52,7 +52,7 @@ impl Matrix {
                 .expect("could not set client");
 
             matrix.watch_session(client.clone());
-            matrix.start_sync(client, SyncType::Latest).await;
+            matrix.start_sync(client, SyncType::Latest, progress).await;
         });
     }
 
@@ -80,7 +80,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Checking homeserver.".to_string(), 0));
+            let _progress = matrix.progress("Checking homeserver.", 0);
 
             match supports_oidc(&homeserver).await {
                 Ok(true) => matrix.login_oauth(homeserver),
@@ -94,7 +94,7 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Preparing QR login.".to_string(), 0));
+            let _progress = matrix.progress("Preparing QR login.", 0);
 
             let client = matrix.client();
             let oauth = client.oauth();
@@ -171,9 +171,9 @@ impl Matrix {
         self.watch_session(client.clone());
 
         self.send(MatuiEvent::LoginComplete);
-        self.send(MatuiEvent::SyncStarted(SyncType::Initial));
+        let progress = self.progress("Performing initial sync.", 0);
 
-        if self.start_sync(client, SyncType::Initial).await {
+        if self.start_sync(client, SyncType::Initial, progress).await {
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             self.offer_verification();
         }
@@ -186,17 +186,16 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(ProgressStarted("Logging out.".to_string(), 500));
+            let progress = matrix.progress("Logging out.", 500);
 
             if let Err(err) = client.logout().await {
-                matrix.send(ProgressComplete);
                 matrix.send(Error(err.to_string()));
                 return;
             }
 
             let (data_dir, _) = Matrix::dirs();
 
-            matrix.send(ProgressComplete);
+            drop(progress);
 
             match fs::remove_dir_all(&data_dir) {
                 Ok(_) => matrix.send(MatuiEvent::LoggedOut),

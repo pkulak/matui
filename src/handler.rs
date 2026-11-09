@@ -8,7 +8,7 @@ use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::homeserver::Homeserver;
 use crate::widgets::oauth::Oauth;
-use crate::widgets::progress::Progress;
+use crate::widgets::progress::{Progress, ProgressId};
 use crate::widgets::qr::Qr;
 use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
@@ -48,8 +48,8 @@ pub enum MatuiEvent {
     OauthStarted(String, Arc<Notify>),
     /// A picture for a room's chat, or `None` if it couldn't be loaded.
     Picture(OwnedRoomId, OwnedMxcUri, Option<DynamicImage>),
-    ProgressStarted(String, u64),
-    ProgressComplete,
+    ProgressStarted(ProgressId, String, u64),
+    ProgressComplete(ProgressId),
     QrLoginAuth(String),
     QrLoginCode(String),
     QrLoginDone,
@@ -66,7 +66,6 @@ pub enum MatuiEvent {
     RoomSelected(Room),
     Search(String),
     SyncComplete,
-    SyncStarted(SyncType),
     Timeline(AnyTimelineEvent),
     TimelineBatch(Batch),
     Typing(Room, Vec<OwnedUserId>),
@@ -135,7 +134,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.set_popup(Popup::Oauth(Oauth::new(url, cancel)));
         }
         MatuiEvent::LoginStarted => {
-            app.show_notice(Popup::Progress(Progress::new("Logging in", 0)));
+            app.show_notice(Popup::Progress(Progress::new(
+                ProgressId::next(),
+                "Logging in",
+                0,
+            )));
         }
         // closes the OAuth popup too
         MatuiEvent::LoginComplete => app.close_popup(),
@@ -144,10 +147,10 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.picture_event(&room_id, uri.clone(), image.clone());
             }
         }
-        MatuiEvent::ProgressStarted(msg, delay) => {
-            app.show_notice(Popup::Progress(Progress::new(&msg, delay)))
+        MatuiEvent::ProgressStarted(id, msg, delay) => {
+            app.show_notice(Popup::Progress(Progress::new(id, &msg, delay)))
         }
-        MatuiEvent::ProgressComplete => app.complete_progress(),
+        MatuiEvent::ProgressComplete(id) => app.complete_progress(id),
         MatuiEvent::QrLoginAuth(url) => {
             app.set_popup(Popup::Qr(Qr::auth(url)));
         }
@@ -164,15 +167,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.set_popup(Popup::Qr(Qr::check(sender)));
         }
         MatuiEvent::QrLoginSyncing => {
-            app.set_popup(Popup::Progress(Progress::new("Syncing secrets.", 0)));
-        }
-        MatuiEvent::Recover(key) => {
-            app.show_notice(Popup::Progress(Progress::new(
-                "Fetching encryption keys.",
+            app.set_popup(Popup::Progress(Progress::new(
+                ProgressId::next(),
+                "Syncing secrets.",
                 0,
             )));
-            app.matrix.recover(&key);
         }
+        MatuiEvent::Recover(key) => app.matrix.recover(&key),
 
         // if we just left the room we're looking at, move to the top one
         MatuiEvent::RoomLeft(room) => {
@@ -227,18 +228,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.search_event(&search_term);
             }
         }
-        MatuiEvent::SyncStarted(st) => {
-            match st {
-                SyncType::Initial => app.show_notice(Popup::Progress(Progress::new(
-                    "Performing initial sync.",
-                    0,
-                ))),
-                SyncType::Latest => app.show_notice(Popup::Progress(Progress::new("Syncing", 0))),
-            };
-        }
         MatuiEvent::SyncComplete => {
-            app.complete_progress();
-
             // start in the room chooser, so no room is open (and read) until
             // someone picks one
             let rooms = Rooms::new(app.matrix.clone(), None);

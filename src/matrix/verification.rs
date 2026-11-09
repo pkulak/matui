@@ -31,11 +31,19 @@ impl Matrix {
         let key = key.to_string();
 
         self.spawn(async move {
-            match matrix.client().encryption().recovery().recover(&key).await {
-                Ok(()) => matrix.send(MatuiEvent::ProgressComplete),
-                Err(_) => matrix.send(MatuiEvent::Error(
+            let _progress = matrix.progress("Fetching encryption keys.", 0);
+
+            if matrix
+                .client()
+                .encryption()
+                .recovery()
+                .recover(&key)
+                .await
+                .is_err()
+            {
+                matrix.send(MatuiEvent::Error(
                     "Could not recover encryption keys.".to_string(),
-                )),
+                ));
             }
         });
     }
