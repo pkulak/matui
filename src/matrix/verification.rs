@@ -1,5 +1,3 @@
-use std::sync::mpsc::Sender;
-
 use futures::stream::StreamExt;
 use log::{error, info};
 use matrix_sdk::Client;
@@ -13,9 +11,6 @@ use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessa
 use tokio::task::JoinHandle;
 
 use super::Matrix;
-use crate::app::App;
-use crate::event::Event;
-use crate::event::Event::Matui;
 use crate::handler::MatuiEvent;
 use crate::handler::MatuiEvent::{
     Error, VerificationAnsweredElsewhere, VerificationCancelled, VerificationCompleted,
@@ -24,21 +19,21 @@ use crate::handler::MatuiEvent::{
 
 impl Matrix {
     pub fn offer_verification(&self) {
-        App::spawn(offer_verification(self.client(), App::get_sender()));
+        self.spawn(offer_verification(self.clone()));
     }
 
     pub fn verify(&self) {
-        App::spawn(request_verification(self.client(), App::get_sender()));
+        self.spawn(request_verification(self.clone()));
     }
 
     pub fn recover(&self, key: &str) {
         let matrix = self.clone();
         let key = key.to_string();
 
-        App::spawn(async move {
+        self.spawn(async move {
             match matrix.client().encryption().recovery().recover(&key).await {
-                Ok(()) => App::send(MatuiEvent::ProgressComplete),
-                Err(_) => App::send(MatuiEvent::Error(
+                Ok(()) => matrix.send(MatuiEvent::ProgressComplete),
+                Err(_) => matrix.send(MatuiEvent::Error(
                     "Could not recover encryption keys.".to_string(),
                 )),
             }
@@ -48,24 +43,26 @@ impl Matrix {
     /// Accept a request from another device. Matui has followed it since
     /// prompting, and goes on into the emoji comparison.
     pub fn accept_verification(&self, request: VerificationRequest) {
-        App::spawn(accept_request(request, App::get_sender()));
+        self.spawn(accept_request(request, self.clone()));
     }
 
     pub fn decline_verification(&self, request: VerificationRequest) {
-        App::spawn(decline_request(request));
+        self.spawn(decline_request(request));
     }
 
     pub fn confirm_verification(&self, sas: SasVerification) {
-        App::spawn(async move {
+        let matrix = self.clone();
+
+        self.spawn(async move {
             if let Err(err) = sas.confirm().await {
                 error!("could not verify: {}", err);
-                App::send(Error(format!("Could not verify: {}", err)));
+                matrix.send(Error(format!("Could not verify: {}", err)));
             }
         });
     }
 
     pub fn mismatched_verification(&self, sas: SasVerification) {
-        App::spawn(async move {
+        self.spawn(async move {
             if let Err(err) = sas.mismatch().await {
                 error!("could not cancel SAS verification: {}", err)
             } else {
@@ -75,8 +72,9 @@ impl Matrix {
     }
 }
 
-pub(super) fn add_verification_handlers(client: Client, sender: Sender<Event>) {
-    let to_device_sender = sender.clone();
+pub(super) fn add_verification_handlers(matrix: &Matrix) {
+    let client = matrix.client();
+    let to_device_matrix = matrix.clone();
 
     client.add_event_handler(
         move |ev: ToDeviceKeyVerificationRequestEvent, client: Client| async move {
@@ -85,11 +83,13 @@ pub(super) fn add_verification_handlers(client: Client, sender: Sender<Event>) {
                 .get_verification_request(&ev.sender, &ev.content.transaction_id)
                 .await
             {
-                Some(request) => ask_to_accept(request, &to_device_sender),
+                Some(request) => ask_to_accept(request, &to_device_matrix),
                 None => error!("could not create request"),
             }
         },
     );
+
+    let matrix = matrix.clone();
 
     client.add_event_handler(
         move |ev: OriginalSyncRoomMessageEvent, client: Client| async move {
@@ -99,7 +99,7 @@ pub(super) fn add_verification_handlers(client: Client, sender: Sender<Event>) {
                     .get_verification_request(&ev.sender, &ev.event_id)
                     .await
                 {
-                    Some(request) => ask_to_accept(request, &sender),
+                    Some(request) => ask_to_accept(request, &matrix),
                     None => error!("could not create request"),
                 }
             }
@@ -110,7 +110,7 @@ pub(super) fn add_verification_handlers(client: Client, sender: Sender<Event>) {
 /// Ask whether to accept a request from another device. Only an incoming
 /// request still waiting for an answer is `Requested`: one we sent ourselves
 /// (which reaches us when it goes to all our devices) starts out `Created`.
-fn ask_to_accept(request: VerificationRequest, sender: &Sender<Event>) {
+fn ask_to_accept(request: VerificationRequest, matrix: &Matrix) {
     let VerificationRequestState::Requested {
         other_device_data: device,
         ..
@@ -140,21 +140,16 @@ fn ask_to_accept(request: VerificationRequest, sender: &Sender<Event>) {
         )
     };
 
-    sender
-        .send(Matui(VerificationRequested(request.clone(), message)))
-        .expect("could not send verification request event");
+    matrix.send(VerificationRequested(request.clone(), message));
 
     // follow it while the prompt is up too, so a cancellation closes it
-    tokio::spawn(follow_request(request, sender.clone()));
+    matrix.spawn(follow_request(request, matrix.clone()));
 }
 
-async fn accept_request(request: VerificationRequest, sender: Sender<Event>) {
+async fn accept_request(request: VerificationRequest, matrix: Matrix) {
     if let Err(err) = request.accept().await {
         error!("could not accept verification request: {}", err);
-        let _ = sender.send(Matui(Error(format!(
-            "Could not accept verification: {}",
-            err
-        ))));
+        matrix.send(Error(format!("Could not accept verification: {}", err)));
     }
 }
 
@@ -162,8 +157,8 @@ async fn accept_request(request: VerificationRequest, sender: Sender<Event>) {
 /// cross-signing keys, such as the first session on an account. Asking
 /// another session only works while it's open, so the user picks when, and
 /// the offer only includes it when there's a cross-signed session to ask.
-async fn offer_verification(client: Client, sender: Sender<Event>) {
-    let encryption = client.encryption();
+async fn offer_verification(matrix: Matrix) {
+    let encryption = matrix.client().encryption();
 
     if encryption
         .cross_signing_status()
@@ -182,7 +177,7 @@ async fn offer_verification(client: Client, sender: Sender<Event>) {
         }
     };
 
-    let _ = sender.send(Matui(VerificationOffered { other_session }));
+    matrix.send(VerificationOffered { other_session });
 }
 
 /// Ask the user's other cross-signed sessions to verify this one. With none,
@@ -190,7 +185,9 @@ async fn offer_verification(client: Client, sender: Sender<Event>) {
 /// stays pending for ten minutes. Until then, the SDK cancels it along with
 /// any request the user starts from another device. So it's only offered
 /// when another session can answer.
-async fn request_verification(client: Client, sender: Sender<Event>) {
+async fn request_verification(matrix: Matrix) {
+    let client = matrix.client();
+
     let Some(user_id) = client.user_id() else {
         return;
     };
@@ -202,7 +199,7 @@ async fn request_verification(client: Client, sender: Sender<Event>) {
                 .await
             {
                 Err(err) => error!("could not request verification: {}", err),
-                Ok(request) => follow_request(request, sender).await,
+                Ok(request) => follow_request(request, matrix).await,
             }
         }
         Ok(None) => error!("no user identity"),
@@ -214,7 +211,7 @@ async fn request_verification(client: Client, sender: Sender<Event>) {
 /// request starts it once the other side is ready. Some clients, such as
 /// Element X, start one too, and if theirs wins, it replaces ours, so this
 /// goes on to follow the replacement.
-async fn follow_request(request: VerificationRequest, sender: Sender<Event>) {
+async fn follow_request(request: VerificationRequest, matrix: Matrix) {
     let mut stream = request.changes();
     let mut comparison: Option<JoinHandle<()>> = None;
 
@@ -227,17 +224,14 @@ async fn follow_request(request: VerificationRequest, sender: Sender<Event>) {
                     && let Err(err) = request.start_sas().await
                 {
                     error!("could not start SAS verification: {}", err);
-                    let _ = sender.send(Matui(Error(format!(
-                        "Could not start verification: {}",
-                        err
-                    ))));
+                    matrix.send(Error(format!("Could not start verification: {}", err)));
                     break;
                 }
             }
             VerificationRequestState::Transitioned { verification } => {
                 // We only support SAS verification.
                 if let Verification::SasV1(s) = verification {
-                    let new = tokio::spawn(sas_verification_handler(s, sender.clone()));
+                    let new = matrix.spawn(sas_verification_handler(s, matrix.clone()));
 
                     if let Some(replaced) = comparison.replace(new) {
                         replaced.abort();
@@ -259,7 +253,7 @@ async fn follow_request(request: VerificationRequest, sender: Sender<Event>) {
                 };
 
                 if let Some(event) = event {
-                    let _ = sender.send(Matui(event));
+                    matrix.send(event);
                 }
 
                 break;
@@ -275,7 +269,7 @@ async fn decline_request(request: VerificationRequest) {
     }
 }
 
-async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
+async fn sas_verification_handler(sas: SasVerification, matrix: Matrix) {
     sas.accept().await.unwrap();
 
     let mut stream = sas.changes();
@@ -290,16 +284,12 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
 
                 let emoji_slice = emojis.expect("only emoji verification is supported").emojis;
 
-                sender
-                    .send(Matui(VerificationStarted(sas.clone(), emoji_slice)))
-                    .expect("could not send sas started event");
+                matrix.send(VerificationStarted(sas.clone(), emoji_slice));
             }
             SasState::Done { .. } => {
                 info!("verification done");
 
-                sender
-                    .send(Matui(VerificationCompleted))
-                    .expect("could not send sas completed event");
+                matrix.send(VerificationCompleted);
             }
             SasState::Started { .. } => info!("verification started"),
             SasState::Accepted { .. } => info!("verification accepted"),
@@ -307,7 +297,7 @@ async fn sas_verification_handler(sas: SasVerification, sender: Sender<Event>) {
             SasState::Cancelled(info) => {
                 info!("verification cancelled: {}", info.reason());
 
-                let _ = sender.send(Matui(VerificationCancelled(info)));
+                matrix.send(VerificationCancelled(info));
                 break;
             }
             SasState::Created { .. } => info!("verification created"),
@@ -327,11 +317,23 @@ mod tests {
     };
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use matrix_sdk::test_utils::mocks::encryption::PendingToDeviceMessages;
+    use tokio::runtime::Handle;
     use wiremock::ResponseTemplate;
 
     use super::*;
+    use crate::event::Event;
+    use crate::event::Event::Matui;
 
     type Queue = Arc<Mutex<PendingToDeviceMessages>>;
+
+    /// A `Matrix` for this client, sending to the returned receiver.
+    fn matrix_for(client: &Client) -> (Matrix, Receiver<Event>) {
+        let (sender, events) = channel();
+        let matrix = Matrix::new(sender, Handle::current());
+        matrix.client.set(client.clone()).unwrap();
+
+        (matrix, events)
+    }
 
     /// Two sessions for one user that know each other's devices: matui,
     /// with its handlers sending to the returned receiver, and another
@@ -361,8 +363,8 @@ mod tests {
             .set_up_new_device_for_encryption(&matui, other_device, vec![])
             .await;
 
-        let (sender, events) = channel();
-        add_verification_handlers(matui.clone(), sender);
+        let (matrix, events) = matrix_for(&matui);
+        add_verification_handlers(&matrix);
 
         (server, matui, other, Queue::default(), events)
     }
@@ -475,8 +477,8 @@ mod tests {
             .unwrap();
 
         let flow_id = request.flow_id().to_owned();
-        let (sender, events) = channel();
-        tokio::spawn(follow_request(request, sender));
+        let (matrix, events) = matrix_for(matui);
+        tokio::spawn(follow_request(request, matrix));
 
         relay(server, queue, other).await;
         other
@@ -539,8 +541,8 @@ mod tests {
         assert!(!received.is_ready());
         assert!(!sent.is_ready());
 
-        let (sender, _events) = channel();
-        accept_request(received, sender).await;
+        let (matrix, _events) = matrix_for(&matui);
+        accept_request(received, matrix).await;
         relay(&server, &queue, &other).await;
 
         assert!(sent.is_ready());
@@ -637,8 +639,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (sender, mine) = channel();
-        tokio::spawn(follow_request(pending, sender));
+        let (matrix, mine) = matrix_for(&matui);
+        tokio::spawn(follow_request(pending, matrix));
 
         // the user starts another from the other device, before answering
         other
@@ -733,8 +735,8 @@ mod tests {
             .unwrap();
 
         let flow_id = request.flow_id().to_owned();
-        let (sender, events) = channel();
-        tokio::spawn(follow_request(request, sender));
+        let (matrix, events) = matrix_for(&matui);
+        tokio::spawn(follow_request(request, matrix));
 
         relay(&server, &queue, &other).await;
         let theirs = other
@@ -865,8 +867,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (sender, events) = channel();
-        offer_verification(matui, sender).await;
+        let (matrix, events) = matrix_for(&matui);
+        offer_verification(matrix).await;
 
         assert!(events.try_recv().is_err());
     }
@@ -875,8 +877,8 @@ mod tests {
     async fn offers_only_recovery_without_another_verified_session() {
         let (_server, matui, _other, _queue, _events) = two_sessions().await;
 
-        let (sender, events) = channel();
-        offer_verification(matui, sender).await;
+        let (matrix, events) = matrix_for(&matui);
+        offer_verification(matrix).await;
 
         let event = events.try_recv().expect("an offer");
         assert!(
@@ -896,8 +898,8 @@ mod tests {
         let (server, matui, other, _queue, _events) = two_sessions().await;
         cross_sign_other(&server, &matui, &other).await;
 
-        let (sender, events) = channel();
-        offer_verification(matui, sender).await;
+        let (matrix, events) = matrix_for(&matui);
+        offer_verification(matrix).await;
 
         let event = events.try_recv().expect("an offer");
         assert!(
@@ -922,8 +924,8 @@ mod tests {
 
         cross_sign_other(&server, &matui, &other).await;
 
-        let (sender, _events) = channel();
-        tokio::spawn(request_verification(matui.clone(), sender));
+        let (matrix, _events) = matrix_for(&matui);
+        tokio::spawn(request_verification(matrix));
 
         let asked = async {
             loop {

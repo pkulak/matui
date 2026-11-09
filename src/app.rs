@@ -70,11 +70,11 @@ pub struct App {
 
 impl App {
     pub fn new(send: Sender<Event>, handle: Handle) -> Self {
+        let matrix = Matrix::new(send.clone(), handle.clone());
+
         // Save the sender and handle for future threads.
         SENDER.set(send).expect("could not set sender");
         HANDLE.set(handle).expect("could not set handle");
-
-        let matrix = Matrix::default();
 
         Self {
             running: true,

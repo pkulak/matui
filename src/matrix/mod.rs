@@ -16,8 +16,10 @@ pub use decryption::RoomKey;
 pub use messages::AfterDownload;
 pub use rooms::Moderation;
 
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 
 use log::error;
 use matrix_sdk::Client;
@@ -26,8 +28,11 @@ use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedUserId};
 use matrix_sdk_ui::sync_service::SyncService;
 use once_cell::sync::OnceCell;
+use tokio::runtime::Handle;
+use tokio::task::JoinHandle;
 
-use crate::app::App;
+use crate::event::Event;
+use crate::handler::MatuiEvent;
 use notify::Notify;
 use roomcache::{DecoratedRoom, RoomCache};
 
@@ -40,10 +45,12 @@ pub struct Matrix {
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
     sync_started: Arc<OnceCell<MilliSecondsSinceUnixEpoch>>,
+    sender: Sender<Event>,
+    handle: Handle,
 }
 
-impl Default for Matrix {
-    fn default() -> Self {
+impl Matrix {
+    pub fn new(sender: Sender<Event>, handle: Handle) -> Self {
         Matrix {
             client: Arc::new(OnceCell::default()),
             sync_service: Arc::new(OnceCell::default()),
@@ -51,11 +58,24 @@ impl Default for Matrix {
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
             sync_started: Arc::new(OnceCell::default()),
+            sender,
+            handle,
         }
     }
-}
 
-impl Matrix {
+    fn send(&self, event: MatuiEvent) {
+        self.sender
+            .send(Event::Matui(event))
+            .expect("could not send event");
+    }
+
+    fn spawn<F>(&self, future: F) -> JoinHandle<()>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.handle.spawn(future)
+    }
+
     fn dirs() -> (PathBuf, PathBuf) {
         let data_dir = dirs::data_dir()
             .expect("no data directory found")
@@ -87,14 +107,14 @@ impl Matrix {
     pub fn timeline_event(&self, event: AnyTimelineEvent) {
         let matrix = self.clone();
 
-        App::spawn(async move {
+        self.spawn(async move {
             let Some(&sync_started) = matrix.sync_started.get() else {
                 return;
             };
 
             if let Err(e) = matrix
                 .notify
-                .timeline_event(matrix.client(), event, sync_started)
+                .timeline_event(&matrix, event, sync_started)
                 .await
             {
                 error!("could not send notification: {}", e);

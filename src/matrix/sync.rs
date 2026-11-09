@@ -1,5 +1,4 @@
 use std::pin::pin;
-use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use futures::stream::{Stream, StreamExt};
@@ -19,9 +18,6 @@ use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 use super::Matrix;
 use super::decryption::RoomKey;
 use super::verification::add_verification_handlers;
-use crate::app::App;
-use crate::event::Event;
-use crate::event::Event::Matui;
 use crate::handler::MatuiEvent::Error;
 use crate::handler::{MatuiEvent, SyncType};
 
@@ -31,7 +27,7 @@ impl Matrix {
     /// Returns false if the room list never syncs.
     pub(super) async fn start_sync(&self, client: Client, sync_type: SyncType) -> bool {
         if client.available_sliding_sync_versions().await.is_empty() {
-            App::send(Error(
+            self.send(Error(
                 "Matui needs a homeserver that supports sliding sync (MSC4186), \
                  and this one doesn't."
                     .to_string(),
@@ -40,12 +36,12 @@ impl Matrix {
         }
 
         // handlers must be in place before the first response arrives
-        add_default_handlers(client.clone());
-        add_verification_handlers(client.clone(), App::get_sender());
-        follow_room_keys(&client).await;
-        App::spawn(show_backup_downloads(
+        add_default_handlers(self, &client);
+        add_verification_handlers(self);
+        follow_room_keys(self, &client).await;
+        self.spawn(show_backup_downloads(
             client.encryption().backups().state_stream(),
-            App::get_sender(),
+            self.clone(),
         ));
 
         let sync_service = match SyncService::builder(client.clone())
@@ -55,7 +51,7 @@ impl Matrix {
         {
             Ok(service) => self.sync_service.get_or_init(|| service),
             Err(err) => {
-                App::send(Error(err.to_string()));
+                self.send(Error(err.to_string()));
                 return false;
             }
         };
@@ -67,7 +63,7 @@ impl Matrix {
         let all_rooms = match room_list.all_rooms().await {
             Ok(all_rooms) => all_rooms,
             Err(err) => {
-                App::send(Error(err.to_string()));
+                self.send(Error(err.to_string()));
                 return false;
             }
         };
@@ -101,13 +97,13 @@ impl Matrix {
         let (loaded, cache_loaded) = tokio::sync::oneshot::channel();
         let room_cache = self.room_cache.clone();
 
-        App::spawn(async move { room_cache.follow(&all_rooms, loaded).await });
+        self.spawn(async move { room_cache.follow(&all_rooms, loaded).await });
 
         if cache_loaded.await.is_err() {
             return false;
         }
 
-        App::send(MatuiEvent::SyncComplete);
+        self.send(MatuiEvent::SyncComplete);
 
         if restored {
             sync_service.start().await;
@@ -119,7 +115,7 @@ impl Matrix {
 
         // prompt for any invites that arrived while we weren't running
         for room in client.invited_rooms() {
-            send_invite_event(room).await;
+            send_invite_event(self, room).await;
         }
 
         true
@@ -147,8 +143,9 @@ impl Matrix {
         );
 
         let cell = self.sync_service.clone();
+        let matrix = self.clone();
 
-        App::spawn(async move {
+        self.spawn(async move {
             let mut failures = 0;
 
             while let Some(state) = states.next().await {
@@ -171,7 +168,7 @@ impl Matrix {
                 error!("sync failed ({} in a row): {}", failures, failure);
 
                 if failures == FAILURES_BEFORE_POPUP {
-                    App::send(Error(format!("Sync failed: {}", failure)));
+                    matrix.send(Error(format!("Sync failed: {}", failure)));
                 }
 
                 // a first Offline is usually a lost connection, which the
@@ -203,7 +200,7 @@ impl Matrix {
         let room_id = room.room_id().to_owned();
         let lock = self.subscription_lock.clone();
 
-        App::spawn(async move {
+        self.spawn(async move {
             // keep quick room switches from finishing out of order
             let _guard = lock.lock().await;
             room_list.set_room_subscriptions(&[&room_id]).await;
@@ -211,53 +208,58 @@ impl Matrix {
     }
 }
 
-fn add_default_handlers(client: Client) {
-    client.add_event_handler(|event: AnySyncTimelineEvent, room: Room| async move {
-        App::get_sender()
-            .send(Matui(MatuiEvent::Timeline(
-                event.into_full_event(room.room_id().into()),
-            )))
-            .expect("could not send timeline event");
+fn add_default_handlers(matrix: &Matrix, client: &Client) {
+    let handler = matrix.clone();
+    client.add_event_handler(move |event: AnySyncTimelineEvent, room: Room| async move {
+        handler.send(MatuiEvent::Timeline(
+            event.into_full_event(room.room_id().into()),
+        ));
     });
 
-    client.add_event_handler(|ev: StrippedRoomMemberEvent, room: Room| async move {
+    let handler = matrix.clone();
+    client.add_event_handler(move |ev: StrippedRoomMemberEvent, room: Room| async move {
         if ev.content.membership == MembershipState::Invite
             && ev.state_key == room.own_user_id()
             && room.state() == RoomState::Invited
         {
-            send_invite_event(room).await;
+            send_invite_event(&handler, room).await;
         }
     });
 
-    client.add_event_handler(|event: AnySyncEphemeralRoomEvent, room: Room| async move {
-        if room.state() != RoomState::Joined {
-            return;
-        }
+    let handler = matrix.clone();
+    client.add_event_handler(
+        move |event: AnySyncEphemeralRoomEvent, room: Room| async move {
+            if room.state() != RoomState::Joined {
+                return;
+            }
 
-        match event {
-            AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent { content: c, .. }) => {
-                App::get_sender()
-                    .send(Matui(MatuiEvent::Typing(room, c.user_ids)))
-                    .expect("could not send typing event");
-            }
-            AnySyncEphemeralRoomEvent::Receipt(SyncEphemeralRoomEvent { content: c, .. }) => {
-                App::get_sender()
-                    .send(Matui(MatuiEvent::Receipt(room, c)))
-                    .expect("could not send typing event");
-            }
-            _ => {}
-        };
-    });
+            match event {
+                AnySyncEphemeralRoomEvent::Typing(SyncEphemeralRoomEvent {
+                    content: c, ..
+                }) => {
+                    handler.send(MatuiEvent::Typing(room, c.user_ids));
+                }
+                AnySyncEphemeralRoomEvent::Receipt(SyncEphemeralRoomEvent {
+                    content: c, ..
+                }) => {
+                    handler.send(MatuiEvent::Receipt(room, c));
+                }
+                _ => {}
+            };
+        },
+    );
 }
 
 /// Tell the UI about every room key that arrives, so the open room can
 /// decrypt what it couldn't before.
-async fn follow_room_keys(client: &Client) {
+async fn follow_room_keys(matrix: &Matrix, client: &Client) {
     let Some(stream) = client.encryption().room_keys_received_stream().await else {
         return;
     };
 
-    App::spawn(async move {
+    let handler = matrix.clone();
+
+    matrix.spawn(async move {
         let mut stream = pin!(stream);
 
         while let Some(keys) = stream.next().await {
@@ -276,7 +278,7 @@ async fn follow_room_keys(client: &Client) {
                 }
             };
 
-            App::send(MatuiEvent::RoomKeys(keys));
+            handler.send(MatuiEvent::RoomKeys(keys));
         }
     });
 }
@@ -286,7 +288,7 @@ async fn follow_room_keys(client: &Client) {
 /// nothing it can decrypt yet.
 async fn show_backup_downloads<E>(
     states: impl Stream<Item = Result<BackupState, E>>,
-    sender: Sender<Event>,
+    matrix: Matrix,
 ) {
     let mut states = pin!(states);
     let mut downloading = false;
@@ -311,11 +313,11 @@ async fn show_backup_downloads<E>(
             MatuiEvent::ProgressComplete
         };
 
-        let _ = sender.send(Matui(event));
+        matrix.send(event);
     }
 }
 
-async fn send_invite_event(room: Room) {
+async fn send_invite_event(matrix: &Matrix, room: Room) {
     let name = match room.display_name().await {
         Ok(name) => name.to_string(),
         Err(_) => room.room_id().to_string(),
@@ -329,7 +331,7 @@ async fn send_invite_event(room: Room) {
         Err(_) => "Someone".to_string(),
     };
 
-    App::send(MatuiEvent::Invited(
+    matrix.send(MatuiEvent::Invited(
         room,
         format!("{} invited you to {}. Join?", inviter, name),
     ));
@@ -340,8 +342,10 @@ mod tests {
     use std::sync::mpsc::channel;
 
     use futures::stream;
+    use tokio::runtime::Handle;
 
     use super::*;
+    use crate::event::Event::Matui;
 
     /// The progress events sent for these backup states, with `None` for
     /// a state the stream missed.
@@ -349,7 +353,8 @@ mod tests {
         let (sender, events) = channel();
         let states = states.into_iter().map(|s| s.ok_or(()));
 
-        show_backup_downloads(stream::iter(states), sender).await;
+        let matrix = Matrix::new(sender, Handle::current());
+        show_backup_downloads(stream::iter(states), matrix).await;
 
         events
             .try_iter()

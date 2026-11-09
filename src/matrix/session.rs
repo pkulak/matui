@@ -16,7 +16,6 @@ use rand::{RngExt, distr::Alphanumeric};
 use serde::{Deserialize, Serialize};
 
 use super::Matrix;
-use crate::app::App;
 use crate::handler::MatuiEvent::Error;
 
 /// The data needed to re-build a client.
@@ -51,7 +50,9 @@ impl Matrix {
     /// Keep the session file up to date as tokens refresh (OAuth access
     /// tokens are short-lived).
     pub(super) fn watch_session(&self, client: Client) {
-        App::spawn(async move {
+        let matrix = self.clone();
+
+        self.spawn(async move {
             let mut changes = client.subscribe_to_session_changes();
 
             while let Ok(change) = changes.recv().await {
@@ -65,7 +66,7 @@ impl Matrix {
                     }
                     // future improvement: wipe local data and return to
                     // the signin form
-                    SessionChange::UnknownToken(_) => App::send(Error(
+                    SessionChange::UnknownToken(_) => matrix.send(Error(
                         "Your session has expired. Please sign in again.".to_string(),
                     )),
                 }

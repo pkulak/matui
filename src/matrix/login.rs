@@ -17,7 +17,6 @@ use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
 
 use super::Matrix;
 use super::session::{build_client, persist_session, restore_session};
-use crate::app::App;
 use crate::handler::MatuiEvent::{Error, ProgressComplete, ProgressStarted};
 use crate::handler::{MatuiEvent, SyncType};
 
@@ -28,19 +27,19 @@ impl Matrix {
         let (_, session_file) = Matrix::dirs();
 
         if !session_file.exists() {
-            App::send(MatuiEvent::LoginRequired);
+            self.send(MatuiEvent::LoginRequired);
             return;
         }
 
         let matrix = self.clone();
 
-        App::spawn(async move {
-            App::send(MatuiEvent::SyncStarted(SyncType::Latest));
+        self.spawn(async move {
+            matrix.send(MatuiEvent::SyncStarted(SyncType::Latest));
 
             let client = match restore_session(session_file.as_path()).await {
                 Ok(client) => client,
                 Err(err) => {
-                    App::send(Error(err.to_string()));
+                    matrix.send(Error(err.to_string()));
                     return;
                 }
             };
@@ -64,12 +63,12 @@ impl Matrix {
         let pass = password.to_string();
         let matrix = self.clone();
 
-        App::spawn(async move {
-            App::send(MatuiEvent::LoginStarted);
+        self.spawn(async move {
+            matrix.send(MatuiEvent::LoginStarted);
 
             match login(&data_dir, &session_file, &homeserver, &user, &pass).await {
                 Ok(client) => matrix.finish_signin(client).await,
-                Err(err) => App::send(Error(err.to_string())),
+                Err(err) => matrix.send(Error(err.to_string())),
             }
         });
     }
@@ -80,13 +79,13 @@ impl Matrix {
     pub fn start_login(&self, homeserver: String) {
         let matrix = self.clone();
 
-        App::spawn(async move {
-            App::send(ProgressStarted("Checking homeserver.".to_string(), 0));
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Checking homeserver.".to_string(), 0));
 
             match supports_oidc(&homeserver).await {
                 Ok(true) => matrix.login_oauth(homeserver),
-                Ok(false) => App::send(MatuiEvent::PasswordLoginRequired(homeserver)),
-                Err(err) => App::send(Error(err.to_string())),
+                Ok(false) => matrix.send(MatuiEvent::PasswordLoginRequired(homeserver)),
+                Err(err) => matrix.send(Error(err.to_string())),
             }
         });
     }
@@ -94,41 +93,44 @@ impl Matrix {
     pub fn grant_login_with_qr(&self) {
         let matrix = self.clone();
 
-        App::spawn(async move {
-            App::send(ProgressStarted("Preparing QR login.".to_string(), 0));
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Preparing QR login.".to_string(), 0));
 
             let client = matrix.client();
             let oauth = client.oauth();
             let grant = oauth.grant_login_with_qr_code().generate();
             let mut progress = grant.subscribe_to_progress();
+            let progress_matrix = matrix.clone();
 
-            let progress_task = tokio::spawn(async move {
+            let progress_task = matrix.spawn(async move {
+                let matrix = progress_matrix;
+
                 while let Some(state) = progress.next().await {
                     match state {
                         GrantLoginProgress::Starting => {}
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrReady(data),
                         ) => match render_qr_code(data.to_bytes()) {
-                            Ok(code) => App::send(MatuiEvent::QrLoginCode(code)),
-                            Err(err) => App::send(Error(err.to_string())),
+                            Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code)),
+                            Err(err) => matrix.send(Error(err.to_string())),
                         },
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrScanned(sender),
-                        ) => App::send(MatuiEvent::QrLoginScanned(sender)),
+                        ) => matrix.send(MatuiEvent::QrLoginScanned(sender)),
                         GrantLoginProgress::WaitingForAuth {
                             verification_uri,
                             continuation_sender,
                         } => {
                             let url = verification_uri.to_string();
                             let _ = open::that_detached(&url);
-                            App::send(MatuiEvent::QrLoginAuth(url));
+                            matrix.send(MatuiEvent::QrLoginAuth(url));
 
                             if let Err(err) = continuation_sender.confirm().await {
-                                App::send(Error(err.to_string()));
+                                matrix.send(Error(err.to_string()));
                             }
                         }
                         GrantLoginProgress::SyncingSecrets => {
-                            App::send(ProgressStarted("Syncing secrets.".to_string(), 0));
+                            matrix.send(ProgressStarted("Syncing secrets.".to_string(), 0));
                         }
                         GrantLoginProgress::Done => {}
                     }
@@ -136,8 +138,8 @@ impl Matrix {
             });
 
             match grant.await {
-                Ok(()) => App::send(MatuiEvent::QrLoginDone),
-                Err(err) => App::send(Error(err.to_string())),
+                Ok(()) => matrix.send(MatuiEvent::QrLoginDone),
+                Err(err) => matrix.send(Error(err.to_string())),
             }
 
             progress_task.abort();
@@ -148,14 +150,14 @@ impl Matrix {
         let (data_dir, session_file) = Matrix::dirs();
         let matrix = self.clone();
 
-        App::spawn(async move {
-            App::send(MatuiEvent::LoginStarted);
+        self.spawn(async move {
+            matrix.send(MatuiEvent::LoginStarted);
 
-            match login_oauth_flow(&data_dir, &session_file, &homeserver).await {
+            match login_oauth_flow(&matrix, &data_dir, &session_file, &homeserver).await {
                 Ok(Some(client)) => matrix.finish_signin(client).await,
                 // cancelled from the waiting popup; back to the form
-                Ok(None) => App::send(MatuiEvent::LoginRequired),
-                Err(err) => App::send(Error(err.to_string())),
+                Ok(None) => matrix.send(MatuiEvent::LoginRequired),
+                Err(err) => matrix.send(Error(err.to_string())),
             }
         });
     }
@@ -168,8 +170,8 @@ impl Matrix {
 
         self.watch_session(client.clone());
 
-        App::send(MatuiEvent::LoginComplete);
-        App::send(MatuiEvent::SyncStarted(SyncType::Initial));
+        self.send(MatuiEvent::LoginComplete);
+        self.send(MatuiEvent::SyncStarted(SyncType::Initial));
 
         if self.start_sync(client, SyncType::Initial).await {
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
@@ -181,23 +183,24 @@ impl Matrix {
     /// "remove session") and wipe all local state, then quit.
     pub fn logout(&self) {
         let client = self.client();
+        let matrix = self.clone();
 
-        App::spawn(async move {
-            App::send(ProgressStarted("Logging out.".to_string(), 500));
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Logging out.".to_string(), 500));
 
             if let Err(err) = client.logout().await {
-                App::send(ProgressComplete);
-                App::send(Error(err.to_string()));
+                matrix.send(ProgressComplete);
+                matrix.send(Error(err.to_string()));
                 return;
             }
 
             let (data_dir, _) = Matrix::dirs();
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
 
             match fs::remove_dir_all(&data_dir) {
-                Ok(_) => App::send(MatuiEvent::LoggedOut),
-                Err(err) => App::send(Error(err.to_string())),
+                Ok(_) => matrix.send(MatuiEvent::LoggedOut),
+                Err(err) => matrix.send(Error(err.to_string())),
             }
         });
     }
@@ -258,6 +261,7 @@ async fn supports_oidc(homeserver: &str) -> anyhow::Result<bool> {
 /// Run the browser-based OAuth login flow. Returns None if the user
 /// cancelled from the waiting popup.
 async fn login_oauth_flow(
+    matrix: &Matrix,
     data_dir: &Path,
     session_file: &Path,
     homeserver: &str,
@@ -299,7 +303,7 @@ async fn login_oauth_flow(
 
     let cancel = Arc::new(tokio::sync::Notify::new());
 
-    App::send(MatuiEvent::OauthStarted(
+    matrix.send(MatuiEvent::OauthStarted(
         auth_data.url.to_string(),
         cancel.clone(),
     ));

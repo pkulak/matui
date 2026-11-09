@@ -28,7 +28,6 @@ use tokio::task::AbortHandle;
 use super::Matrix;
 use super::mentions;
 use super::mime::mime_from_path;
-use crate::app::App;
 use crate::handler::MatuiEvent::{Error, ProgressComplete, ProgressStarted};
 use crate::handler::{Batch, MatuiEvent};
 use crate::media::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, decode_upright, get_attachment_info};
@@ -53,8 +52,9 @@ impl Matrix {
         const RETRY_DELAY: Duration = Duration::from_secs(3);
 
         let limit = UInt::new(limit.try_into().unwrap_or(25)).expect("invalid paging limit");
+        let matrix = self.clone();
 
-        let task = App::get_handle().spawn(async move {
+        let task = self.spawn(async move {
             let messages = loop {
                 let mut options = MessagesOptions::new(Direction::Backward);
                 options.limit = limit;
@@ -68,7 +68,7 @@ impl Matrix {
                         tokio::time::sleep(RETRY_DELAY).await;
                     }
                     Err(err) => {
-                        App::send(Error(err.to_string()));
+                        matrix.send(Error(err.to_string()));
                         return;
                     }
                 }
@@ -90,7 +90,7 @@ impl Matrix {
                 cursor: messages.end,
             };
 
-            App::send(MatuiEvent::TimelineBatch(batch));
+            matrix.send(MatuiEvent::TimelineBatch(batch));
         });
 
         task.abort_handle()
@@ -99,8 +99,8 @@ impl Matrix {
     pub fn download_content(&self, message: MessageType, after: AfterDownload) {
         let matrix = self.clone();
 
-        App::spawn(async move {
-            App::send(ProgressStarted("Downloading file.".to_string(), 250));
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Downloading file.".to_string(), 250));
 
             let (file_name, mimetype, source) = match message {
                 Image(c) => (
@@ -124,7 +124,7 @@ impl Matrix {
                     c.source,
                 ),
                 _ => {
-                    App::send(Error("Unknown file type.".to_string()));
+                    matrix.send(Error("Unknown file type.".to_string()));
                     return;
                 }
             };
@@ -143,22 +143,22 @@ impl Matrix {
                 .await
             {
                 Err(err) => {
-                    App::send(Error(err.to_string()));
+                    matrix.send(Error(err.to_string()));
                     return;
                 }
                 Ok(mfh) => mfh,
             };
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
 
             match after {
                 AfterDownload::View => {
                     tokio::task::spawn_blocking(move || view_file(handle));
                 }
                 AfterDownload::Save => match save_file(handle, &file_name).await {
-                    Err(err) => App::send(Error(err.to_string())),
+                    Err(err) => matrix.send(Error(err.to_string())),
                     Ok(None) => {}
-                    Ok(Some(path)) => App::send(MatuiEvent::Confirm(
+                    Ok(Some(path)) => matrix.send(MatuiEvent::Confirm(
                         "Download Complete".to_string(),
                         format!("Saved to {}", path.to_str().unwrap()),
                     )),
@@ -171,7 +171,7 @@ impl Matrix {
     pub fn fetch_picture(&self, room_id: OwnedRoomId, source: MediaSource) {
         let matrix = self.clone();
 
-        App::spawn(async move {
+        self.spawn(async move {
             let uri = source_uri(&source).clone();
 
             let request = MediaRequestParameters {
@@ -195,32 +195,36 @@ impl Matrix {
                 }
             };
 
-            App::send(MatuiEvent::Picture(room_id, uri, image));
+            matrix.send(MatuiEvent::Picture(room_id, uri, image));
         });
     }
 
     pub fn send_text_message(&self, room: Room, message: String) {
-        App::spawn(async move {
-            App::send(ProgressStarted("Sending message.".to_string(), 500));
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Sending message.".to_string(), 500));
 
             let content = text_content(&room, &message).await;
 
             if let Err(err) = room.send(without_me(&room, content)).await {
-                App::send(Error(err.to_string()));
+                matrix.send(Error(err.to_string()));
             }
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
         });
     }
 
     pub fn send_reply(&self, room: Room, message: String, in_reply_to: OwnedEventId) {
-        App::spawn(async move {
-            App::send(ProgressStarted("Sending message.".to_string(), 500));
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Sending message.".to_string(), 500));
 
             let in_reply_to = match Matrix::get_room_event(&room, &in_reply_to).await {
                 Some(e) => e,
                 None => {
-                    App::send(Error("Could not find reply event.".to_string()));
+                    matrix.send(Error("Could not find reply event.".to_string()));
                     return;
                 }
             };
@@ -236,10 +240,10 @@ impl Matrix {
             );
 
             if let Err(err) = room.send(without_me(&room, reply)).await {
-                App::send(Error(err.to_string()));
+                matrix.send(Error(err.to_string()));
             }
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
         });
     }
 
@@ -250,13 +254,15 @@ impl Matrix {
         target: OwnedEventId,
         is_reply: ReplyWithinThread,
     ) {
-        App::spawn(async move {
-            App::send(ProgressStarted("Sending message.".to_string(), 500));
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Sending message.".to_string(), 500));
 
             let target = match Matrix::get_room_event(&room, &target).await {
                 Some(e) => e,
                 None => {
-                    App::send(Error("Could not find thread event.".to_string()));
+                    matrix.send(Error("Could not find thread event.".to_string()));
                     return;
                 }
             };
@@ -272,19 +278,20 @@ impl Matrix {
             );
 
             if let Err(err) = room.send(without_me(&room, reply)).await {
-                App::send(Error(err.to_string()));
+                matrix.send(Error(err.to_string()));
             }
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
         });
     }
 
     pub fn send_attachments(&self, room: Room, attachments: Vec<(PathBuf, Option<String>)>) {
         let total = attachments.len();
+        let matrix = self.clone();
 
-        App::spawn(async move {
+        self.spawn(async move {
             for (i, (path, caption)) in attachments.into_iter().enumerate() {
-                App::send(ProgressStarted(
+                matrix.send(ProgressStarted(
                     format!("Uploading {} of {}.", i + 1, total),
                     0,
                 ));
@@ -301,7 +308,7 @@ impl Matrix {
                 let data = match fs::read(path.to_str().unwrap()) {
                     Ok(d) => d,
                     Err(err) => {
-                        App::send(Error(err.to_string()));
+                        matrix.send(Error(err.to_string()));
                         return;
                     }
                 };
@@ -319,38 +326,42 @@ impl Matrix {
                     .send_attachment(&name, &content_type, data, config)
                     .await
                 {
-                    App::send(Error(err.to_string()));
+                    matrix.send(Error(err.to_string()));
                 }
 
-                App::send(ProgressComplete);
+                matrix.send(ProgressComplete);
             }
         });
     }
 
     pub fn send_reaction(&self, room: Room, event_id: OwnedEventId, key: String) {
-        App::spawn(async move {
-            App::send(ProgressStarted("Sending reaction.".to_string(), 500));
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Sending reaction.".to_string(), 500));
 
             if let Err(err) = room
                 .send(ReactionEventContent::new(Annotation::new(event_id, key)))
                 .await
             {
-                App::send(Error(err.to_string()));
+                matrix.send(Error(err.to_string()));
             }
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
         });
     }
 
     pub fn redact_event(&self, room: Room, event_id: OwnedEventId) {
-        App::spawn(async move {
-            App::send(ProgressStarted("Removing.".to_string(), 500));
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Removing.".to_string(), 500));
 
             if let Err(err) = room.redact(&event_id, None, None).await {
-                App::send(Error(err.to_string()));
+                matrix.send(Error(err.to_string()));
             }
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
         });
     }
 
@@ -398,8 +409,10 @@ impl Matrix {
     }
 
     pub fn replace_event(&self, room: Room, id: OwnedEventId, message: String) {
-        App::spawn(async move {
-            App::send(ProgressStarted("Editing message.".to_string(), 500));
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            matrix.send(ProgressStarted("Editing message.".to_string(), 500));
 
             let Some(event) = Matrix::get_room_event(&room, &id).await else {
                 return;
@@ -412,10 +425,10 @@ impl Matrix {
             let content = without_me(&room, text_content(&room, &message).await);
 
             if let Err(err) = room.send(content.make_replacement(event)).await {
-                App::send(Error(err.to_string()));
+                matrix.send(Error(err.to_string()));
             }
 
-            App::send(ProgressComplete);
+            matrix.send(ProgressComplete);
         });
     }
 
@@ -424,7 +437,7 @@ impl Matrix {
             .fully_read_marker(Some(to.clone()))
             .public_read_receipt(Some(to));
 
-        App::spawn(async move {
+        self.spawn(async move {
             if let Err(e) = room.send_multiple_receipts(receipts).await {
                 error!("could not send read receipt: {}", e);
             }
@@ -432,7 +445,7 @@ impl Matrix {
     }
 
     pub fn typing_notification(&self, room: Room, typing: bool) {
-        App::spawn(async move {
+        self.spawn(async move {
             if let Err(e) = room.typing_notice(typing).await {
                 error!("could not send typing notice: {}", e);
             }

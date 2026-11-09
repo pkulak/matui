@@ -8,7 +8,6 @@ use matrix_sdk::ruma::exports::serde_json::json;
 use matrix_sdk::ruma::serde::Raw;
 
 use super::Matrix;
-use crate::app::App;
 use crate::handler::MatuiEvent;
 
 /// A room key that arrived: the room it's for, and its megolm session.
@@ -27,11 +26,13 @@ impl Matrix {
         events: Vec<OriginalRoomEncryptedEvent>,
         keys: Option<Vec<RoomKey>>,
     ) {
-        App::spawn(async move {
+        let matrix = self.clone();
+
+        self.spawn(async move {
             let decrypted = decrypt_again(&room, events, keys.as_deref()).await;
 
             if !decrypted.is_empty() {
-                App::send(MatuiEvent::Decrypted(decrypted));
+                matrix.send(MatuiEvent::Decrypted(decrypted));
             }
         });
     }

@@ -17,10 +17,10 @@ use std::{
 
 use image::imageops::FilterType;
 
+use super::Matrix;
 use crate::settings::{is_muted, mentions_override_mute};
 use crate::widgets::message::Message;
 use matrix_sdk::{
-    Client,
     media::MediaFormat,
     room::{Room, RoomMember},
 };
@@ -47,10 +47,12 @@ impl Default for Notify {
 impl Notify {
     pub async fn timeline_event(
         &self,
-        client: Client,
+        matrix: &Matrix,
         event: AnyTimelineEvent,
         sync_started: MilliSecondsSinceUnixEpoch,
     ) -> anyhow::Result<()> {
+        let client = matrix.client();
+
         if let Some(message) = Message::try_from(&event, true) {
             let newer_than = self.raise_mark(&event, sync_started);
 
@@ -85,7 +87,7 @@ impl Notify {
             let avatar = Notify::get_image(room.clone(), user.clone()).await;
             let body = message.display();
 
-            self.send_notification(user.name(), body, room, avatar)?;
+            self.send_notification(matrix, user.name(), body, room, avatar)?;
         }
 
         Ok(())
@@ -143,12 +145,12 @@ impl Notify {
     #[cfg(not(target_os = "macos"))]
     fn send_notification(
         &self,
+        matrix: &Matrix,
         summary: &str,
         body: &str,
         room: Room,
         image: Option<PathBuf>,
     ) -> anyhow::Result<()> {
-        use crate::app::App;
         use crate::handler::MatuiEvent;
         use crate::settings::respect_notification_close_reason;
         use log::info;
@@ -175,8 +177,9 @@ impl Notify {
         // Clone what we need for the async block
         let room_id = room.room_id().to_string();
         let rooms = self.rooms.clone();
+        let on_close = matrix.clone();
 
-        App::spawn(async move {
+        matrix.spawn(async move {
             match notification.show_async().await {
                 Ok(handle) => {
                     let handle_id = handle.id();
@@ -197,7 +200,7 @@ impl Notify {
                                     return;
                                 }
 
-                                App::send(MatuiEvent::RoomSelected(room.clone()));
+                                on_close.send(MatuiEvent::RoomSelected(room.clone()));
                             });
                         });
                     }
@@ -214,6 +217,7 @@ impl Notify {
     #[cfg(target_os = "macos")]
     fn send_notification(
         &self,
+        _matrix: &Matrix,
         summary: &str,
         body: &str,
         _room: Room,
