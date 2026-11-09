@@ -13,8 +13,12 @@ use matui::settings::watch_settings_forever;
 use std::io::stdout;
 
 fn main() -> anyhow::Result<()> {
-    if cfg!(debug_assertions) {
-        simple_logging::log_to_file("test.log", LevelFilter::Info)?;
+    // debug builds always log; MATUI_LOG turns logging on for any build
+    let log =
+        std::env::var_os("MATUI_LOG").or_else(|| cfg!(debug_assertions).then(|| "test.log".into()));
+
+    if let Some(path) = log {
+        simple_logging::log_to_file(path, LevelFilter::Info)?;
         log_panics::init();
     }
 
