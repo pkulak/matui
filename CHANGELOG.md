@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Log in by scanning a QR code with a device that's already logged in, such as Element X, when the homeserver supports it. The new session comes verified, with your keys. Esc falls back to logging in with the browser.
+- Fetch each encryption key from the backup when a message first fails to decrypt, as Element X does, instead of downloading every key at once after verifying. Old messages fill in as you open rooms and scroll, and a key that wasn't in the backup yet is tried again later.
 - Mention people by typing their user ID (`@bob:example.com`) in any message, or pick a room member with `@`. Replies now mention the person you're replying to, and edits keep their mentions.
 - Don't mark a room as read when it's opened while the terminal is out of focus, such as by clicking a notification.
 - Start in the room switcher instead of opening the most recent room, and refresh the switcher when the terminal regains focus. Until a room is open, the switcher comes back whenever nothing else is showing, such as after verifying, instead of leaving a blank screen.
@@ -14,7 +16,6 @@
 - Ask before accepting a verification request, naming the device asking, instead of accepting every request in every running session. Another running matui session no longer takes over a new session's verification.
 - Start the emoji comparison once another device accepts matui's verification request, so one matui session can verify another. When the other device starts a comparison too, as Element X does, matui follows whichever one wins instead of hanging.
 - Show a popup with the reason when a verification is cancelled, by either side or by two requests colliding, instead of leaving it waiting. A request answered by another session just closes its prompt.
-- Show progress while encryption keys download from the backup after verifying, instead of leaving rooms opened meanwhile empty until the download finishes.
 - Ask how to verify a new session after login, instead of sending a verification request right away. Ask another verified session, which needs to be open to answer, or use the recovery key. Without another verified session, only the recovery key is offered, since the request went to every device and blocked any verification started elsewhere for 10 minutes.
 
 ## [1.1.0] - 2026-10-25

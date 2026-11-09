@@ -88,9 +88,12 @@ fn stored_auth(client: &Client) -> anyhow::Result<StoredAuth> {
 
 pub(super) fn persist_session(
     session_file: &Path,
-    client_session: ClientSession,
+    mut client_session: ClientSession,
     client: &Client,
 ) -> anyhow::Result<()> {
+    // QR login moves the client to the other device's homeserver
+    client_session.homeserver = client.homeserver().to_string();
+
     let serialized_session = serde_json::to_string(&FullSession {
         client_session,
         user_session: stored_auth(client)?,
@@ -226,7 +229,8 @@ fn build_encryption_settings() -> EncryptionSettings {
     EncryptionSettings {
         auto_enable_cross_signing: true,
         auto_enable_backups: true,
-        backup_download_strategy: matrix_sdk::encryption::BackupDownloadStrategy::OneShot,
+        backup_download_strategy:
+            matrix_sdk::encryption::BackupDownloadStrategy::AfterDecryptionFailure,
     }
 }
 

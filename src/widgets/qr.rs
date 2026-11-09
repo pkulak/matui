@@ -5,6 +5,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 use crate::app::{NoticeId, Popup};
 use crate::event::EventHandler;
@@ -16,24 +18,31 @@ use crate::widgets::textinput::TextInput;
 use crate::widgets::{EventResult, get_margin};
 use crate::{close, consumed};
 
+/// The steps of QR login. `cancel` is there when this device is the one
+/// logging in, and Esc cancels that login rather than just closing.
 pub enum Qr {
-    Code(String),
+    Code {
+        code: String,
+        cancel: Option<Arc<Notify>>,
+    },
     Check {
         input: TextInput,
         sender: CheckCodeSender,
+        cancel: Option<Arc<Notify>>,
     },
     Auth(String),
 }
 
 impl Qr {
-    pub fn code(code: String) -> Self {
-        Self::Code(code)
+    pub fn code(code: String, cancel: Option<Arc<Notify>>) -> Self {
+        Self::Code { code, cancel }
     }
 
-    pub fn check(sender: CheckCodeSender) -> Self {
+    pub fn check(sender: CheckCodeSender, cancel: Option<Arc<Notify>>) -> Self {
         Self::Check {
             input: TextInput::new(String::new(), true, false),
             sender,
+            cancel,
         }
     }
 
@@ -54,20 +63,21 @@ impl Qr {
 
     pub fn key_event(&mut self, input: &KeyEvent, handler: &EventHandler) -> EventResult {
         match self {
-            Qr::Code(_) => match input.code {
-                KeyCode::Esc => close!(),
+            Qr::Code { cancel, .. } => match input.code {
+                KeyCode::Esc => cancel_and_close(cancel),
                 _ => consumed!(),
             },
             Qr::Check {
                 input: field,
                 sender,
+                cancel,
             } => {
                 if let Consumed(_) = field.key_event(input) {
                     return consumed!();
                 }
 
                 match input.code {
-                    KeyCode::Esc => close!(),
+                    KeyCode::Esc => cancel_and_close(cancel),
                     KeyCode::Enter => {
                         let Ok(code) = field.value().trim().parse::<u8>() else {
                             return consumed!();
@@ -111,6 +121,14 @@ impl Qr {
     }
 }
 
+fn cancel_and_close(cancel: &Option<Arc<Notify>>) -> EventResult {
+    if let Some(cancel) = cancel {
+        cancel.notify_one();
+    }
+
+    close!()
+}
+
 pub struct QrWidget<'a> {
     pub qr: &'a Qr,
 }
@@ -118,8 +136,8 @@ pub struct QrWidget<'a> {
 impl Widget for QrWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         match self.qr {
-            Qr::Code(code) => render_code(code, area, buf),
-            Qr::Check { input, .. } => render_check(input, area, buf),
+            Qr::Code { code, cancel } => render_code(code, cancel.is_some(), area, buf),
+            Qr::Check { input, cancel, .. } => render_check(input, cancel.is_some(), area, buf),
             Qr::Auth(url) => render_auth(url, area, buf),
         }
     }
@@ -156,26 +174,50 @@ fn frame(area: Rect, buf: &mut Buffer, width: u16, height: u16) -> Vec<Rect> {
         .to_vec()
 }
 
-fn render_code(code: &str, area: Rect, buf: &mut Buffer) {
+fn render_code(code: &str, logging_in: bool, area: Rect, buf: &mut Buffer) {
     let width = code.lines().map(str::len).max().unwrap_or(60) as u16 + 4;
     let height = code.lines().count() as u16 + 6;
     let splits = frame(area, buf, width, height);
 
-    Paragraph::new("Scan this QR code on the new device to let it log in.")
+    let (heading, footer) = if logging_in {
+        (
+            "Scan this QR code with a device that's logged in.",
+            "Esc logs in with your browser instead.",
+        )
+    } else {
+        (
+            "Scan this QR code on the new device to let it log in.",
+            "Esc closes this popup.",
+        )
+    };
+
+    Paragraph::new(heading)
         .alignment(Alignment::Center)
         .render(splits[0], buf);
     Paragraph::new(code.to_string())
         .alignment(Alignment::Center)
         .render(splits[1], buf);
-    Paragraph::new("Esc closes this popup.")
+    Paragraph::new(footer)
         .alignment(Alignment::Center)
         .render(splits[2], buf);
 }
 
-fn render_check(input: &TextInput, area: Rect, buf: &mut Buffer) {
+fn render_check(input: &TextInput, logging_in: bool, area: Rect, buf: &mut Buffer) {
     let splits = frame(area, buf, 60, 10);
 
-    Paragraph::new("Enter the check code shown on the new device.")
+    let (heading, footer) = if logging_in {
+        (
+            "Enter the check code shown on your other device.",
+            "Enter submits, Esc logs in with your browser.",
+        )
+    } else {
+        (
+            "Enter the check code shown on the new device.",
+            "Enter submits, Esc cancels.",
+        )
+    };
+
+    Paragraph::new(heading)
         .alignment(Alignment::Center)
         .render(splits[0], buf);
 
@@ -201,7 +243,7 @@ fn render_check(input: &TextInput, area: Rect, buf: &mut Buffer) {
 
     input.widget().render(input_splits[1], buf);
 
-    Paragraph::new("Enter submits, Esc cancels.")
+    Paragraph::new(footer)
         .alignment(Alignment::Center)
         .render(splits[2], buf);
 }

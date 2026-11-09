@@ -51,10 +51,17 @@ pub enum MatuiEvent {
     Picture(OwnedRoomId, OwnedMxcUri, Option<DynamicImage>),
     ProgressStarted(NoticeId, String, u64),
     Withdraw(NoticeId),
+    /// QR login of this device waits for the other device to approve it,
+    /// by entering this code.
+    QrLoginApprove(String),
     QrLoginAuth(String),
-    QrLoginCode(String),
+    /// A QR code to scan. The Notify is there when this device is the one
+    /// logging in, and cancels that.
+    QrLoginCode(String, Option<Arc<Notify>>),
     QrLoginDone,
-    QrLoginScanned(CheckCodeSender),
+    /// The other device scanned the QR code; the Notify is as for
+    /// `QrLoginCode`.
+    QrLoginScanned(CheckCodeSender, Option<Arc<Notify>>),
     QrLoginSyncing,
     RoomFound(PublicRoomsChunk),
     /// A timeline may have earlier events to page back to again.
@@ -148,11 +155,18 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.show_notice(Popup::Progress(Progress::new(id, &msg, delay)))
         }
         MatuiEvent::Withdraw(id) => app.withdraw(id),
+        MatuiEvent::QrLoginApprove(code) => {
+            app.set_popup(Popup::Progress(Progress::new(
+                NoticeId::next(),
+                &format!("Enter {code} on your other device."),
+                0,
+            )));
+        }
         MatuiEvent::QrLoginAuth(url) => {
             app.set_popup(Popup::Qr(Qr::auth(url)));
         }
-        MatuiEvent::QrLoginCode(code) => {
-            app.set_popup(Popup::Qr(Qr::code(code)));
+        MatuiEvent::QrLoginCode(code, cancel) => {
+            app.set_popup(Popup::Qr(Qr::code(code, cancel)));
         }
         MatuiEvent::QrLoginDone => {
             app.set_popup(Popup::Error(Error::with_heading(
@@ -160,8 +174,8 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 "Login granted.".to_string(),
             )));
         }
-        MatuiEvent::QrLoginScanned(sender) => {
-            app.set_popup(Popup::Qr(Qr::check(sender)));
+        MatuiEvent::QrLoginScanned(sender, cancel) => {
+            app.set_popup(Popup::Qr(Qr::check(sender, cancel)));
         }
         MatuiEvent::QrLoginSyncing => {
             app.set_popup(Popup::Progress(Progress::new(

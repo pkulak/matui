@@ -502,7 +502,7 @@ pub(crate) mod tests {
     async fn completing_progress_closes_only_its_own_popup() {
         let (mut app, _events) = test_app();
 
-        // recovering shows its progress, then the backup download's
+        // one progress popup waits behind another
         let recovering = start_progress(&mut app);
         let downloading = start_progress(&mut app);
 

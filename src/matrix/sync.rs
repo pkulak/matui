@@ -1,11 +1,9 @@
-use std::pin::pin;
 use std::time::Duration;
 
-use futures::stream::{Stream, StreamExt};
+use futures::stream::StreamExt;
 use log::error;
 use matrix_sdk::Client;
 use matrix_sdk::RoomState;
-use matrix_sdk::encryption::backups::BackupState;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::MilliSecondsSinceUnixEpoch;
 use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMemberEvent};
@@ -43,10 +41,6 @@ impl Matrix {
         // handlers must be in place before the first response arrives
         add_default_handlers(self, &client);
         add_verification_handlers(self);
-        self.spawn(show_backup_downloads(
-            client.encryption().backups().state_stream(),
-            self.clone(),
-        ));
 
         self.watch_send_queue();
 
@@ -250,30 +244,6 @@ fn add_default_handlers(matrix: &Matrix, client: &Client) {
     );
 }
 
-/// Show progress while every room key downloads from the backup, such as
-/// after verifying. It can take a while, and a room opened meanwhile has
-/// nothing it can decrypt yet.
-async fn show_backup_downloads<E>(
-    states: impl Stream<Item = Result<BackupState, E>>,
-    matrix: Matrix,
-) {
-    let mut states = pin!(states);
-    let mut progress = None;
-
-    while let Some(state) = states.next().await {
-        // a missed state is fine: the next one says whether it's still going
-        let Ok(state) = state else {
-            continue;
-        };
-
-        if state != BackupState::Downloading {
-            progress = None;
-        } else if progress.is_none() {
-            progress = Some(matrix.progress("Downloading encryption keys.", 250));
-        }
-    }
-}
-
 async fn send_invite_event(matrix: &Matrix, room: Room) {
     let name = match room.display_name().await {
         Ok(name) => name.to_string(),
@@ -292,67 +262,4 @@ async fn send_invite_event(matrix: &Matrix, room: Room) {
         room,
         format!("{} invited you to {}. Join?", inviter, name),
     ));
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc::channel;
-
-    use futures::stream;
-    use tokio::runtime::Handle;
-
-    use super::*;
-    use crate::event::Event::Matui;
-
-    /// The progress events sent for these backup states, with `None` for
-    /// a state the stream missed.
-    async fn progress(states: Vec<Option<BackupState>>) -> Vec<&'static str> {
-        let (sender, events) = channel();
-        let states = states.into_iter().map(|s| s.ok_or(()));
-
-        let matrix = Matrix::new(sender, Handle::current());
-        show_backup_downloads(stream::iter(states), matrix).await;
-
-        events
-            .try_iter()
-            .map(|event| match event {
-                Matui(MatuiEvent::ProgressStarted(..)) => "started",
-                Matui(MatuiEvent::Withdraw(_)) => "complete",
-                event => panic!("expected progress, got {:?}", event),
-            })
-            .collect()
-    }
-
-    #[tokio::test]
-    async fn shows_progress_while_downloading() {
-        use BackupState::*;
-
-        let events = progress(vec![
-            Some(Unknown),
-            Some(Enabling),
-            Some(Downloading),
-            Some(Enabled),
-        ])
-        .await;
-
-        assert_eq!(events, ["started", "complete"]);
-    }
-
-    #[tokio::test]
-    async fn ends_progress_after_a_missed_state() {
-        use BackupState::*;
-
-        let events = progress(vec![Some(Downloading), None, Some(Enabled)]).await;
-
-        assert_eq!(events, ["started", "complete"]);
-    }
-
-    #[tokio::test]
-    async fn shows_nothing_without_a_download() {
-        use BackupState::*;
-
-        let events = progress(vec![Some(Resuming), Some(Enabled)]).await;
-
-        assert!(events.is_empty());
-    }
 }

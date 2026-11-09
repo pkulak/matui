@@ -7,13 +7,19 @@ use anyhow::{Context, bail};
 use futures::stream::StreamExt;
 use log::info;
 use matrix_sdk::Client;
-use matrix_sdk::authentication::oauth::qrcode::{GeneratedQrProgress, GrantLoginProgress};
+use matrix_sdk::authentication::oauth::ClientRegistrationData;
+use matrix_sdk::authentication::oauth::qrcode::{
+    GeneratedQrProgress, GrantLoginProgress, LoginProgress, QRCodeLoginError,
+};
 use matrix_sdk::authentication::oauth::registration::{
     ApplicationType, ClientMetadata, Localized, OAuthGrantType,
 };
 use matrix_sdk::reqwest::Url;
+use matrix_sdk::ruma::api::FeatureFlag;
+use matrix_sdk::ruma::api::client::discovery::get_authorization_server_metadata::v1::GrantType;
 use matrix_sdk::ruma::serde::Raw;
 use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
+use tokio::sync::Notify;
 
 use super::Matrix;
 use super::session::{build_client, persist_session, restore_session};
@@ -73,19 +79,37 @@ impl Matrix {
         });
     }
 
-    /// Start the login flow by deciding whether this homeserver supports
-    /// OIDC. OIDC homeservers go straight to browser login; everything else
-    /// asks for username/password.
+    /// Start the best login flow this homeserver supports: a QR code to
+    /// scan with a signed-in device, then browser login, then
+    /// username/password.
     pub fn start_login(&self, homeserver: String) {
         let matrix = self.clone();
 
         self.spawn(async move {
             let _progress = matrix.progress("Checking homeserver.", 0);
 
-            match supports_oidc(&homeserver).await {
-                Ok(true) => matrix.login_oauth(homeserver),
-                Ok(false) => matrix.send(MatuiEvent::PasswordLoginRequired(homeserver)),
+            match login_kind(&homeserver).await {
+                Ok(LoginKind::Qr) => matrix.login_qr(homeserver),
+                Ok(LoginKind::Oauth) => matrix.login_oauth(homeserver),
+                Ok(LoginKind::Password) => {
+                    matrix.send(MatuiEvent::PasswordLoginRequired(homeserver))
+                }
                 Err(err) => matrix.send(Error(err.to_string())),
+            }
+        });
+    }
+
+    /// Log this device in by showing a QR code for a signed-in device to
+    /// scan. Cancelling falls back to browser login.
+    pub fn login_qr(&self, homeserver: String) {
+        let (data_dir, session_file) = Matrix::dirs();
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            match login_qr_flow(&matrix, &data_dir, &session_file, &homeserver).await {
+                Ok(Some(client)) => matrix.finish_signin(client).await,
+                Ok(None) => matrix.login_oauth(homeserver),
+                Err(err) => matrix.send(LoginFailed(err.to_string())),
             }
         });
     }
@@ -111,12 +135,12 @@ impl Matrix {
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrReady(data),
                         ) => match render_qr_code(data.to_bytes()) {
-                            Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code)),
+                            Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code, None)),
                             Err(err) => matrix.send(LoginFailed(err.to_string())),
                         },
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrScanned(sender),
-                        ) => matrix.send(MatuiEvent::QrLoginScanned(sender)),
+                        ) => matrix.send(MatuiEvent::QrLoginScanned(sender, None)),
                         GrantLoginProgress::WaitingForAuth {
                             verification_uri,
                             continuation_sender,
@@ -243,17 +267,117 @@ fn render_qr_code(data: Vec<u8>) -> anyhow::Result<String> {
         .build())
 }
 
-async fn supports_oidc(homeserver: &str) -> anyhow::Result<bool> {
+#[derive(Debug, PartialEq)]
+enum LoginKind {
+    Qr,
+    Oauth,
+    Password,
+}
+
+async fn login_kind(homeserver: &str) -> anyhow::Result<LoginKind> {
     let client = Client::builder()
         .server_name_or_homeserver_url(homeserver)
         .build()
         .await
         .with_context(|| format!("could not connect to {homeserver}"))?;
 
-    match client.oauth().server_metadata().await {
-        Ok(_) => Ok(true),
-        Err(err) if err.is_not_supported() => Ok(false),
+    let metadata = match client.oauth().server_metadata().await {
+        Ok(metadata) => metadata,
+        Err(err) if err.is_not_supported() => return Ok(LoginKind::Password),
         Err(err) => bail!("could not check {homeserver} for OIDC: {err}"),
+    };
+
+    // the same check Element Web makes before it offers QR login
+    let qr = metadata
+        .grant_types_supported
+        .contains(&GrantType::DeviceCode)
+        && client
+            .unstable_features()
+            .await?
+            .contains(&FeatureFlag::from("org.matrix.msc4108"));
+
+    Ok(if qr { LoginKind::Qr } else { LoginKind::Oauth })
+}
+
+fn client_metadata(grant_types: Vec<OAuthGrantType>) -> anyhow::Result<Raw<ClientMetadata>> {
+    let mut metadata = ClientMetadata::new(
+        ApplicationType::Native,
+        grant_types,
+        Localized::new(Url::parse("https://github.com/pkulak/matui")?, []),
+    );
+
+    metadata.client_name = Some(Localized::new("Matui".to_string(), []));
+
+    Ok(Raw::new(&metadata)?)
+}
+
+/// Run the QR login flow, where a signed-in device scans our code and
+/// hands over its keys. Returns None if the user cancelled.
+async fn login_qr_flow(
+    matrix: &Matrix,
+    data_dir: &Path,
+    session_file: &Path,
+    homeserver: &str,
+) -> anyhow::Result<Option<Client>> {
+    let (client, client_session) = build_client(data_dir, homeserver).await?;
+    let registration: ClientRegistrationData =
+        client_metadata(vec![OAuthGrantType::DeviceCode])?.into();
+    let cancel = Arc::new(Notify::new());
+    let oauth = client.oauth();
+
+    loop {
+        let login = oauth.login_with_qr_code(Some(&registration)).generate();
+
+        let progress_task = matrix.spawn(show_qr_login_progress(
+            matrix.clone(),
+            login.subscribe_to_progress(),
+            cancel.clone(),
+        ));
+
+        let result = tokio::select! {
+            result = login.into_future() => Some(result),
+            _ = cancel.notified() => None,
+        };
+
+        progress_task.abort();
+
+        match result {
+            Some(Ok(())) => break,
+            // the code expired before anyone scanned it, so show a new one
+            Some(Err(QRCodeLoginError::NotFound)) => continue,
+            Some(Err(err)) => return Err(err.into()),
+            None => return Ok(None),
+        }
+    }
+
+    persist_session(session_file, client_session, &client)?;
+
+    Ok(Some(client))
+}
+
+async fn show_qr_login_progress(
+    matrix: Matrix,
+    mut progress: impl futures::Stream<Item = LoginProgress<GeneratedQrProgress>> + Unpin,
+    cancel: Arc<Notify>,
+) {
+    while let Some(state) = progress.next().await {
+        match state {
+            LoginProgress::Starting => {}
+            LoginProgress::EstablishingSecureChannel(GeneratedQrProgress::QrReady(data)) => {
+                match render_qr_code(data.to_bytes()) {
+                    Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code, Some(cancel.clone()))),
+                    Err(err) => matrix.send(LoginFailed(err.to_string())),
+                }
+            }
+            LoginProgress::EstablishingSecureChannel(GeneratedQrProgress::QrScanned(sender)) => {
+                matrix.send(MatuiEvent::QrLoginScanned(sender, Some(cancel.clone())))
+            }
+            LoginProgress::WaitingForToken { user_code } => {
+                matrix.send(MatuiEvent::QrLoginApprove(user_code))
+            }
+            LoginProgress::SyncingSecrets => matrix.send(MatuiEvent::QrLoginSyncing),
+            LoginProgress::Done => {}
+        }
     }
 }
 
@@ -280,20 +404,14 @@ async fn login_oauth_flow(
         .set_port(None)
         .expect("loopback URL has a host");
 
-    let mut metadata = ClientMetadata::new(
-        ApplicationType::Native,
-        vec![OAuthGrantType::AuthorizationCode {
-            redirect_uris: vec![redirect_url_no_port],
-        }],
-        Localized::new(Url::parse("https://github.com/pkulak/matui")?, []),
-    );
-
-    metadata.client_name = Some(Localized::new("Matui".to_string(), []));
+    let metadata = client_metadata(vec![OAuthGrantType::AuthorizationCode {
+        redirect_uris: vec![redirect_url_no_port],
+    }])?;
 
     let oauth = client.oauth();
 
     let auth_data = oauth
-        .login(redirect_url, None, Some(Raw::new(&metadata)?.into()), None)
+        .login(redirect_url, None, Some(metadata.into()), None)
         .build()
         .await?;
 
@@ -322,4 +440,39 @@ async fn login_oauth_flow(
     persist_session(session_file, client_session, &client)?;
 
     Ok(Some(client))
+}
+
+#[cfg(test)]
+mod tests {
+    use matrix_sdk::test_utils::mocks::MatrixMockServer;
+
+    use super::*;
+
+    async fn kind(oauth: bool, msc4108: bool) -> LoginKind {
+        let server = MatrixMockServer::new().await;
+        let oauth_server = server.oauth();
+        let metadata = oauth_server.mock_server_metadata();
+
+        if oauth {
+            metadata.ok().mount().await;
+        } else {
+            metadata.error_unrecognized().mount().await;
+        }
+
+        server
+            .mock_versions()
+            .with_feature("org.matrix.msc4108", msc4108)
+            .ok()
+            .mount()
+            .await;
+
+        login_kind(&server.uri()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn login_kind_prefers_qr_then_oauth_then_password() {
+        assert_eq!(kind(true, true).await, LoginKind::Qr);
+        assert_eq!(kind(true, false).await, LoginKind::Oauth);
+        assert_eq!(kind(false, false).await, LoginKind::Password);
+    }
 }

@@ -195,7 +195,13 @@ full timeline. Use Shift+G to go back to the latest message.
 
 ## End-to-End Encryption
 
-After login, matui offers to verify the new session. If you have another
+When your homeserver supports it, matui logs in with a QR code: scan it with
+a device that's already logged in, such as Element X. Type the code that
+device shows into matui, then the code matui shows into that device. The new
+session is verified and has your keys. Press
+Esc to log in with your browser instead.
+
+After any other login, matui offers to verify the new session. If you have another
 verified session, matui can ask it to verify this one, with an emoji
 comparison. Open that session before choosing this, so it can answer.
 Otherwise, use your recovery key or passphrase. You can also type `:verify`
