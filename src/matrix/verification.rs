@@ -334,7 +334,6 @@ mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex};
 
-    use matrix_sdk::RoomDisplayName;
     use matrix_sdk::encryption::verification::{Emoji, VerificationRequest};
     use matrix_sdk::ruma::exports::serde_json::json;
     use matrix_sdk::ruma::{
@@ -346,6 +345,7 @@ mod tests {
     use wiremock::ResponseTemplate;
 
     use super::*;
+    use crate::app::tests::test_app;
     use crate::app::{App, NoticeId, Popup};
     use crate::event::Event;
     use crate::event::Event::Matui;
@@ -497,11 +497,6 @@ mod tests {
             info.reason(),
             withdrawn(events).await,
         )
-    }
-
-    /// An App with nothing showing, and no client.
-    fn test_app() -> App {
-        App::new(channel().0, Handle::current())
     }
 
     /// Hand the app what the owner sends, until its popups are withdrawn.
@@ -668,7 +663,7 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let mut app = test_app();
+        let (mut app, _app_events) = test_app();
         let (sent, received, prompt) =
             request_from_other(&server, &matui, &other, &queue, &events).await;
         handle_app_event(
@@ -694,19 +689,11 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let mut app = test_app();
+        let (mut app, _app_events) = test_app();
         let room = server
             .sync_joined_room(&matui, room_id!("!room:example.org"))
             .await;
-        let room = DecoratedRoom {
-            inner: room,
-            name: RoomDisplayName::Empty,
-            visited: true,
-            last_message: None,
-            last_sender: None,
-            last_ts: None,
-            recency_stamp: None,
-        };
+        let room = DecoratedRoom::from_room(room).await;
         app.set_popup(Popup::Compose(Compose::new(
             room,
             app.matrix.clone(),

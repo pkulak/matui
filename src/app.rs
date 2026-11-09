@@ -309,7 +309,7 @@ impl Popup {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::mpsc::{Receiver, channel};
 
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -321,7 +321,9 @@ mod tests {
     use super::*;
     use crate::handler::{MatuiEvent, handle_app_event};
 
-    fn test_app() -> (App, Receiver<Event>) {
+    /// An app with nothing showing and no client, sending to the returned
+    /// receiver.
+    pub(crate) fn test_app() -> (App, Receiver<Event>) {
         let (sender, receiver) = channel();
         (App::new(sender, Handle::current()), receiver)
     }

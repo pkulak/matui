@@ -182,7 +182,7 @@ impl DecoratedRoom {
         self.inner.unread_notification_counts().highlight_count
     }
 
-    async fn from_room(room: Room) -> DecoratedRoom {
+    pub(crate) async fn from_room(room: Room) -> DecoratedRoom {
         let name = room.cached_display_name().unwrap_or(RoomDisplayName::Empty);
         let latest = room.latest_event();
 
