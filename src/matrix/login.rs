@@ -17,7 +17,7 @@ use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
 
 use super::Matrix;
 use super::session::{build_client, persist_session, restore_session};
-use crate::handler::MatuiEvent::Error;
+use crate::handler::MatuiEvent::{Error, LoginFailed};
 use crate::handler::{MatuiEvent, SyncType};
 
 impl Matrix {
@@ -112,7 +112,7 @@ impl Matrix {
                             GeneratedQrProgress::QrReady(data),
                         ) => match render_qr_code(data.to_bytes()) {
                             Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code)),
-                            Err(err) => matrix.send(Error(err.to_string())),
+                            Err(err) => matrix.send(LoginFailed(err.to_string())),
                         },
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrScanned(sender),
@@ -126,7 +126,7 @@ impl Matrix {
                             matrix.send(MatuiEvent::QrLoginAuth(url));
 
                             if let Err(err) = continuation_sender.confirm().await {
-                                matrix.send(Error(err.to_string()));
+                                matrix.send(LoginFailed(err.to_string()));
                             }
                         }
                         GrantLoginProgress::SyncingSecrets => {
@@ -139,7 +139,7 @@ impl Matrix {
 
             match grant.await {
                 Ok(()) => matrix.send(MatuiEvent::QrLoginDone),
-                Err(err) => matrix.send(Error(err.to_string())),
+                Err(err) => matrix.send(LoginFailed(err.to_string())),
             }
 
             progress_task.abort();
@@ -157,7 +157,7 @@ impl Matrix {
                 Ok(Some(client)) => matrix.finish_signin(client).await,
                 // cancelled from the waiting popup; back to the form
                 Ok(None) => matrix.send(MatuiEvent::LoginRequired),
-                Err(err) => matrix.send(Error(err.to_string())),
+                Err(err) => matrix.send(LoginFailed(err.to_string())),
             }
         });
     }

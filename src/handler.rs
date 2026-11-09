@@ -40,6 +40,9 @@ pub enum MatuiEvent {
     Invited(Room, String),
     LoggedOut,
     LoginComplete,
+    /// The OAuth or QR login flow failed. Its popup only waits for the
+    /// flow, so the error replaces it rather than waiting behind it.
+    LoginFailed(String),
     LoginRequired,
     LoginStarted,
     PasswordLoginRequired(String),
@@ -139,6 +142,10 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         // closes the OAuth popup too
         MatuiEvent::LoginComplete => app.close_popup(),
+        MatuiEvent::LoginFailed(msg) => {
+            log::warn!("Login failed: {msg}");
+            app.set_popup(Popup::Error(Error::new(msg)));
+        }
         MatuiEvent::Picture(room_id, uri, image) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.picture_event(&room_id, uri.clone(), image.clone());
