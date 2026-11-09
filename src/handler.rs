@@ -55,7 +55,6 @@ pub enum MatuiEvent {
     QrLoginDone,
     QrLoginScanned(CheckCodeSender),
     QrLoginSyncing,
-    Recover(String),
     Receipt(Room, ReceiptEventContent),
     RoomFound(PublicRoomsChunk),
     /// Room keys arrived, or `None` if some arrived but we lost track of
@@ -171,7 +170,6 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 0,
             )));
         }
-        MatuiEvent::Recover(key) => app.matrix.recover(&key),
 
         // if we just left the room we're looking at, move to the top one
         MatuiEvent::RoomLeft(room) => {

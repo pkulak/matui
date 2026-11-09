@@ -507,6 +507,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovering_closes_the_key_popup_and_shows_progress() {
+        let (_server, _client, mut app, _room, events) = app_with_room().await;
+        app.set_popup(Popup::Recover(Recover::default()));
+
+        let Some(Popup::Recover(recover)) = app.popup.as_mut() else {
+            unreachable!()
+        };
+        let EventResult::Consumed(f) = recover.key_event(&KeyEvent::from(KeyCode::Enter)) else {
+            panic!("recover ignored Enter");
+        };
+        f(&mut app);
+
+        let next = async {
+            loop {
+                tokio::task::yield_now().await;
+
+                if let Ok(Event::Matui(event)) = events.try_recv() {
+                    return event;
+                }
+            }
+        };
+        let started = tokio::time::timeout(std::time::Duration::from_secs(5), next)
+            .await
+            .expect("an event");
+        assert!(matches!(started, MatuiEvent::ProgressStarted(..)));
+
+        handle_app_event(started, &mut app);
+        assert!(showing_progress(&app).is_some());
+    }
+
+    #[tokio::test]
     async fn completing_queued_progress_unqueues_only_it() {
         let (mut app, _events) = test_app();
         app.set_popup(Popup::Search(Search::default()));
