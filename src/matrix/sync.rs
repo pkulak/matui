@@ -2,7 +2,7 @@ use std::pin::pin;
 use std::time::Duration;
 
 use futures::stream::{Stream, StreamExt};
-use log::{error, warn};
+use log::error;
 use matrix_sdk::Client;
 use matrix_sdk::RoomState;
 use matrix_sdk::encryption::backups::BackupState;
@@ -15,7 +15,6 @@ use matrix_sdk::ruma::events::{
 use matrix_sdk_ui::room_list_service::State as RoomListState;
 use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 
-use super::decryption::RoomKey;
 use super::verification::add_verification_handlers;
 use super::{Matrix, Notice};
 use crate::handler::MatuiEvent::Error;
@@ -44,7 +43,6 @@ impl Matrix {
         // handlers must be in place before the first response arrives
         add_default_handlers(self, &client);
         add_verification_handlers(self);
-        follow_room_keys(self, &client).await;
         self.spawn(show_backup_downloads(
             client.encryption().backups().state_stream(),
             self.clone(),
@@ -255,39 +253,6 @@ fn add_default_handlers(matrix: &Matrix, client: &Client) {
             };
         },
     );
-}
-
-/// Tell the UI about every room key that arrives, so the open room can
-/// decrypt what it couldn't before.
-async fn follow_room_keys(matrix: &Matrix, client: &Client) {
-    let Some(stream) = client.encryption().room_keys_received_stream().await else {
-        return;
-    };
-
-    let handler = matrix.clone();
-
-    matrix.spawn(async move {
-        let mut stream = pin!(stream);
-
-        while let Some(keys) = stream.next().await {
-            let keys = match keys {
-                Ok(keys) => Some(
-                    keys.into_iter()
-                        .map(|k| RoomKey {
-                            room_id: k.room_id,
-                            session_id: k.session_id,
-                        })
-                        .collect(),
-                ),
-                Err(err) => {
-                    warn!("lost track of room keys: {}", err);
-                    None
-                }
-            };
-
-            handler.send(MatuiEvent::RoomKeys(keys));
-        }
-    });
 }
 
 /// Show progress while every room key downloads from the backup, such as

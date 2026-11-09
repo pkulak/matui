@@ -53,7 +53,7 @@ impl Notify {
     ) -> anyhow::Result<()> {
         let client = matrix.client();
 
-        if let Some(message) = Message::try_from(&event, true) {
+        if let Some(message) = Message::try_from(&event) {
             let newer_than = self.raise_mark(&event, sync_started);
 
             {
@@ -77,7 +77,7 @@ impl Notify {
                 }
             }
 
-            let room = client.get_room(&message.room_id).unwrap();
+            let room = client.get_room(event.room_id()).unwrap();
 
             let user = room
                 .get_member(<&UserId>::try_from(message.sender.as_str()).unwrap())

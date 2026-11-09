@@ -17,21 +17,23 @@ use crate::spawn::view_text;
 use crate::{limit_list, pretty_list};
 use chrono::offset::Local;
 use matrix_sdk::room::RoomMember;
-use matrix_sdk::ruma::events::AnyMessageLikeEvent::Reaction as Rctn;
 use matrix_sdk::ruma::events::AnyMessageLikeEvent::RoomMessage;
-use matrix_sdk::ruma::events::AnyMessageLikeEvent::RoomRedaction;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
-use matrix_sdk::ruma::events::MessageLikeEvent;
-use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement, Reply};
+use matrix_sdk::ruma::events::room::encrypted::Relation::{
+    self as EncryptedRelation, Annotation, Replacement, Thread,
+};
 use matrix_sdk::ruma::events::room::message::MessageType::{
     self, Audio, Image, Notice, Text, Video,
 };
-use matrix_sdk::ruma::events::room::message::{MessageFormat, Relation, TextMessageEventContent};
-use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
-use matrix_sdk::ruma::{
-    EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId,
+use matrix_sdk::ruma::events::room::message::{
+    MessageFormat, NoticeMessageEventContent, Relation, TextMessageEventContent,
 };
+use matrix_sdk::ruma::events::{
+    AnySyncMessageLikeEvent, AnySyncTimelineEvent, MessageLikeEvent, SyncMessageLikeEvent,
+};
+use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId};
+use matrix_sdk_ui::timeline::{EventTimelineItem, MsgLikeKind};
 use once_cell::unsync::OnceCell;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -45,10 +47,10 @@ use super::receipts::Receipt;
 pub struct Message {
     pub id: OwnedEventId,
     pub in_reply_to: Option<OwnedEventId>,
-    pub room_id: OwnedRoomId,
+    pub thread_root: Option<OwnedEventId>,
     pub sent: MilliSecondsSinceUnixEpoch,
     pub body: MessageType,
-    pub history: Vec<MessageType>,
+    pub edited: bool,
     pub sender: Username,
     pub reactions: Vec<Reaction>,
     pub replies: Vec<Message>,
@@ -70,14 +72,118 @@ fn get_formatter() -> &'static Formatter {
     })
 }
 
-#[derive(PartialEq, Eq)]
-pub enum MergeResult {
-    Consumed,
-    Missed,
-    Ignored,
+const UNABLE_TO_DECRYPT: &str = "Unable to decrypt this message.";
+
+/// The relation an encrypted event keeps in the clear, which says what it is
+/// before it decrypts.
+fn encrypted_relation(item: &EventTimelineItem) -> Option<EncryptedRelation> {
+    let event = item.original_json()?.deserialize().ok()?;
+
+    let AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::RoomEncrypted(
+        SyncMessageLikeEvent::Original(event),
+    )) = event
+    else {
+        return None;
+    };
+
+    event.content.relates_to
 }
 
 impl Message {
+    fn new(
+        id: OwnedEventId,
+        sent: MilliSecondsSinceUnixEpoch,
+        body: MessageType,
+        sender: OwnedUserId,
+    ) -> Self {
+        Message {
+            id,
+            in_reply_to: None,
+            thread_root: None,
+            sent,
+            body,
+            edited: false,
+            sender: Username::new(sender),
+            reactions: Vec::new(),
+            replies: Vec::new(),
+            thread: Vec::new(),
+            receipts: Vec::new(),
+            body_lower: OnceCell::new(),
+            search_term: OnceCell::new(),
+            display_cache: OnceCell::new(),
+        }
+    }
+
+    /// The message an item of the room's timeline shows, if it shows one.
+    pub fn from_item(item: &EventTimelineItem) -> Option<Self> {
+        let id = item.event_id()?.to_owned();
+        let content = item.content().as_msglike()?;
+
+        let mut thread_root = content.thread_root.clone();
+
+        let (body, edited) = match &content.kind {
+            MsgLikeKind::Message(m) => match m.msgtype() {
+                body @ (Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)) => {
+                    (body.clone(), m.is_edited())
+                }
+                _ => return None,
+            },
+            MsgLikeKind::UnableToDecrypt(_) => {
+                // only messages get a placeholder, in their thread
+                match encrypted_relation(item) {
+                    Some(Annotation(_) | Replacement(_)) => return None,
+                    Some(Thread(thread)) => thread_root = Some(thread.event_id),
+                    _ => {}
+                }
+
+                (
+                    Notice(NoticeMessageEventContent::plain(UNABLE_TO_DECRYPT)),
+                    false,
+                )
+            }
+            _ => return None,
+        };
+
+        let mut message = Message::new(id, item.timestamp(), body, item.sender().to_owned());
+        message.edited = edited;
+        message.in_reply_to = content.in_reply_to.as_ref().map(|r| r.event_id.clone());
+        message.thread_root = thread_root;
+        message.reactions = content
+            .reactions
+            .iter()
+            .map(|(key, senders)| Reaction {
+                body: key.clone(),
+                senders: senders.keys().cloned().map(Username::new).collect(),
+                list_view: OnceCell::new(),
+            })
+            .collect();
+
+        Some(message)
+    }
+
+    /// The message a new event from sync shows, for its notification.
+    pub fn try_from(event: &AnyTimelineEvent) -> Option<Self> {
+        let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event else {
+            return None;
+        };
+
+        if let Some(Relation::Replacement(_)) = c.content.relates_to {
+            return None;
+        }
+
+        match &c.content.msgtype {
+            body @ (Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)) => {
+                Some(Message::new(
+                    c.event_id.clone(),
+                    c.origin_server_ts,
+                    body.clone(),
+                    c.sender.clone(),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     pub fn sort_order(&self) -> &MilliSecondsSinceUnixEpoch {
         let mut ts = &self.sent;
 
@@ -201,7 +307,8 @@ impl Message {
         }
     }
 
-    pub fn display_full(&self) -> String {
+    /// Everything about the message, with its earlier bodies, oldest first.
+    pub fn display_full(&self, history: &[MessageType]) -> String {
         let date = Local.timestamp_opt(self.sent.as_secs().into(), 0).unwrap();
 
         let mut ret = format!(
@@ -218,9 +325,9 @@ impl Message {
             ret.push_str("### Reactions\n\n");
 
             for r in &self.reactions {
-                for re in &r.events {
+                for sender in &r.senders {
                     ret.push_str(
-                        format!("* {} by {} ({})\n", r.display(), re.sender, re.sender.id).as_str(),
+                        format!("* {} by {} ({})\n", r.display(), sender, sender.id).as_str(),
                     );
                 }
             }
@@ -228,15 +335,12 @@ impl Message {
             ret.push('\n');
         }
 
-        if !self.history.is_empty() {
-            let mut reversed_history = self.history.clone();
-            reversed_history.reverse();
-
+        if !history.is_empty() {
             ret.push_str("### History\n\n");
 
-            for h in reversed_history.into_iter() {
+            for h in history.iter().rev() {
                 ret.push_str("* ");
-                ret.push_str(&Message::display_body(&h));
+                ret.push_str(&Message::display_body(h));
                 ret.push('\n');
             }
         }
@@ -283,265 +387,47 @@ impl Message {
         }
     }
 
-    pub fn edit(&mut self, new_body: MessageType) {
-        let old = std::mem::replace(&mut self.body, new_body);
-        self.history.push(old);
-    }
-
     pub fn set_search_term(&self, term: &str) {
         let _ = self.search_term.set(term.to_string());
         self.replies.iter().for_each(|m| m.set_search_term(term));
     }
 
-    // can we make a brand-new message, just from this event?
-    pub fn try_from(event: &AnyTimelineEvent, force: bool) -> Option<Self> {
-        if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
-            let c = c.clone();
-
-            let body = match c.content.msgtype {
-                Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_) => c.content.msgtype,
-                _ => return None,
-            };
-
-            // skip replacements
-            if let Some(Relation::Replacement(_)) = c.content.relates_to {
-                return None;
-            }
-
-            // replies and thread messages are usually attached to another
-            // message instead of standing alone
-            let in_reply_to = match c.content.relates_to {
-                Some(Relation::Reply(Reply {
-                    in_reply_to: InReplyTo { event_id: id, .. },
-                    ..
-                })) => {
-                    if !force {
-                        return None;
-                    }
-
-                    Some(id)
-                }
-                Some(Relation::Thread(thread)) => {
-                    if !force {
-                        return None;
-                    }
-
-                    if thread.is_falling_back {
-                        None
-                    } else {
-                        thread.in_reply_to.map(|r| r.event_id)
-                    }
-                }
-                _ => None,
-            };
-
-            return Some(Message {
-                id: c.event_id,
-                in_reply_to,
-                room_id: c.room_id,
-                sent: c.origin_server_ts,
-                body,
-                history: vec![],
-                sender: Username::new(c.sender),
-                reactions: Vec::new(),
-                replies: Vec::new(),
-                thread: Vec::new(),
-                receipts: Vec::new(),
-                body_lower: OnceCell::new(),
-                search_term: OnceCell::new(),
-                display_cache: OnceCell::new(),
-            });
-        }
-
-        None
-    }
-
-    // if not, we should send the event here, to possibly act on existing
-    // events
-    pub fn apply_timeline_event(
+    /// Put a message under its target in this tree: in the target's thread,
+    /// or among its replies, until replies nest too deep to show. The target
+    /// moves to the end, since it has something new. Hands the message back
+    /// if its target isn't here.
+    pub fn nest(
         messages: &mut Vec<Message>,
-        event: &AnyTimelineEvent,
+        message: Message,
+        target: &OwnedEventId,
+        thread: bool,
         depth: usize,
-    ) -> MergeResult {
-        let mut reply_result = MergeResult::Ignored;
+    ) -> Option<Message> {
+        if let Some(i) = messages.iter().position(|m| &m.id == target) {
+            if !thread && depth > 3 {
+                messages.push(message);
+            } else {
+                let mut found = messages.remove(i);
 
-        // replacements and replies
-        if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event {
-            let event_content = c.clone().content;
-
-            if let Some(Relation::Replacement(Replacement {
-                event_id: id,
-                new_content: content,
-                ..
-            })) = event_content.relates_to.clone()
-            {
-                for message in messages.iter_mut() {
-                    if message.id == id {
-                        message.edit(content.msgtype);
-                        return MergeResult::Consumed;
-                    }
+                match thread {
+                    true => found.thread.push(message),
+                    false => found.replies.push(message),
                 }
+
+                messages.push(found);
             }
 
-            if let Some(Relation::Thread(thread)) = event_content.relates_to.clone() {
-                let target = if thread.is_falling_back {
-                    None
-                } else {
-                    thread.in_reply_to.map(|r| r.event_id)
-                };
-
-                let mut found_index = None;
-
-                for (i, message) in messages.iter_mut().enumerate() {
-                    if message.id == thread.event_id
-                        && let Some(reply) = Message::try_from(event, true)
-                    {
-                        message.push_thread_reply(reply, target.as_ref());
-                        found_index = Some(i);
-                        break;
-                    }
-                }
-
-                // we found the thread root, so move it to the end
-                if let Some(i) = found_index {
-                    let found = messages.remove(i);
-                    messages.push(found);
-                    return MergeResult::Consumed;
-                }
-
-                // we found a thread message, but its root isn't here
-                reply_result = MergeResult::Missed;
-            }
-
-            if let Some(Relation::Reply(Reply {
-                in_reply_to: InReplyTo { event_id: id, .. },
-                ..
-            })) = event_content.relates_to
-            {
-                let mut found_index = None;
-                let mut sibling = None;
-
-                for (i, message) in messages.iter_mut().enumerate() {
-                    if message.id == id
-                        && let Some(reply) = Message::try_from(event, true)
-                    {
-                        if depth > 3 {
-                            sibling = Some(reply)
-                        } else {
-                            message.replies.push(reply);
-                            found_index = Some(i);
-                        }
-                        break;
-                    }
-                }
-
-                // we found a message with a new reply, so move it to the end
-                if let Some(i) = found_index {
-                    let found = messages.remove(i);
-                    messages.push(found);
-                    return MergeResult::Consumed;
-                }
-
-                // we found a new reply, but can't nest any deeper
-                if let Some(message) = sibling {
-                    messages.push(message);
-                    return MergeResult::Consumed;
-                }
-
-                // we found a reply, but can't put it here
-                reply_result = MergeResult::Missed;
-            }
+            return None;
         }
 
-        // reactions
-        if let MessageLike(Rctn(MessageLikeEvent::Original(c))) = event {
-            let relates = c.content.relates_to.clone();
+        let mut message = message;
 
-            let body = relates.key;
-            let relates_id = relates.event_id;
-
-            for message in messages.iter_mut() {
-                if message.id == relates_id {
-                    let reaction_event =
-                        ReactionEvent::new(event.event_id().into(), c.sender.clone());
-
-                    message.reactions.push(Reaction {
-                        body,
-                        events: vec![reaction_event],
-                        list_view: OnceCell::new(),
-                    });
-
-                    return MergeResult::Consumed;
-                }
-            }
+        for m in messages.iter_mut() {
+            message = Message::nest(&mut m.replies, message, target, thread, depth + 1)?;
+            message = Message::nest(&mut m.thread, message, target, thread, depth + 1)?;
         }
 
-        // redactions (don't track the result)
-        if let MessageLike(RoomRedaction(RoomRedactionEvent::Original(
-            OriginalRoomRedactionEvent {
-                redacts: Some(id), ..
-            },
-        ))) = event
-        {
-            // first look in the reactions
-            for message in messages.iter_mut() {
-                for r in &mut message.reactions {
-                    r.events.retain(|e| &e.id != id)
-                }
-
-                // making sure to get rid of reactions that have no events
-                message.reactions.retain(|r| !r.events.is_empty());
-            }
-
-            // then look at the messages
-            messages.retain(|m| &m.id != id);
-        }
-
-        // and finally, continue down the tree, propogating a "missed" result
-        for message in messages.iter_mut() {
-            if !message.replies.is_empty() {
-                let result = Message::apply_timeline_event(&mut message.replies, event, depth + 1);
-
-                if result != MergeResult::Missed {
-                    reply_result = result;
-                }
-            }
-
-            if !message.thread.is_empty() {
-                let result = Message::apply_timeline_event(&mut message.thread, event, depth + 1);
-
-                if result != MergeResult::Missed {
-                    reply_result = result;
-                }
-            }
-        }
-
-        reply_result
-    }
-
-    // add a message to this message's thread; genuine replies nest under
-    // their target, like any reply
-    fn push_thread_reply(&mut self, reply: Message, target: Option<&OwnedEventId>) {
-        if let Some(target) = target
-            && let Some(i) = self.thread.iter().position(|m| m.contains_id(target))
-        {
-            let mut parent = self.thread.remove(i);
-            parent.find_by_id_mut(target).unwrap().replies.push(reply);
-            self.thread.push(parent);
-        } else {
-            self.thread.push(reply);
-        }
-    }
-
-    // the thread root, if this event is a message in a thread
-    pub fn thread_root(event: &AnyTimelineEvent) -> Option<&EventId> {
-        if let MessageLike(RoomMessage(MessageLikeEvent::Original(c))) = event
-            && let Some(Relation::Thread(thread)) = &c.content.relates_to
-        {
-            return Some(&thread.event_id);
-        }
-
-        None
+        Some(message)
     }
 
     /// Given a binary heap (priority queue) of Receipts, run through the
@@ -577,8 +463,8 @@ impl Message {
             self.sender.update(member);
 
             for reaction in self.reactions.iter_mut() {
-                for event in reaction.events.iter_mut() {
-                    event.sender.update(member)
+                for sender in reaction.senders.iter_mut() {
+                    sender.update(member)
                 }
             }
 
@@ -631,25 +517,9 @@ impl Message {
         self.replies.iter().find_map(|r| r.find_by_id(id))
     }
 
-    fn find_by_id_mut(&mut self, id: &OwnedEventId) -> Option<&mut Message> {
-        if &self.id == id {
-            return Some(self);
-        }
-
-        self.replies.iter_mut().find_map(|r| r.find_by_id_mut(id))
-    }
-
     // how many messages are in this tree, including this one?
     fn tree_len(&self) -> usize {
         1 + self.replies.iter().map(Message::tree_len).sum::<usize>()
-    }
-
-    pub fn merge_reactions(&mut self) {
-        self.reactions = Reaction::merge(&mut self.reactions);
-
-        for reply in self.replies.iter_mut() {
-            reply.merge_reactions();
-        }
     }
 
     fn highlight<'a>(&self, line: Cow<'a, str>) -> Vec<Span<'a>> {
@@ -736,7 +606,7 @@ impl Message {
             Span::styled(self.pretty_elapsed(), Style::default().fg(Color::DarkGray)),
         ];
 
-        if !self.history.is_empty() {
+        if self.edited {
             author.push(Span::styled(" (edited)", Style::default().fg(Color::Red)))
         }
 
@@ -865,31 +735,15 @@ pub enum LineType {
     RoomEvent,
 }
 
-// A reaction is a single emoji. I may have 1 or more events, one for each
-// user.
+// A reaction is a single emoji, from 1 or more users.
 #[derive(Clone)]
 pub struct Reaction {
     pub body: String,
-    pub events: Vec<ReactionEvent>,
+    pub senders: Vec<Username>,
     pub list_view: OnceCell<String>,
 }
 
 impl Reaction {
-    // drain the given reactions to create a merged version
-    pub fn merge(reactions: &mut Vec<Reaction>) -> Vec<Reaction> {
-        let mut merged: Vec<Reaction> = Vec::new();
-
-        for mut reaction in std::mem::take(reactions) {
-            if let Some(existing) = merged.iter_mut().find(|r| r.body == reaction.body) {
-                existing.events.append(&mut reaction.events);
-            } else {
-                merged.push(reaction);
-            }
-        }
-
-        merged
-    }
-
     pub fn display(&self) -> String {
         if let Some(emoji) = emojis::get(&self.body) {
             if let Some(shortcode) = emoji.shortcode() {
@@ -903,16 +757,15 @@ impl Reaction {
     }
 
     pub fn pretty_senders(&self) -> String {
-        let iter = self.events.iter().map(|s| {
-            s.sender
-                .as_str()
+        let iter = self.senders.iter().map(|s| {
+            s.as_str()
                 .split_whitespace()
                 .next()
                 .unwrap_or_default()
                 .to_string()
         });
 
-        pretty_list(limit_list(iter, 5, self.events.len(), None))
+        pretty_list(limit_list(iter, 5, self.senders.len(), None))
     }
 
     // cached to keep allocations out of the render loop
@@ -922,58 +775,32 @@ impl Reaction {
     }
 }
 
-#[derive(Clone)]
-pub struct ReactionEvent {
-    pub id: OwnedEventId,
-    pub sender: Username,
-}
-
-impl ReactionEvent {
-    pub fn new(id: OwnedEventId, sender_id: OwnedUserId) -> ReactionEvent {
-        ReactionEvent {
-            id,
-            sender: Username::new(sender_id),
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::matrix::username::Username;
-    use crate::widgets::message::{MergeResult, Message, Reaction, ReactionEvent};
-    use matrix_sdk::ruma::events::AnyTimelineEvent;
+    use crate::widgets::message::Message;
     use matrix_sdk::ruma::events::room::message::{MessageType::Text, TextMessageEventContent};
-    use matrix_sdk::ruma::exports::serde_json::{self, json};
+    use matrix_sdk::ruma::exports::serde_json::{self, Value, json};
     use matrix_sdk::ruma::{
-        MilliSecondsSinceUnixEpoch, OwnedEventId, owned_event_id, owned_room_id, owned_user_id,
+        MilliSecondsSinceUnixEpoch, OwnedEventId, owned_event_id, owned_user_id,
     };
-    use once_cell::unsync::OnceCell;
 
-    pub(crate) fn text_event(id: &str, ts: u64, body: &str) -> AnyTimelineEvent {
-        serde_json::from_value(json!({
+    pub(crate) fn text_event(id: &str, ts: u64, body: &str) -> Value {
+        json!({
             "type": "m.room.message",
             "event_id": id,
             "sender": "@alice:example.org",
             "origin_server_ts": ts,
-            "room_id": "!room:example.org",
             "content": { "msgtype": "m.text", "body": body }
-        }))
-        .unwrap()
+        })
     }
 
     // a message in a thread; a reply target makes it a genuine reply
-    pub(crate) fn thread_event(
-        id: &str,
-        ts: u64,
-        root: &str,
-        reply_to: Option<&str>,
-    ) -> AnyTimelineEvent {
-        serde_json::from_value(json!({
+    pub(crate) fn thread_event(id: &str, ts: u64, root: &str, reply_to: Option<&str>) -> Value {
+        json!({
             "type": "m.room.message",
             "event_id": id,
             "sender": "@alice:example.org",
             "origin_server_ts": ts,
-            "room_id": "!room:example.org",
             "content": {
                 "msgtype": "m.text",
                 "body": "in the thread",
@@ -984,8 +811,7 @@ pub(crate) mod tests {
                     "m.in_reply_to": { "event_id": reply_to.unwrap_or(root) }
                 }
             }
-        }))
-        .unwrap()
+        })
     }
 
     // an image from mxc://example.org/image, with whatever info is given
@@ -995,7 +821,7 @@ pub(crate) mod tests {
         size: Option<u64>,
         thumbnail: Option<&str>,
         dimensions: Option<(u32, u32)>,
-    ) -> AnyTimelineEvent {
+    ) -> Value {
         let mut info = json!({});
 
         if let Some(size) = size {
@@ -1011,12 +837,11 @@ pub(crate) mod tests {
             info["h"] = json!(h);
         }
 
-        serde_json::from_value(json!({
+        json!({
             "type": "m.room.message",
             "event_id": "$image:example.org",
             "sender": "@alice:example.org",
             "origin_server_ts": 1000,
-            "room_id": "!room:example.org",
             "content": {
                 "msgtype": "m.image",
                 "body": body,
@@ -1024,17 +849,15 @@ pub(crate) mod tests {
                 "url": "mxc://example.org/image",
                 "info": info
             }
-        }))
-        .unwrap()
+        })
     }
 
-    pub(crate) fn reaction_event(id: &str, ts: u64, target: &str, key: &str) -> AnyTimelineEvent {
-        serde_json::from_value(json!({
+    pub(crate) fn reaction_event(id: &str, ts: u64, target: &str, key: &str) -> Value {
+        json!({
             "type": "m.reaction",
             "event_id": id,
             "sender": "@alice:example.org",
             "origin_server_ts": ts,
-            "room_id": "!room:example.org",
             "content": {
                 "m.relates_to": {
                     "rel_type": "m.annotation",
@@ -1042,86 +865,74 @@ pub(crate) mod tests {
                     "key": key
                 }
             }
-        }))
-        .unwrap()
+        })
     }
 
-    pub(crate) fn reply_event(id: &str, ts: u64, target: &str, body: &str) -> AnyTimelineEvent {
-        serde_json::from_value(json!({
+    pub(crate) fn reply_event(id: &str, ts: u64, target: &str, body: &str) -> Value {
+        json!({
             "type": "m.room.message",
             "event_id": id,
             "sender": "@bob:example.org",
             "origin_server_ts": ts,
-            "room_id": "!room:example.org",
             "content": {
                 "msgtype": "m.text",
                 "body": body,
                 "m.relates_to": { "m.in_reply_to": { "event_id": target } }
             }
-        }))
-        .unwrap()
+        })
     }
 
-    pub(crate) fn join_event(id: &str, ts: u64, name: &str) -> AnyTimelineEvent {
-        serde_json::from_value(json!({
+    pub(crate) fn join_event(id: &str, ts: u64, name: &str) -> Value {
+        json!({
             "type": "m.room.member",
             "event_id": id,
             "sender": "@bob:example.org",
             "state_key": "@bob:example.org",
             "origin_server_ts": ts,
-            "room_id": "!room:example.org",
             "content": { "membership": "join", "displayname": name }
-        }))
-        .unwrap()
+        })
     }
 
     fn test_message(id: OwnedEventId) -> Message {
-        Message {
+        Message::new(
             id,
-            in_reply_to: None,
-            room_id: owned_room_id!("!room:example.org"),
-            sent: MilliSecondsSinceUnixEpoch::now(),
-            body: Text(TextMessageEventContent::plain("body")),
-            history: Vec::new(),
-            sender: Username::new(owned_user_id!("@alice:example.org")),
-            reactions: Vec::new(),
-            replies: Vec::new(),
-            thread: Vec::new(),
-            receipts: Vec::new(),
-            body_lower: OnceCell::new(),
-            search_term: OnceCell::new(),
-            display_cache: OnceCell::new(),
-        }
+            MilliSecondsSinceUnixEpoch::now(),
+            Text(TextMessageEventContent::plain("body")),
+            owned_user_id!("@alice:example.org"),
+        )
+    }
+
+    fn message(mut event: Value) -> Message {
+        event["room_id"] = json!("!room:example.org");
+        Message::try_from(&serde_json::from_value(event).unwrap()).unwrap()
     }
 
     #[test]
     fn displays_media_captions_with_the_filename() {
-        let event = image_event("Look at this dog", Some("dog.jpg"), None, None, None);
-        let message = Message::try_from(&event, false).unwrap();
+        let captioned = message(image_event(
+            "Look at this dog",
+            Some("dog.jpg"),
+            None,
+            None,
+            None,
+        ));
+        assert_eq!(captioned.display(), "dog.jpg\nLook at this dog");
 
-        assert_eq!(message.display(), "dog.jpg\nLook at this dog");
-
-        let event = image_event("dog.jpg", None, None, None, None);
-        let message = Message::try_from(&event, false).unwrap();
-
-        assert_eq!(message.display(), "dog.jpg");
+        let plain = message(image_event("dog.jpg", None, None, None, None));
+        assert_eq!(plain.display(), "dog.jpg");
     }
 
     #[test]
     fn displays_notices() {
-        let event = serde_json::from_value(json!({
+        let notice = message(json!({
             "type": "m.room.message",
             "event_id": "$notice:example.org",
             "sender": "@alice:example.org",
             "origin_server_ts": 1000,
-            "room_id": "!room:example.org",
             "content": { "msgtype": "m.notice", "body": "hello" }
-        }))
-        .unwrap();
+        }));
 
-        let message = Message::try_from(&event, false).unwrap();
-
-        assert_eq!(message.display(), "hello");
+        assert_eq!(notice.display(), "hello");
     }
 
     #[test]
@@ -1135,106 +946,6 @@ pub(crate) mod tests {
             Some(&reply_id)
         );
         assert!(message.contains_id(&reply_id));
-    }
-
-    #[test]
-    fn merges_reply_reactions_recursively() {
-        let reply_id = owned_event_id!("$reply:example.org");
-        let mut message = test_message(owned_event_id!("$root:example.org"));
-        let mut reply = test_message(reply_id.clone());
-
-        reply.reactions = vec![
-            Reaction {
-                body: "👍".to_string(),
-                events: vec![ReactionEvent::new(
-                    owned_event_id!("$reaction1:example.org"),
-                    owned_user_id!("@alice:example.org"),
-                )],
-                list_view: OnceCell::new(),
-            },
-            Reaction {
-                body: "👍".to_string(),
-                events: vec![ReactionEvent::new(
-                    owned_event_id!("$reaction2:example.org"),
-                    owned_user_id!("@bob:example.org"),
-                )],
-                list_view: OnceCell::new(),
-            },
-        ];
-        message.replies.push(reply);
-
-        message.merge_reactions();
-
-        let reply = message.find_by_id(&reply_id).unwrap();
-        assert_eq!(reply.reactions.len(), 1);
-        assert_eq!(reply.reactions[0].body, "👍");
-        assert_eq!(reply.reactions[0].events.len(), 2);
-    }
-
-    #[test]
-    fn threads_attach_to_the_root_and_bounce_it() {
-        let mut messages = vec![
-            Message::try_from(&text_event("$root:example.org", 1000, "root"), false).unwrap(),
-            Message::try_from(&text_event("$other:example.org", 2000, "other"), false).unwrap(),
-        ];
-
-        let result = Message::apply_timeline_event(
-            &mut messages,
-            &thread_event("$t1:example.org", 3000, "$root:example.org", None),
-            0,
-        );
-
-        assert!(result == MergeResult::Consumed);
-
-        let root = messages.last().unwrap();
-        assert_eq!(root.id.as_str(), "$root:example.org");
-        assert_eq!(root.thread.len(), 1);
-        assert_eq!(root.sort_order(), &root.thread[0].sent);
-    }
-
-    #[test]
-    fn genuine_thread_replies_nest_under_their_target() {
-        let mut messages =
-            vec![Message::try_from(&text_event("$root:example.org", 1000, "root"), false).unwrap()];
-
-        Message::apply_timeline_event(
-            &mut messages,
-            &thread_event("$t1:example.org", 2000, "$root:example.org", None),
-            0,
-        );
-
-        Message::apply_timeline_event(
-            &mut messages,
-            &thread_event(
-                "$t2:example.org",
-                3000,
-                "$root:example.org",
-                Some("$t1:example.org"),
-            ),
-            0,
-        );
-
-        let root = &messages[0];
-        assert_eq!(root.thread.len(), 1);
-        assert_eq!(root.thread[0].replies.len(), 1);
-        assert_eq!(root.thread[0].replies[0].id.as_str(), "$t2:example.org");
-
-        // and the meta line counts the whole tree
-        let count: usize = root.thread.iter().map(Message::tree_len).sum();
-        assert_eq!(count, 2);
-    }
-
-    #[test]
-    fn threads_without_a_root_are_missed() {
-        let mut messages = vec![];
-
-        let result = Message::apply_timeline_event(
-            &mut messages,
-            &thread_event("$t1:example.org", 2000, "$root:example.org", None),
-            0,
-        );
-
-        assert!(result == MergeResult::Missed);
     }
 
     #[test]

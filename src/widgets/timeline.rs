@@ -146,17 +146,17 @@ impl<'a> Timeline<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::widgets::chat::{OrderedEvent, make_message_list};
+    use crate::widgets::chat::make_message_list;
+    use crate::widgets::chat::tests::timeline_items;
     use crate::widgets::message::tests::{
         image_event, join_event, reaction_event, reply_event, text_event, thread_event,
     };
     use crate::widgets::receipts::Receipts;
     use image::DynamicImage;
-    use matrix_sdk::ruma::events::AnyTimelineEvent;
+    use matrix_sdk::ruma::exports::serde_json::Value;
     use matrix_sdk::ruma::{OwnedMxcUri, owned_mxc_uri, owned_user_id};
     use ratatui_image::FontSize;
     use ratatui_image::picker::ProtocolType;
-    use std::collections::BTreeSet;
 
     const WIDTH: u16 = 40;
     const HEIGHT: u16 = 10;
@@ -172,16 +172,16 @@ mod tests {
     }
 
     // draws the timeline for some events with the given row selected
-    fn draw_with(
-        events: Vec<AnyTimelineEvent>,
+    async fn draw_with(
+        events: Vec<Value>,
         selected: usize,
         height: u16,
         pictures: &mut Pictures,
         picker: Option<&Picker>,
     ) -> Drawn {
-        let timeline: BTreeSet<OrderedEvent> = events.into_iter().map(OrderedEvent::new).collect();
+        let items = timeline_items(events).await;
         let receipts = Receipts::new(owned_user_id!("@me:example.org"));
-        let messages = make_message_list(&timeline, &vec![], &receipts, "", None);
+        let messages = make_message_list(&items, &vec![], &receipts, "", None);
 
         let area = Rect::new(0, 0, WIDTH, height);
         let mut buf = Buffer::empty(area);
@@ -217,8 +217,8 @@ mod tests {
         }
     }
 
-    fn draw(events: Vec<AnyTimelineEvent>, selected: usize) -> (Vec<String>, Vec<LineType>) {
-        let drawn = draw_with(events, selected, HEIGHT, &mut Pictures::default(), None);
+    async fn draw(events: Vec<Value>, selected: usize) -> (Vec<String>, Vec<LineType>) {
+        let drawn = draw_with(events, selected, HEIGHT, &mut Pictures::default(), None).await;
         (drawn.rows, drawn.line_types)
     }
 
@@ -230,7 +230,7 @@ mod tests {
     }
 
     // a small image, which shows its original
-    fn dog(caption: Option<&str>) -> AnyTimelineEvent {
+    fn dog(caption: Option<&str>) -> Value {
         match caption {
             Some(caption) => image_event(caption, Some("dog.jpg"), Some(1000), None, None),
             None => image_event("dog.jpg", None, Some(1000), None, None),
@@ -266,12 +266,12 @@ mod tests {
         &rows[rows.len() - n..]
     }
 
-    #[test]
-    fn text_message_lands_on_the_bottom_rows() {
+    #[tokio::test]
+    async fn text_message_lands_on_the_bottom_rows() {
         let events = vec![text_event("$text:example.org", 1000, "hello")];
 
         // the newest row sits at the bottom, with the author above it
-        let (rows, line_types) = draw(events.clone(), 0);
+        let (rows, line_types) = draw(events.clone(), 0).await;
 
         assert_eq!(
             bottom(&rows, 3),
@@ -283,20 +283,21 @@ mod tests {
         assert!(matches!(line_types[2], LineType::DeadSpace));
 
         // moving the selection up one row lands on the author line
-        let (rows, _) = draw(events, 1);
+        let (rows, _) = draw(events, 1).await;
 
         assert_eq!(bottom(&rows, 2), ["> @alice:example.org <time>", "  hello"]);
     }
 
-    #[test]
-    fn newer_messages_sit_below_older_ones() {
+    #[tokio::test]
+    async fn newer_messages_sit_below_older_ones() {
         let (rows, _) = draw(
             vec![
                 text_event("$older:example.org", 1000, "older"),
                 text_event("$newer:example.org", 2000, "newer"),
             ],
             0,
-        );
+        )
+        .await;
 
         assert_eq!(
             bottom(&rows, 6),
@@ -311,10 +312,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn long_text_wraps_to_the_width() {
+    #[tokio::test]
+    async fn long_text_wraps_to_the_width() {
         let events = vec![text_event("$text:example.org", 1000, &"word ".repeat(20))];
-        let (rows, line_types) = draw(events.clone(), 0);
+        let (rows, line_types) = draw(events.clone(), 0).await;
 
         assert_eq!(
             bottom(&rows, 4),
@@ -332,22 +333,23 @@ mod tests {
         // moving the selection up steps through the body a row at a time,
         // then onto the author line
         for selected in 1..=3 {
-            let (rows, _) = draw(events.clone(), selected);
+            let (rows, _) = draw(events.clone(), selected).await;
             let marker = rows.iter().position(|row| row.starts_with("> "));
 
             assert_eq!(marker, Some(rows.len() - 1 - selected));
         }
     }
 
-    #[test]
-    fn reactions_show_under_the_body() {
+    #[tokio::test]
+    async fn reactions_show_under_the_body() {
         let (rows, _) = draw(
             vec![
                 text_event("$text:example.org", 1000, "hello"),
                 reaction_event("$reaction:example.org", 2000, "$text:example.org", "👍"),
             ],
             0,
-        );
+        )
+        .await;
 
         assert_eq!(
             bottom(&rows, 3),
@@ -359,8 +361,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn replies_are_indented_with_a_gutter() {
+    #[tokio::test]
+    async fn replies_are_indented_with_a_gutter() {
         let (rows, line_types) = draw(
             vec![
                 text_event("$text:example.org", 1000, "hello"),
@@ -372,7 +374,8 @@ mod tests {
                 ),
             ],
             0,
-        );
+        )
+        .await;
 
         // the quoted header is dropped, and the reply's spacer opens the gutter
         assert_eq!(
@@ -391,15 +394,16 @@ mod tests {
         assert!(matches!(&line_types[1], LineType::MessageStart(id) if id == "$reply:example.org"));
     }
 
-    #[test]
-    fn threads_show_a_reply_count() {
+    #[tokio::test]
+    async fn threads_show_a_reply_count() {
         let (rows, _) = draw(
             vec![
                 text_event("$root:example.org", 1000, "root"),
                 thread_event("$thread:example.org", 2000, "$root:example.org", None),
             ],
             0,
-        );
+        )
+        .await;
 
         assert_eq!(
             bottom(&rows, 3),
@@ -411,8 +415,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn room_events_sit_between_messages() {
+    #[tokio::test]
+    async fn room_events_sit_between_messages() {
         let (rows, line_types) = draw(
             vec![
                 text_event("$older:example.org", 1000, "older"),
@@ -420,7 +424,8 @@ mod tests {
                 text_event("$newer:example.org", 2000, "newer"),
             ],
             0,
-        );
+        )
+        .await;
 
         assert_eq!(
             bottom(&rows, 7),
@@ -439,8 +444,8 @@ mod tests {
         assert!(matches!(line_types[4], LineType::DeadSpace));
     }
 
-    #[test]
-    fn selecting_an_older_row_scrolls_it_into_view() {
+    #[tokio::test]
+    async fn selecting_an_older_row_scrolls_it_into_view() {
         let events: Vec<_> = (1..=5)
             .map(|i| {
                 text_event(
@@ -452,7 +457,7 @@ mod tests {
             .collect();
 
         // five messages need fifteen rows; the oldest author line is row 13
-        let (rows, line_types) = draw(events, 13);
+        let (rows, line_types) = draw(events, 13).await;
 
         assert_eq!(line_types.len(), 15);
         assert!(matches!(&line_types[13], LineType::MessageStart(id) if id == "$1:example.org"));
@@ -462,8 +467,8 @@ mod tests {
         assert!(!rows.contains(&"  message 5".to_string()));
     }
 
-    #[test]
-    fn ready_pictures_replace_the_title_line() {
+    #[tokio::test]
+    async fn ready_pictures_replace_the_title_line() {
         // a wide picture fills the width beside the marker column
         let drawn = draw_with(
             vec![dog(Some("Look at this dog"))],
@@ -471,7 +476,8 @@ mod tests {
             20,
             &mut ready(400, 50),
             Some(&kitty()),
-        );
+        )
+        .await;
 
         let picture = format!("  {}", "#".repeat(38));
 
@@ -490,9 +496,9 @@ mod tests {
         assert!(drawn.fetches.is_empty());
     }
 
-    #[test]
-    fn tall_pictures_stop_at_ten_rows() {
-        let drawn = draw_with(vec![dog(None)], 0, 20, &mut ready(400, 300), Some(&kitty()));
+    #[tokio::test]
+    async fn tall_pictures_stop_at_ten_rows() {
+        let drawn = draw_with(vec![dog(None)], 0, 20, &mut ready(400, 300), Some(&kitty())).await;
         let rows = picture_rows(&drawn.rows);
 
         // keeping their shape, so narrower than the width
@@ -505,8 +511,8 @@ mod tests {
         assert_eq!(drawn.rows[9], "  @alice:example.org <time>");
     }
 
-    #[test]
-    fn pictures_that_are_not_ready_show_the_title_line() {
+    #[tokio::test]
+    async fn pictures_that_are_not_ready_show_the_title_line() {
         let mut loading = Pictures::default();
         loading.request(&dog_uri());
 
@@ -514,7 +520,7 @@ mod tests {
         failed.insert(dog_uri(), None);
 
         for mut pictures in [loading, failed] {
-            let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&kitty()));
+            let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&kitty())).await;
 
             assert_eq!(
                 bottom(&drawn.rows, 2),
@@ -526,8 +532,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pictures_with_dimensions_hold_their_rows_while_loading() {
+    #[tokio::test]
+    async fn pictures_with_dimensions_hold_their_rows_while_loading() {
         // the event's 400×100 fits in five rows
         let event = image_event("dog.jpg", None, Some(1000), None, Some((400, 100)));
         let mut pictures = Pictures::default();
@@ -535,7 +541,7 @@ mod tests {
 
         // the first draw asks for the picture and already leaves its rows,
         // without the title line
-        let loading = draw_with(vec![event.clone()], 0, 20, &mut pictures, Some(&picker));
+        let loading = draw_with(vec![event.clone()], 0, 20, &mut pictures, Some(&picker)).await;
 
         assert_eq!(loading.fetches, [dog_uri()]);
         assert_eq!(loading.rows[14], "  @alice:example.org <time>");
@@ -545,20 +551,20 @@ mod tests {
         // the decoded picture is taller than the event said, which alone
         // would take six rows, but it keeps the five
         pictures.insert(dog_uri(), Some(DynamicImage::new_rgb8(400, 120)));
-        let ready = draw_with(vec![event], 0, 20, &mut pictures, Some(&picker));
+        let ready = draw_with(vec![event], 0, 20, &mut pictures, Some(&picker)).await;
 
         assert_eq!(ready.rows[14], "  @alice:example.org <time>");
         assert_eq!(picture_rows(&ready.rows), (15..20).collect::<Vec<_>>());
         assert_eq!(ready.line_types.len(), loading.line_types.len());
     }
 
-    #[test]
-    fn failed_pictures_with_dimensions_show_the_title_line() {
+    #[tokio::test]
+    async fn failed_pictures_with_dimensions_show_the_title_line() {
         let event = image_event("dog.jpg", None, Some(1000), None, Some((400, 100)));
         let mut pictures = Pictures::default();
         pictures.insert(dog_uri(), None);
 
-        let drawn = draw_with(vec![event], 0, 10, &mut pictures, Some(&kitty()));
+        let drawn = draw_with(vec![event], 0, 10, &mut pictures, Some(&kitty())).await;
 
         assert_eq!(
             bottom(&drawn.rows, 2),
@@ -566,9 +572,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn without_a_picker_pictures_stay_titles() {
-        let drawn = draw_with(vec![dog(None)], 0, 10, &mut ready(400, 50), None);
+    #[tokio::test]
+    async fn without_a_picker_pictures_stay_titles() {
+        let drawn = draw_with(vec![dog(None)], 0, 10, &mut ready(400, 50), None).await;
 
         assert_eq!(
             bottom(&drawn.rows, 2),
@@ -578,14 +584,14 @@ mod tests {
         assert!(drawn.fetches.is_empty());
     }
 
-    #[test]
-    fn pictures_scrolled_partly_off_show_their_visible_rows() {
+    #[tokio::test]
+    async fn pictures_scrolled_partly_off_show_their_visible_rows() {
         let events = vec![dog(None), text_event("$text:example.org", 2000, "hello")];
         let mut pictures = ready(400, 300);
         let picker = kitty();
 
         // the newer message pushes the picture's top off the screen
-        let drawn = draw_with(events.clone(), 0, 8, &mut pictures, Some(&picker));
+        let drawn = draw_with(events.clone(), 0, 8, &mut pictures, Some(&picker)).await;
 
         assert_eq!(picture_rows(&drawn.rows), [0, 1, 2, 3, 4]);
         assert_eq!(
@@ -594,19 +600,20 @@ mod tests {
         );
 
         // selecting the picture's author scrolls its bottom off instead
-        let drawn = draw_with(events, 13, 8, &mut pictures, Some(&picker));
+        let drawn = draw_with(events, 13, 8, &mut pictures, Some(&picker)).await;
 
         assert_eq!(drawn.rows[0], "> @alice:example.org <time>");
         assert_eq!(picture_rows(&drawn.rows), [1, 2, 3, 4, 5, 6, 7]);
     }
 
-    #[test]
-    fn the_cursor_steps_through_picture_rows() {
+    #[tokio::test]
+    async fn the_cursor_steps_through_picture_rows() {
         let mut pictures = ready(400, 300);
         let picker = kitty();
 
         for selected in 0..10 {
-            let drawn = draw_with(vec![dog(None)], selected, 20, &mut pictures, Some(&picker));
+            let drawn =
+                draw_with(vec![dog(None)], selected, 20, &mut pictures, Some(&picker)).await;
             let marker = drawn.rows.iter().position(|row| row.starts_with("> "));
 
             assert_eq!(marker, Some(19 - selected));
@@ -617,25 +624,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn drawing_an_unfetched_picture_asks_for_it_once() {
+    #[tokio::test]
+    async fn drawing_an_unfetched_picture_asks_for_it_once() {
         let mut pictures = Pictures::default();
         let picker = kitty();
 
         // it shows the title line while it loads
-        let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&picker));
+        let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&picker)).await;
 
         assert_eq!(drawn.fetches, [dog_uri()]);
         assert_eq!(bottom(&drawn.rows, 1), ["> Image: dog.jpg (1000 B)"]);
 
-        let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&picker));
+        let drawn = draw_with(vec![dog(None)], 0, 10, &mut pictures, Some(&picker)).await;
         assert!(drawn.fetches.is_empty());
     }
 
-    #[test]
-    fn pictures_off_screen_are_not_fetched() {
+    #[tokio::test]
+    async fn pictures_off_screen_are_not_fetched() {
         let events = vec![dog(None), text_event("$text:example.org", 2000, "hello")];
-        let drawn = draw_with(events, 0, 3, &mut Pictures::default(), Some(&kitty()));
+        let drawn = draw_with(events, 0, 3, &mut Pictures::default(), Some(&kitty())).await;
 
         assert!(drawn.fetches.is_empty());
     }

@@ -7,6 +7,7 @@
 - Start in the room switcher instead of opening the most recent room, and refresh the switcher when the terminal regains focus. Until a room is open, the switcher comes back whenever nothing else is showing, such as after verifying, instead of leaving a blank screen.
 - Send a small JPEG thumbnail with every uploaded image and video, so other clients can show a preview.
 - Show encrypted messages in the open room as soon as their keys arrive, such as after verifying or recovering, instead of only after switching rooms or restarting.
+- Show "Unable to decrypt this message." in place of an encrypted message whose key hasn't arrived, instead of leaving it out, so a room opened while keys download from the backup no longer looks empty. The message replaces it when its key arrives.
 - Ask before accepting a verification request, naming the device asking, instead of accepting every request in every running session. Another running matui session no longer takes over a new session's verification.
 - Start the emoji comparison once another device accepts matui's verification request, so one matui session can verify another. When the other device starts a comparison too, as Element X does, matui follows whichever one wins instead of hanging.
 - Show a popup with the reason when a verification is cancelled, by either side or by two requests colliding, instead of leaving it waiting. A request answered by another session just closes its prompt.

@@ -1,5 +1,4 @@
 use crate::app::{App, NoticeId, Popup};
-use crate::matrix::RoomKey;
 use crate::matrix::emoji::format_emojis;
 use crate::spawn::pasted_file_paths;
 use crate::widgets::EventResult;
@@ -28,14 +27,14 @@ use matrix_sdk::encryption::verification::{
 };
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::AnyTimelineEvent;
+use matrix_sdk_ui::Timeline;
+use matrix_sdk_ui::eyeball_im::Vector;
+use matrix_sdk_ui::timeline::TimelineItem;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum MatuiEvent {
     Confirm(String, String),
-    /// Events that failed to decrypt before, now decrypted. They're old, so
-    /// they don't notify.
-    Decrypted(Vec<AnyTimelineEvent>),
     Error(String),
     Invited(Room, String),
     LoggedOut,
@@ -60,16 +59,17 @@ pub enum MatuiEvent {
     QrLoginSyncing,
     Receipt(Room, ReceiptEventContent),
     RoomFound(PublicRoomsChunk),
-    /// Room keys arrived, or `None` if some arrived but we lost track of
-    /// which.
-    RoomKeys(Option<Vec<RoomKey>>),
+    /// A room's timeline paged back, and whether it reached the start.
+    Paginated(OwnedRoomId, bool),
     RoomLeft(Room),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
     Search(String),
     SyncComplete,
+    /// An event from sync, for notifications.
     Timeline(AnyTimelineEvent),
-    TimelineBatch(Batch),
+    /// All the items of a room's timeline, after a change.
+    TimelineItems(Arc<Timeline>, Vector<Arc<TimelineItem>>),
     Typing(Room, Vec<OwnedUserId>),
     /// Offer to verify this session after login, by asking another session
     /// when there's a verified one to ask, or with the recovery key.
@@ -90,13 +90,6 @@ pub enum MatuiEvent {
 pub enum SyncType {
     Initial,
     Latest,
-}
-
-#[derive(Clone, Debug)]
-pub struct Batch {
-    pub room: Room,
-    pub events: Vec<AnyTimelineEvent>,
-    pub cursor: Option<String>,
 }
 
 pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
@@ -240,30 +233,15 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 app.set_popup(Popup::Rooms(rooms));
             }
         }
-        MatuiEvent::Timeline(event) => {
+        MatuiEvent::Timeline(event) => app.matrix.timeline_event(event),
+        MatuiEvent::TimelineItems(timeline, items) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
-                c.timeline_event(event.clone());
-            }
-
-            // is it weird to send events all the way up here, then right
-            // back down?
-            app.matrix.timeline_event(event)
-        }
-        MatuiEvent::RoomKeys(keys) => {
-            // the room chat has every event the thread view has, so it asks
-            // for both
-            if let Some(c) = &app.chat {
-                c.room_keys_event(keys);
+                c.items_event(&timeline, &items);
             }
         }
-        MatuiEvent::Decrypted(events) => {
+        MatuiEvent::Paginated(room_id, hit_start) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
-                c.decrypted_event(events.clone());
-            }
-        }
-        MatuiEvent::TimelineBatch(batch) => {
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
-                c.batch_event(batch.clone());
+                c.paginated_event(&room_id, hit_start);
             }
         }
         MatuiEvent::Typing(room, ids) => {

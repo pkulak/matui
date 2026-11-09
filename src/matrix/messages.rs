@@ -7,14 +7,10 @@ use std::{fs, thread};
 
 use image::{DynamicImage, ImageReader, Limits};
 use log::error;
-use matrix_sdk::HttpError;
 use matrix_sdk::attachment::AttachmentConfig;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
-use matrix_sdk::room::{MessagesOptions, Receipts, Room};
-use matrix_sdk::ruma::api::Direction;
-use matrix_sdk::ruma::events::reaction::ReactionEventContent;
-use matrix_sdk::ruma::events::relation::Annotation;
+use matrix_sdk::room::{Receipts, Room};
 use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, File, Image, Video};
@@ -22,14 +18,13 @@ use matrix_sdk::ruma::events::room::message::{
     AddMentions, ForwardThread, ReplyWithinThread, RoomMessageEventContent, TextMessageEventContent,
 };
 use matrix_sdk::ruma::events::{AnyMessageLikeEvent, AnyTimelineEvent, MessageLikeEvent};
-use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId, UInt};
-use tokio::task::AbortHandle;
+use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId};
 
 use super::Matrix;
 use super::mentions;
 use super::mime::mime_from_path;
+use crate::handler::MatuiEvent;
 use crate::handler::MatuiEvent::Error;
-use crate::handler::{Batch, MatuiEvent};
 use crate::media::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, decode_upright, get_attachment_info};
 use crate::pictures::source_uri;
 use crate::spawn::{save_file, view_file};
@@ -47,55 +42,6 @@ pub enum AfterDownload {
 }
 
 impl Matrix {
-    /// Abort the returned handle to stop fetching, including any retries.
-    pub fn fetch_messages(&self, room: Room, cursor: Option<String>, limit: usize) -> AbortHandle {
-        const RETRY_DELAY: Duration = Duration::from_secs(3);
-
-        let limit = UInt::new(limit.try_into().unwrap_or(25)).expect("invalid paging limit");
-        let matrix = self.clone();
-
-        let task = self.spawn(async move {
-            let messages = loop {
-                let mut options = MessagesOptions::new(Direction::Backward);
-                options.limit = limit;
-                options.from = cursor.clone();
-
-                match room.messages(options).await {
-                    Ok(msg) => break msg,
-                    // a lost connection comes back by itself, so wait it out
-                    Err(matrix_sdk::Error::Http(err)) if matches!(*err, HttpError::Reqwest(_)) => {
-                        error!("could not fetch messages, retrying: {}", err);
-                        tokio::time::sleep(RETRY_DELAY).await;
-                    }
-                    Err(err) => {
-                        matrix.send(Error(err.to_string()));
-                        return;
-                    }
-                }
-            };
-
-            let unpacked: Vec<AnyTimelineEvent> = messages
-                .chunk
-                .iter()
-                .filter_map(|te| {
-                    Matrix::deserialize_event(te, room.room_id().into())
-                        .map_err(|err| error!("could not deserialize event: {}", err))
-                        .ok()
-                })
-                .collect();
-
-            let batch = Batch {
-                room: room.clone(),
-                events: unpacked,
-                cursor: messages.end,
-            };
-
-            matrix.send(MatuiEvent::TimelineBatch(batch));
-        });
-
-        task.abort_handle()
-    }
-
     pub fn download_content(&self, message: MessageType, after: AfterDownload) {
         let matrix = self.clone();
 
@@ -319,21 +265,6 @@ impl Matrix {
                 {
                     matrix.send(Error(err.to_string()));
                 }
-            }
-        });
-    }
-
-    pub fn send_reaction(&self, room: Room, event_id: OwnedEventId, key: String) {
-        let matrix = self.clone();
-
-        self.spawn(async move {
-            let _progress = matrix.progress("Sending reaction.", 500);
-
-            if let Err(err) = room
-                .send(ReactionEventContent::new(Annotation::new(event_id, key)))
-                .await
-            {
-                matrix.send(Error(err.to_string()));
             }
         });
     }
