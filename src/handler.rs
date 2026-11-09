@@ -69,6 +69,11 @@ pub enum MatuiEvent {
     Timeline(AnyTimelineEvent),
     TimelineBatch(Batch),
     Typing(Room, Vec<OwnedUserId>),
+    /// Offer to verify this session after login, by asking another session
+    /// when there's a verified one to ask, or with the recovery key.
+    VerificationOffered {
+        other_session: bool,
+    },
     /// Another device asks to verify, with a prompt naming it.
     VerificationRequested(VerificationRequest, String),
     /// A verification request or its emoji comparison was cancelled, by
@@ -269,6 +274,31 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             if app.receipts.len() > 500 {
                 app.receipts.pop_front();
             }
+        }
+        MatuiEvent::VerificationOffered { other_session } => {
+            let confirm = if other_session {
+                Confirm::new(
+                    "Verify This Session".to_string(),
+                    "Verify this session to read encrypted messages. To verify \
+                     from another session, open it first, so it can answer."
+                        .to_string(),
+                    "Ask Other Session".to_string(),
+                    "Recovery Key".to_string(),
+                    ConfirmBehavior::OfferVerification,
+                )
+            } else {
+                Confirm::new(
+                    "Verify This Session".to_string(),
+                    "Verify this session with your recovery key to read \
+                     encrypted messages."
+                        .to_string(),
+                    "Recovery Key".to_string(),
+                    "Not Now".to_string(),
+                    ConfirmBehavior::OfferRecovery,
+                )
+            };
+
+            app.set_popup(Popup::Confirm(confirm));
         }
         MatuiEvent::VerificationRequested(request, message) => {
             app.set_popup(Popup::Confirm(Confirm::new(

@@ -173,7 +173,7 @@ impl Matrix {
 
         if self.start_sync(client, SyncType::Initial).await {
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            self.verify();
+            self.offer_verification();
         }
     }
 

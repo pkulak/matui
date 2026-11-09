@@ -187,10 +187,13 @@ full timeline. Use Shift+G to go back to the latest message.
 
 ## End-to-End Encryption
 
-After login, a verification request is sent out to your other clients. If you
-don't have any other clients, or don't want to verify this way, you can
-cancel/ignore the request and type `:verify` from the chat window to start
-a verification by passphrase.
+After login, matui offers to verify the new session. If you have another
+verified session, matui can ask it to verify this one, with an emoji
+comparison. Open that session before choosing this, so it can answer.
+Otherwise, use your recovery key or passphrase. You can also type `:verify`
+from the chat window at any time to verify with the recovery key.
+
+When another session asks to verify this one, matui asks before accepting.
 
 # Configuration Example
 

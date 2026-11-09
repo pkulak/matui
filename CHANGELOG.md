@@ -10,7 +10,7 @@
 - Ask before accepting a verification request, naming the device asking, instead of accepting every request in every running session. Another running matui session no longer takes over a new session's verification.
 - Start the emoji comparison once another device accepts matui's verification request, so one matui session can verify another.
 - Show a popup with the reason when a verification is cancelled, by either side or by two requests colliding, instead of leaving it waiting. A request answered by another session just closes its prompt.
-- Only send a verification request at login when another verified session can answer it. Without one, the request went to every device and blocked any verification started elsewhere for 10 minutes.
+- Ask how to verify a new session after login, instead of sending a verification request right away. Ask another verified session, which needs to be open to answer, or use the recovery key. Without another verified session, only the recovery key is offered, since the request went to every device and blocked any verification started elsewhere for 10 minutes.
 
 ## [1.1.0] - 2026-10-25
 

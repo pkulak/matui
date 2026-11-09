@@ -8,7 +8,9 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 
+use crate::app::Popup;
 use crate::widgets::button::Button;
+use crate::widgets::recover::Recover;
 use crate::widgets::{Focusable, focus_next};
 use crate::{close, consumed};
 
@@ -16,6 +18,10 @@ use super::{EventResult, get_margin};
 
 #[derive(Clone)]
 pub enum ConfirmBehavior {
+    /// Ask another session to verify this one, or use the recovery key.
+    OfferVerification,
+    /// Use the recovery key, with no other session to ask.
+    OfferRecovery,
     Verification,
     VerificationRequest(VerificationRequest),
     DeleteMessage(Room, OwnedEventId),
@@ -104,6 +110,15 @@ impl Confirm {
         let focused = self.yes.focused();
 
         match self.behavior.clone() {
+            ConfirmBehavior::OfferVerification if focused => {
+                EventResult::Consumed(Box::new(|app| {
+                    app.matrix.verify();
+                    app.close_popup();
+                }))
+            }
+            ConfirmBehavior::OfferVerification => recover(),
+            ConfirmBehavior::OfferRecovery if focused => recover(),
+            ConfirmBehavior::OfferRecovery => close!(),
             ConfirmBehavior::Verification if focused => EventResult::Consumed(Box::new(|app| {
                 if let Some(s) = app.sas.clone() {
                     app.matrix.confirm_verification(s);
@@ -154,6 +169,13 @@ impl Confirm {
             ConfirmBehavior::JoinPublicRoom(_) => close!(),
         }
     }
+}
+
+/// Swap the popup for the recovery key prompt.
+fn recover() -> EventResult {
+    EventResult::Consumed(Box::new(|app| {
+        app.set_popup(Popup::Recover(Recover::default()))
+    }))
 }
 
 pub struct ConfirmWidget<'a> {

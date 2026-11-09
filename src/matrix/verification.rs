@@ -18,10 +18,14 @@ use crate::event::Event::Matui;
 use crate::handler::MatuiEvent;
 use crate::handler::MatuiEvent::{
     Error, VerificationAnsweredElsewhere, VerificationCancelled, VerificationCompleted,
-    VerificationRequested, VerificationStarted,
+    VerificationOffered, VerificationRequested, VerificationStarted,
 };
 
 impl Matrix {
+    pub fn offer_verification(&self) {
+        App::spawn(offer_verification(self.client(), App::get_sender()));
+    }
+
     pub fn verify(&self) {
         App::spawn(request_verification(self.client(), App::get_sender()));
     }
@@ -153,33 +157,44 @@ async fn accept_request(request: VerificationRequest, sender: Sender<Event>) {
     }
 }
 
-/// Ask the user's other cross-signed sessions to verify this one. With none,
-/// the SDK sends the request to every device, this one included, where it
-/// stays pending for ten minutes. Until then, the SDK cancels it along with
-/// any request the user starts from another device.
-async fn request_verification(client: Client, sender: Sender<Event>) {
-    let (Some(user_id), Some(device_id)) = (client.user_id(), client.device_id()) else {
-        return;
-    };
-
+/// Offer to verify this session, unless it's verified already: it has the
+/// cross-signing keys, such as the first session on an account. Asking
+/// another session only works while it's open, so the user picks when, and
+/// the offer only includes it when there's a cross-signed session to ask.
+async fn offer_verification(client: Client, sender: Sender<Event>) {
     let encryption = client.encryption();
 
-    match encryption.get_user_devices(user_id).await {
-        Ok(devices)
-            if devices
-                .devices()
-                .any(|d| d.device_id() != device_id && d.is_cross_signed_by_owner()) => {}
-        Ok(_) => {
-            info!("no other verified session to ask for verification");
-            return;
-        }
+    if encryption
+        .cross_signing_status()
+        .await
+        .is_some_and(|status| status.is_complete())
+    {
+        return;
+    }
+
+    // this session is unverified, so the device found can't be this one
+    let other_session = match encryption.has_devices_to_verify_against().await {
+        Ok(found) => found,
         Err(err) => {
             error!("could not get devices: {}", err);
             return;
         }
-    }
+    };
 
-    match encryption.get_user_identity(user_id).await {
+    let _ = sender.send(Matui(VerificationOffered { other_session }));
+}
+
+/// Ask the user's other cross-signed sessions to verify this one. With none,
+/// the SDK sends the request to every device, this one included, where it
+/// stays pending for ten minutes. Until then, the SDK cancels it along with
+/// any request the user starts from another device. So it's only offered
+/// when another session can answer.
+async fn request_verification(client: Client, sender: Sender<Event>) {
+    let Some(user_id) = client.user_id() else {
+        return;
+    };
+
+    match client.encryption().get_user_identity(user_id).await {
         Ok(Some(identity)) => {
             match identity
                 .request_verification_with_methods(vec![VerificationMethod::SasV1])
@@ -728,15 +743,28 @@ mod tests {
         assert!(events.try_recv().is_err());
     }
 
-    #[tokio::test]
-    async fn asks_nothing_without_another_verified_session() {
-        let (server, matui, _other, queue, _events) = two_sessions().await;
-        let user = matui.user_id().unwrap();
-        let _guard = server
-            .capture_put_to_device_traffic(user, queue.clone())
-            .await;
+    /// Cross-sign the other session, and tell matui about it.
+    async fn cross_sign_other(server: &MatrixMockServer, matui: &Client, other: &Client) {
+        other
+            .encryption()
+            .bootstrap_cross_signing(None)
+            .await
+            .unwrap();
 
-        // the first session on an account cross-signs only itself
+        server
+            .mock_sync()
+            .ok_and_run(matui, |builder| {
+                builder.add_change_device(matui.user_id().unwrap());
+            })
+            .await;
+        server.mock_sync().ok_and_run(matui, |_| {}).await;
+    }
+
+    #[tokio::test]
+    async fn offers_nothing_once_verified() {
+        let (_server, matui, _other, _queue, _events) = two_sessions().await;
+
+        // the first session on an account cross-signs itself
         matui
             .encryption()
             .bootstrap_cross_signing(None)
@@ -744,10 +772,50 @@ mod tests {
             .unwrap();
 
         let (sender, events) = channel();
-        request_verification(matui, sender).await;
+        offer_verification(matui, sender).await;
 
-        assert!(queue.lock().unwrap().is_empty());
         assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn offers_only_recovery_without_another_verified_session() {
+        let (_server, matui, _other, _queue, _events) = two_sessions().await;
+
+        let (sender, events) = channel();
+        offer_verification(matui, sender).await;
+
+        let event = events.try_recv().expect("an offer");
+        assert!(
+            matches!(
+                event,
+                Matui(VerificationOffered {
+                    other_session: false
+                })
+            ),
+            "got {:?}",
+            event
+        );
+    }
+
+    #[tokio::test]
+    async fn offers_another_verified_session() {
+        let (server, matui, other, _queue, _events) = two_sessions().await;
+        cross_sign_other(&server, &matui, &other).await;
+
+        let (sender, events) = channel();
+        offer_verification(matui, sender).await;
+
+        let event = events.try_recv().expect("an offer");
+        assert!(
+            matches!(
+                event,
+                Matui(VerificationOffered {
+                    other_session: true
+                })
+            ),
+            "got {:?}",
+            event
+        );
     }
 
     #[tokio::test]
@@ -758,20 +826,7 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        other
-            .encryption()
-            .bootstrap_cross_signing(None)
-            .await
-            .unwrap();
-
-        // matui learns that the other device is cross-signed now
-        server
-            .mock_sync()
-            .ok_and_run(&matui, |builder| {
-                builder.add_change_device(user);
-            })
-            .await;
-        server.mock_sync().ok_and_run(&matui, |_| {}).await;
+        cross_sign_other(&server, &matui, &other).await;
 
         let (sender, _events) = channel();
         tokio::spawn(request_verification(matui.clone(), sender));
