@@ -1,10 +1,10 @@
 use crossterm::event::KeyEvent;
 use log::warn;
-use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::OwnedRoomId;
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use tokio::runtime::Handle;
 
@@ -21,7 +21,7 @@ use crate::widgets::help::Help;
 use crate::widgets::homeserver::Homeserver;
 use crate::widgets::members::Members;
 use crate::widgets::oauth::Oauth;
-use crate::widgets::progress::{Progress, ProgressId};
+use crate::widgets::progress::Progress;
 use crate::widgets::qr::Qr;
 use crate::widgets::recover::Recover;
 use crate::widgets::rooms::Rooms;
@@ -29,6 +29,18 @@ use crate::widgets::search::Search;
 use crate::widgets::signin::Signin;
 use crate::widgets::upload::Upload;
 use ratatui::Frame;
+
+/// Which notices a withdrawal closes: a progress popup, or the popups of
+/// one verification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoticeId(u64);
+
+impl NoticeId {
+    pub fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        NoticeId(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
 
 /// Application.
 pub struct App {
@@ -54,9 +66,6 @@ pub struct App {
     /// And our Matrix client
     pub matrix: Matrix,
 
-    /// We'll hold on to any in-progress verifications here
-    pub sas: Option<SasVerification>,
-
     /// Keep old read receipts around
     pub receipts: VecDeque<(Room, ReceiptEventContent)>,
 
@@ -75,7 +84,6 @@ impl App {
             chat: None,
             thread: None,
             matrix: Matrix::new(send, handle),
-            sas: None,
             receipts: VecDeque::new(),
             invites_seen: HashSet::new(),
         }
@@ -143,22 +151,15 @@ impl App {
         }
     }
 
-    /// Some progress finished: close its popup, whether it's showing or
-    /// waiting.
-    pub fn complete_progress(&mut self, id: ProgressId) {
-        let is_it = |p: &Popup| matches!(p, Popup::Progress(w) if w.id == id);
+    /// Close every popup with this ID, whether it's showing or waiting.
+    pub fn withdraw(&mut self, id: NoticeId) {
+        let is_it = |p: &Popup| p.id() == Some(id);
+
+        self.notices.retain(|p| !is_it(p));
 
         if self.popup.as_ref().is_some_and(is_it) {
             self.close_popup();
-        } else {
-            self.notices.retain(|p| !is_it(p));
         }
-    }
-
-    /// Whether the popup showing is a verification prompt or emoji
-    /// comparison.
-    pub fn showing_verification(&self) -> bool {
-        matches!(&self.popup, Some(Popup::Confirm(c)) if c.is_verification())
     }
 
     /// Handles the tick event of the terminal. Returns true if this tick
@@ -225,6 +226,15 @@ pub enum Popup {
 }
 
 impl Popup {
+    /// The ID that withdraws this popup, if anything can.
+    fn id(&self) -> Option<NoticeId> {
+        match self {
+            Popup::Progress(w) => Some(w.id),
+            Popup::Confirm(w) => w.id(),
+            _ => None,
+        }
+    }
+
     pub fn key_event(&mut self, event: &KeyEvent, handler: &EventHandler) -> EventResult {
         match self {
             Popup::Command(w) => w.key_event(event),
@@ -458,15 +468,15 @@ mod tests {
         let sending = start_progress(&mut app);
         assert!(matches!(app.popup, Some(Popup::Confirm(_))));
 
-        handle_app_event(MatuiEvent::ProgressComplete(sending), &mut app);
+        handle_app_event(MatuiEvent::Withdraw(sending), &mut app);
         assert!(matches!(app.popup, Some(Popup::Confirm(_))));
 
         app.close_popup();
         assert!(app.popup.is_none());
     }
 
-    fn start_progress(app: &mut App) -> ProgressId {
-        let id = ProgressId::next();
+    fn start_progress(app: &mut App) -> NoticeId {
+        let id = NoticeId::next();
         handle_app_event(
             MatuiEvent::ProgressStarted(id, "Working.".to_string(), 0),
             app,
@@ -474,7 +484,7 @@ mod tests {
         id
     }
 
-    fn showing_progress(app: &App) -> Option<ProgressId> {
+    fn showing_progress(app: &App) -> Option<NoticeId> {
         match &app.popup {
             Some(Popup::Progress(p)) => Some(p.id),
             _ => None,
@@ -489,10 +499,10 @@ mod tests {
         let recovering = start_progress(&mut app);
         let downloading = start_progress(&mut app);
 
-        handle_app_event(MatuiEvent::ProgressComplete(recovering), &mut app);
+        handle_app_event(MatuiEvent::Withdraw(recovering), &mut app);
         assert_eq!(showing_progress(&app), Some(downloading));
 
-        handle_app_event(MatuiEvent::ProgressComplete(downloading), &mut app);
+        handle_app_event(MatuiEvent::Withdraw(downloading), &mut app);
         assert!(app.popup.is_none());
     }
 
@@ -504,7 +514,7 @@ mod tests {
         let first = start_progress(&mut app);
         let second = start_progress(&mut app);
 
-        handle_app_event(MatuiEvent::ProgressComplete(first), &mut app);
+        handle_app_event(MatuiEvent::Withdraw(first), &mut app);
         assert!(matches!(app.popup, Some(Popup::Search(_))));
 
         app.close_popup();
@@ -517,7 +527,7 @@ mod tests {
         let working = start_progress(&mut app);
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
 
-        handle_app_event(MatuiEvent::ProgressComplete(working), &mut app);
+        handle_app_event(MatuiEvent::Withdraw(working), &mut app);
 
         assert!(matches!(app.popup, Some(Popup::Error(_))));
     }

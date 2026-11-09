@@ -1,4 +1,4 @@
-use futures::stream::StreamExt;
+use futures::stream::{BoxStream, StreamExt};
 use log::{error, info};
 use matrix_sdk::Client;
 use matrix_sdk::encryption::verification::{
@@ -8,13 +8,11 @@ use matrix_sdk::ruma::events::key::verification::VerificationMethod;
 use matrix_sdk::ruma::events::key::verification::cancel::CancelCode;
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
-use tokio::task::JoinHandle;
 
 use super::Matrix;
 use crate::handler::MatuiEvent;
 use crate::handler::MatuiEvent::{
-    Error, VerificationAnsweredElsewhere, VerificationCancelled, VerificationCompleted,
-    VerificationOffered, VerificationRequested, VerificationStarted,
+    Error, VerificationCancelled, VerificationOffered, VerificationRequested, VerificationStarted,
 };
 
 impl Matrix {
@@ -148,10 +146,7 @@ fn ask_to_accept(request: VerificationRequest, matrix: &Matrix) {
         )
     };
 
-    matrix.send(VerificationRequested(request.clone(), message));
-
-    // follow it while the prompt is up too, so a cancellation closes it
-    matrix.spawn(follow_request(request, matrix.clone()));
+    matrix.spawn(own_verification(request, matrix.clone(), Some(message)));
 }
 
 async fn accept_request(request: VerificationRequest, matrix: Matrix) {
@@ -207,7 +202,7 @@ async fn request_verification(matrix: Matrix) {
                 .await
             {
                 Err(err) => error!("could not request verification: {}", err),
-                Ok(request) => follow_request(request, matrix).await,
+                Ok(request) => own_verification(request, matrix, None).await,
             }
         }
         Ok(None) => error!("no user identity"),
@@ -215,60 +210,117 @@ async fn request_verification(matrix: Matrix) {
     };
 }
 
-/// Follow a request into the emoji comparison. The side that sent the
-/// request starts it once the other side is ready. Some clients, such as
-/// Element X, start one too, and if theirs wins, it replaces ours, so this
-/// goes on to follow the replacement.
-async fn follow_request(request: VerificationRequest, matrix: Matrix) {
-    let mut stream = request.changes();
-    let mut comparison: Option<JoinHandle<()>> = None;
+/// The emoji comparison a request moved into, and its changes.
+type Comparison = (SasVerification, BoxStream<'static, SasState>);
 
-    while let Some(state) = stream.next().await {
-        match state {
-            VerificationRequestState::Created { .. }
-            | VerificationRequestState::Requested { .. } => (),
-            VerificationRequestState::Ready { .. } => {
+enum Change {
+    Request(VerificationRequestState),
+    Comparison(SasState),
+}
+
+/// Own a verification until it ends: prompt for a request from another
+/// device, follow the request into the emoji comparison, and withdraw its
+/// popups at the end, however it ends. The side that sent the request
+/// starts the comparison once the other side is ready. Some clients, such as
+/// Element X, start one too, and if theirs wins, it replaces ours, so this
+/// goes on to follow the replacement. The first cancellation it hears, from
+/// the request or the comparison, is the only one it shows.
+async fn own_verification(request: VerificationRequest, matrix: Matrix, prompt: Option<String>) {
+    let notice = matrix.notice();
+
+    if let Some(message) = prompt {
+        matrix.send(VerificationRequested(notice.id(), request.clone(), message));
+    }
+
+    let mut requests = request.changes();
+    let mut comparison: Option<Comparison> = None;
+
+    loop {
+        let change = tokio::select! {
+            state = requests.next() => match state {
+                Some(state) => Change::Request(state),
+                None => return,
+            },
+            state = next_comparison_state(&mut comparison) => Change::Comparison(state),
+        };
+
+        match change {
+            Change::Request(
+                VerificationRequestState::Created { .. }
+                | VerificationRequestState::Requested { .. },
+            ) => (),
+            Change::Request(VerificationRequestState::Ready { .. }) => {
                 if request.we_started()
                     && let Err(err) = request.start_sas().await
                 {
                     error!("could not start SAS verification: {}", err);
                     matrix.send(Error(format!("Could not start verification: {}", err)));
-                    break;
+                    return;
                 }
             }
-            VerificationRequestState::Transitioned { verification } => {
+            Change::Request(VerificationRequestState::Transitioned { verification }) => {
                 // We only support SAS verification.
-                if let Verification::SasV1(s) = verification {
-                    let new = matrix.spawn(sas_verification_handler(s, matrix.clone()));
+                if let Verification::SasV1(sas) = verification {
+                    let changes = sas.changes().boxed();
 
-                    if let Some(replaced) = comparison.replace(new) {
-                        replaced.abort();
+                    if let Err(err) = sas.accept().await {
+                        error!("could not accept SAS verification: {}", err);
+                        matrix.send(Error(format!("Could not start verification: {}", err)));
+                        return;
                     }
+
+                    comparison = Some((sas, changes));
                 }
             }
-            // the comparison shows its own cancellation
-            VerificationRequestState::Cancelled(_) if comparison.is_some() => break,
-            VerificationRequestState::Cancelled(info) => {
+            Change::Request(VerificationRequestState::Cancelled(info)) => {
                 info!("verification request cancelled: {}", info.reason());
 
-                let event = match info.cancel_code() {
-                    CancelCode::Accepted => Some(VerificationAnsweredElsewhere),
+                match info.cancel_code() {
+                    // another session answered
+                    CancelCode::Accepted => (),
                     // nobody answered ours. Had another device asked since,
                     // the SDK would have cancelled both already, so the user
                     // verified some other way, such as recovery, or ignored it.
-                    CancelCode::Timeout if request.we_started() => None,
-                    _ => Some(VerificationCancelled(info)),
-                };
-
-                if let Some(event) = event {
-                    matrix.send(event);
+                    CancelCode::Timeout if request.we_started() => (),
+                    _ => matrix.send(VerificationCancelled(info)),
                 }
 
-                break;
+                return;
             }
-            VerificationRequestState::Done => break,
+            Change::Request(VerificationRequestState::Done) => return,
+            Change::Comparison(SasState::KeysExchanged { emojis, .. }) => {
+                info!("verification keys exchanged");
+
+                let emoji = emojis.expect("only emoji verification is supported").emojis;
+
+                if let Some((sas, _)) = &comparison {
+                    matrix.send(VerificationStarted(notice.id(), sas.clone(), emoji));
+                }
+            }
+            Change::Comparison(SasState::Done { .. }) => {
+                info!("verification done");
+                return;
+            }
+            Change::Comparison(SasState::Cancelled(info)) => {
+                info!("verification cancelled: {}", info.reason());
+
+                matrix.send(VerificationCancelled(info));
+                return;
+            }
+            Change::Comparison(state) => info!("verification state: {:?}", state),
         }
     }
+}
+
+/// The next change to the emoji comparison, once there is one.
+async fn next_comparison_state(comparison: &mut Option<Comparison>) -> SasState {
+    if let Some((_, changes)) = comparison
+        && let Some(state) = changes.next().await
+    {
+        return state;
+    }
+
+    std::future::pending().await
 }
 
 async fn decline_request(request: VerificationRequest) {
@@ -277,51 +329,16 @@ async fn decline_request(request: VerificationRequest) {
     }
 }
 
-async fn sas_verification_handler(sas: SasVerification, matrix: Matrix) {
-    sas.accept().await.unwrap();
-
-    let mut stream = sas.changes();
-
-    while let Some(state) = stream.next().await {
-        match state {
-            SasState::KeysExchanged {
-                emojis,
-                decimals: _,
-            } => {
-                info!("verification keys exchanged");
-
-                let emoji_slice = emojis.expect("only emoji verification is supported").emojis;
-
-                matrix.send(VerificationStarted(sas.clone(), emoji_slice));
-            }
-            SasState::Done { .. } => {
-                info!("verification done");
-
-                matrix.send(VerificationCompleted);
-            }
-            SasState::Started { .. } => info!("verification started"),
-            SasState::Accepted { .. } => info!("verification accepted"),
-            SasState::Confirmed => info!("verification confirmed"),
-            SasState::Cancelled(info) => {
-                info!("verification cancelled: {}", info.reason());
-
-                matrix.send(VerificationCancelled(info));
-                break;
-            }
-            SasState::Created { .. } => info!("verification created"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc::{Receiver, channel};
     use std::sync::{Arc, Mutex};
 
+    use matrix_sdk::RoomDisplayName;
     use matrix_sdk::encryption::verification::{Emoji, VerificationRequest};
     use matrix_sdk::ruma::exports::serde_json::json;
     use matrix_sdk::ruma::{
-        DeviceId, MilliSecondsSinceUnixEpoch, TransactionId, device_id, user_id,
+        DeviceId, MilliSecondsSinceUnixEpoch, TransactionId, device_id, room_id, user_id,
     };
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use matrix_sdk::test_utils::mocks::encryption::PendingToDeviceMessages;
@@ -329,8 +346,13 @@ mod tests {
     use wiremock::ResponseTemplate;
 
     use super::*;
+    use crate::app::{App, NoticeId, Popup};
     use crate::event::Event;
     use crate::event::Event::Matui;
+    use crate::handler::MatuiEvent::Withdraw;
+    use crate::handler::handle_app_event;
+    use crate::matrix::roomcache::DecoratedRoom;
+    use crate::widgets::compose::Compose;
 
     type Queue = Arc<Mutex<PendingToDeviceMessages>>;
 
@@ -402,14 +424,14 @@ mod tests {
     }
 
     /// Have the other device ask matui to verify, and return its request
-    /// along with the one matui prompted for.
+    /// along with the one matui prompted for, and the prompt's ID.
     async fn request_from_other(
         server: &MatrixMockServer,
         matui: &Client,
         other: &Client,
         queue: &Queue,
         events: &Receiver<Event>,
-    ) -> (VerificationRequest, VerificationRequest) {
+    ) -> (VerificationRequest, VerificationRequest, NoticeId) {
         let sent = other
             .encryption()
             .get_device(matui.user_id().unwrap(), matui.device_id().unwrap())
@@ -422,18 +444,18 @@ mod tests {
 
         relay(server, queue, matui).await;
 
-        let event = events.try_recv().expect("a prompt");
-        let Matui(VerificationRequested(received, message)) = event else {
+        let event = next_event(events).await;
+        let Matui(VerificationRequested(id, received, message)) = event else {
             panic!("expected a verification prompt, got {:?}", event);
         };
 
         assert_eq!(message, "OTHER asks to verify this session. Accept?");
         assert!(events.try_recv().is_err());
 
-        (sent, received)
+        (sent, received, id)
     }
 
-    /// Wait for the next event, while tasks such as `follow_request` run.
+    /// Wait for the next event, while tasks such as `own_verification` run.
     async fn next_event(events: &Receiver<Event>) -> Event {
         let next = async {
             loop {
@@ -450,18 +472,58 @@ mod tests {
             .expect("an event")
     }
 
-    /// The cancellation in an event, as who cancelled and why.
-    fn cancellation(event: Event) -> (bool, &'static str) {
+    /// The withdrawal of a verification's popups, which is the last thing
+    /// its owner sends.
+    async fn withdrawn(events: &Receiver<Event>) -> NoticeId {
+        let event = next_event(events).await;
+        let Matui(Withdraw(id)) = event else {
+            panic!("expected a withdrawal, got {:?}", event);
+        };
+
+        assert!(events.try_recv().is_err());
+        id
+    }
+
+    /// How a verification ends when cancelled: one cancellation, as who
+    /// cancelled and why, then the ID of the popups withdrawn.
+    async fn cancelled(events: &Receiver<Event>) -> (bool, &'static str, NoticeId) {
+        let event = next_event(events).await;
         let Matui(VerificationCancelled(info)) = event else {
             panic!("expected a cancellation, got {:?}", event);
         };
 
-        (info.cancelled_by_us(), info.reason())
+        (
+            info.cancelled_by_us(),
+            info.reason(),
+            withdrawn(events).await,
+        )
+    }
+
+    /// An App with nothing showing, and no client.
+    fn test_app() -> App {
+        App::new(channel().0, Handle::current())
+    }
+
+    /// Hand the app what the owner sends, until its popups are withdrawn.
+    async fn deliver(app: &mut App, events: &Receiver<Event>) {
+        loop {
+            let Matui(event) = next_event(events).await else {
+                panic!("expected a Matui event");
+            };
+            let done = matches!(event, Withdraw(_));
+
+            handle_app_event(event, app);
+
+            if done {
+                return;
+            }
+        }
     }
 
     /// Have matui ask the other device to verify, and both go on into the
     /// emoji comparison. Returns the rest of what matui sends, and matui's
-    /// comparison with its emoji, then the other device's comparison.
+    /// popup ID and comparison with its emoji, then the other device's
+    /// comparison.
     async fn compare_emoji(
         server: &MatrixMockServer,
         matui: &Client,
@@ -469,7 +531,7 @@ mod tests {
         queue: &Queue,
     ) -> (
         Receiver<Event>,
-        (SasVerification, [Emoji; 7]),
+        (NoticeId, SasVerification, [Emoji; 7]),
         SasVerification,
     ) {
         let user = matui.user_id().unwrap();
@@ -486,7 +548,7 @@ mod tests {
 
         let flow_id = request.flow_id().to_owned();
         let (matrix, events) = matrix_for(matui);
-        tokio::spawn(follow_request(request, matrix));
+        tokio::spawn(own_verification(request, matrix, None));
 
         relay(server, queue, other).await;
         other
@@ -521,7 +583,7 @@ mod tests {
             .await
             .expect("matui shows the emoji");
 
-        let Matui(VerificationStarted(ours, emoji)) = event else {
+        let Matui(VerificationStarted(id, ours, emoji)) = event else {
             panic!("expected the emoji, got {:?}", event);
         };
 
@@ -531,7 +593,7 @@ mod tests {
             panic!("the other device is comparing emoji");
         };
 
-        (events, (ours, emoji), theirs)
+        (events, (id, ours, emoji), theirs)
     }
 
     #[tokio::test]
@@ -542,7 +604,8 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let (sent, received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+        let (sent, received, _) =
+            request_from_other(&server, &matui, &other, &queue, &events).await;
 
         // the prompt alone answers nothing
         relay(&server, &queue, &other).await;
@@ -564,15 +627,16 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let (sent, received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+        let (sent, received, prompt) =
+            request_from_other(&server, &matui, &other, &queue, &events).await;
 
         decline_request(received).await;
         relay(&server, &queue, &other).await;
 
         assert!(sent.is_cancelled());
         assert_eq!(
-            cancellation(next_event(&events).await),
-            (true, "The user cancelled the verification.")
+            cancelled(&events).await,
+            (true, "The user cancelled the verification.", prompt)
         );
     }
 
@@ -584,15 +648,89 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let (sent, _received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+        let (sent, _received, prompt) =
+            request_from_other(&server, &matui, &other, &queue, &events).await;
 
         sent.cancel().await.unwrap();
         relay(&server, &queue, &matui).await;
 
         assert_eq!(
-            cancellation(next_event(&events).await),
-            (false, "The user cancelled the verification.")
+            cancelled(&events).await,
+            (false, "The user cancelled the verification.", prompt)
         );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_prompt_gives_way_to_its_reason() {
+        let (server, matui, other, queue, events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let mut app = test_app();
+        let (sent, received, prompt) =
+            request_from_other(&server, &matui, &other, &queue, &events).await;
+        handle_app_event(
+            VerificationRequested(prompt, received, "Accept?".to_string()),
+            &mut app,
+        );
+        assert!(matches!(app.popup, Some(Popup::Confirm(_))));
+
+        sent.cancel().await.unwrap();
+        relay(&server, &queue, &matui).await;
+        deliver(&mut app, &events).await;
+
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+        app.close_popup();
+        assert!(app.popup.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_prompt_waiting_behind_compose_is_gone() {
+        let (server, matui, other, queue, events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let mut app = test_app();
+        let room = server
+            .sync_joined_room(&matui, room_id!("!room:example.org"))
+            .await;
+        let room = DecoratedRoom {
+            inner: room,
+            name: RoomDisplayName::Empty,
+            visited: true,
+            last_message: None,
+            last_sender: None,
+            last_ts: None,
+            recency_stamp: None,
+        };
+        app.set_popup(Popup::Compose(Compose::new(
+            room,
+            app.matrix.clone(),
+            None,
+            "half-written",
+        )));
+
+        let (sent, received, prompt) =
+            request_from_other(&server, &matui, &other, &queue, &events).await;
+        handle_app_event(
+            VerificationRequested(prompt, received, "Accept?".to_string()),
+            &mut app,
+        );
+
+        sent.cancel().await.unwrap();
+        relay(&server, &queue, &matui).await;
+        deliver(&mut app, &events).await;
+        assert!(matches!(app.popup, Some(Popup::Compose(_))));
+
+        // the reason shows, but the prompt it cancelled doesn't
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+        app.close_popup();
+        assert!(app.popup.is_none());
     }
 
     #[tokio::test]
@@ -603,7 +741,8 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let (sent, _received) = request_from_other(&server, &matui, &other, &queue, &events).await;
+        let (sent, _received, prompt) =
+            request_from_other(&server, &matui, &other, &queue, &events).await;
 
         // what the asking device sends the rest once one of them accepts
         server
@@ -621,12 +760,7 @@ mod tests {
             })
             .await;
 
-        let event = next_event(&events).await;
-        assert!(
-            matches!(event, Matui(VerificationAnsweredElsewhere)),
-            "got {:?}",
-            event
-        );
+        assert_eq!(withdrawn(&events).await, prompt);
     }
 
     #[tokio::test]
@@ -648,7 +782,7 @@ mod tests {
             .unwrap();
 
         let (matrix, mine) = matrix_for(&matui);
-        tokio::spawn(follow_request(pending, matrix));
+        tokio::spawn(own_verification(pending, matrix, None));
 
         // the user starts another from the other device, before answering
         other
@@ -665,8 +799,9 @@ mod tests {
 
         // the SDK cancels both, as if the user had, and the new one is
         // cancelled before matui could prompt for it
+        let (by_us, reason, _) = cancelled(&mine).await;
         assert_eq!(
-            cancellation(next_event(&mine).await),
+            (by_us, reason),
             (true, "The user cancelled the verification.")
         );
         assert!(events.try_recv().is_err());
@@ -680,14 +815,14 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let (events, _, theirs) = compare_emoji(&server, &matui, &other, &queue).await;
+        let (events, (popup, _, _), theirs) = compare_emoji(&server, &matui, &other, &queue).await;
 
         theirs.mismatch().await.unwrap();
         relay(&server, &queue, &matui).await;
 
         assert_eq!(
-            cancellation(next_event(&events).await),
-            (false, "The SAS did not match.")
+            cancelled(&events).await,
+            (false, "The SAS did not match.", popup)
         );
     }
 
@@ -699,14 +834,52 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let (events, (ours, _), _) = compare_emoji(&server, &matui, &other, &queue).await;
+        let (events, (popup, ours, _), _) = compare_emoji(&server, &matui, &other, &queue).await;
 
         ours.mismatch().await.unwrap();
 
         assert_eq!(
-            cancellation(next_event(&events).await),
-            (true, "The SAS did not match.")
+            cancelled(&events).await,
+            (true, "The SAS did not match.", popup)
         );
+    }
+
+    #[tokio::test]
+    async fn withdraws_the_emoji_once_verified() {
+        let (server, matui, other, queue, _events) = two_sessions().await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let (events, (popup, ours, _), theirs) =
+            compare_emoji(&server, &matui, &other, &queue).await;
+
+        ours.confirm().await.unwrap();
+        theirs.confirm().await.unwrap();
+
+        let done = async {
+            loop {
+                tokio::task::yield_now().await;
+                relay(&server, &queue, &matui).await;
+                relay(&server, &queue, &other).await;
+
+                if let Ok(event) = events.try_recv() {
+                    return event;
+                }
+            }
+        };
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), done)
+            .await
+            .expect("matui finishes verifying");
+
+        assert!(
+            matches!(event, Matui(Withdraw(id)) if id == popup),
+            "got {:?}",
+            event
+        );
+        assert!(ours.is_done());
     }
 
     #[tokio::test]
@@ -717,7 +890,7 @@ mod tests {
             .capture_put_to_device_traffic(user, queue.clone())
             .await;
 
-        let (_, (_, emoji), theirs) = compare_emoji(&server, &matui, &other, &queue).await;
+        let (_, (_, _, emoji), theirs) = compare_emoji(&server, &matui, &other, &queue).await;
 
         let symbols = |emoji: &[Emoji]| emoji.iter().map(|e| e.symbol).collect::<Vec<_>>();
         assert_eq!(symbols(&emoji), symbols(&theirs.emoji().unwrap()));
@@ -744,7 +917,7 @@ mod tests {
 
         let flow_id = request.flow_id().to_owned();
         let (matrix, events) = matrix_for(&matui);
-        tokio::spawn(follow_request(request, matrix));
+        tokio::spawn(own_verification(request, matrix, None));
 
         relay(&server, &queue, &other).await;
         let theirs = other
@@ -790,7 +963,7 @@ mod tests {
             .await
             .expect("matui shows the emoji");
 
-        let Matui(VerificationStarted(_, emoji)) = event else {
+        let Matui(VerificationStarted(_, _, emoji)) = event else {
             panic!("expected the emoji, got {:?}", event);
         };
 

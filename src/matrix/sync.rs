@@ -17,7 +17,7 @@ use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 
 use super::decryption::RoomKey;
 use super::verification::add_verification_handlers;
-use super::{InProgress, Matrix};
+use super::{Matrix, Notice};
 use crate::handler::MatuiEvent::Error;
 use crate::handler::{MatuiEvent, SyncType};
 
@@ -30,7 +30,7 @@ impl Matrix {
         &self,
         client: Client,
         sync_type: SyncType,
-        progress: InProgress,
+        progress: Notice,
     ) -> bool {
         if client.available_sliding_sync_versions().await.is_empty() {
             self.send(Error(
@@ -357,7 +357,7 @@ mod tests {
             .try_iter()
             .map(|event| match event {
                 Matui(MatuiEvent::ProgressStarted(..)) => "started",
-                Matui(MatuiEvent::ProgressComplete(_)) => "complete",
+                Matui(MatuiEvent::Withdraw(_)) => "complete",
                 event => panic!("expected progress, got {:?}", event),
             })
             .collect()

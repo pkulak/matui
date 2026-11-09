@@ -6,12 +6,12 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
-use crate::app::Popup;
+use crate::app::{NoticeId, Popup};
 use crate::event::EventHandler;
 use crate::handler::MatuiEvent;
 use crate::spawn::spawn_editor;
 use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::progress::{Progress, ProgressId};
+use crate::widgets::progress::Progress;
 use crate::widgets::textinput::TextInput;
 use crate::widgets::{EventResult, get_margin};
 use crate::{close, consumed};
@@ -76,7 +76,7 @@ impl Qr {
                         let sender = sender.clone();
                         Consumed(Box::new(move |app| {
                             app.set_popup(Popup::Progress(Progress::new(
-                                ProgressId::next(),
+                                NoticeId::next(),
                                 "Checking QR login code.",
                                 0,
                             )));

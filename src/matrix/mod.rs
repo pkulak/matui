@@ -31,24 +31,30 @@ use once_cell::sync::OnceCell;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
+use crate::app::NoticeId;
 use crate::event::Event;
 use crate::handler::MatuiEvent;
-use crate::widgets::progress::ProgressId;
 use notify::Notify;
 use roomcache::{DecoratedRoom, RoomCache};
 
-/// A progress popup that closes when this drops, however its work ends.
-pub struct InProgress {
-    id: ProgressId,
+/// Notices withdrawn when this drops, however their work ends.
+pub struct Notice {
+    id: NoticeId,
     sender: Sender<Event>,
 }
 
-impl Drop for InProgress {
+impl Notice {
+    pub fn id(&self) -> NoticeId {
+        self.id
+    }
+}
+
+impl Drop for Notice {
     fn drop(&mut self) {
         // the app may already be gone
         let _ = self
             .sender
-            .send(Event::Matui(MatuiEvent::ProgressComplete(self.id)));
+            .send(Event::Matui(MatuiEvent::Withdraw(self.id)));
     }
 }
 
@@ -87,12 +93,23 @@ impl Matrix {
 
     /// Show a progress popup until the returned handle drops.
     #[must_use]
-    pub fn progress(&self, text: &str, delay: u64) -> InProgress {
-        let id = ProgressId::next();
-        self.send(MatuiEvent::ProgressStarted(id, text.to_string(), delay));
+    pub fn progress(&self, text: &str, delay: u64) -> Notice {
+        let notice = self.notice();
+        self.send(MatuiEvent::ProgressStarted(
+            notice.id(),
+            text.to_string(),
+            delay,
+        ));
 
-        InProgress {
-            id,
+        notice
+    }
+
+    /// A new ID for notices, which are withdrawn when the returned handle
+    /// drops.
+    #[must_use]
+    pub fn notice(&self) -> Notice {
+        Notice {
+            id: NoticeId::next(),
             sender: self.sender.clone(),
         }
     }

@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use matrix_sdk::encryption::verification::VerificationRequest;
+use matrix_sdk::encryption::verification::{SasVerification, VerificationRequest};
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::{OwnedEventId, OwnedRoomOrAliasId};
 use ratatui::buffer::Buffer;
@@ -8,7 +8,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 
-use crate::app::Popup;
+use crate::app::{NoticeId, Popup};
 use crate::widgets::button::Button;
 use crate::widgets::recover::Recover;
 use crate::widgets::{Focusable, focus_next};
@@ -22,8 +22,10 @@ pub enum ConfirmBehavior {
     OfferVerification,
     /// Use the recovery key, with no other session to ask.
     OfferRecovery,
-    Verification,
-    VerificationRequest(VerificationRequest),
+    /// The emoji comparison, withdrawn by its verification's ID.
+    Verification(NoticeId, SasVerification),
+    /// A prompt to accept a request, withdrawn by its verification's ID.
+    VerificationRequest(NoticeId, VerificationRequest),
     DeleteMessage(Room, OwnedEventId),
     JoinRoom(Room),
     JoinPublicRoom(OwnedRoomOrAliasId),
@@ -54,11 +56,13 @@ impl Confirm {
         }
     }
 
-    pub fn is_verification(&self) -> bool {
-        matches!(
-            self.behavior,
-            ConfirmBehavior::Verification | ConfirmBehavior::VerificationRequest(_)
-        )
+    pub fn id(&self) -> Option<NoticeId> {
+        match self.behavior {
+            ConfirmBehavior::Verification(id, _) | ConfirmBehavior::VerificationRequest(id, _) => {
+                Some(id)
+            }
+            _ => None,
+        }
     }
 
     pub fn widget(&self) -> ConfirmWidget<'_> {
@@ -83,7 +87,7 @@ impl Confirm {
             KeyCode::Esc => match self.behavior.clone() {
                 // a request left pending makes the SDK cancel the next one
                 // from the same user, such as a retry
-                ConfirmBehavior::VerificationRequest(request) => {
+                ConfirmBehavior::VerificationRequest(_, request) => {
                     EventResult::Consumed(Box::new(|app| {
                         app.matrix.decline_verification(request);
                         app.close_popup();
@@ -113,25 +117,23 @@ impl Confirm {
             ConfirmBehavior::OfferVerification => recover(),
             ConfirmBehavior::OfferRecovery if focused => recover(),
             ConfirmBehavior::OfferRecovery => close!(),
-            ConfirmBehavior::Verification if focused => EventResult::Consumed(Box::new(|app| {
-                if let Some(s) = app.sas.clone() {
-                    app.matrix.confirm_verification(s);
+            ConfirmBehavior::Verification(_, sas) if focused => {
+                EventResult::Consumed(Box::new(|app| {
+                    app.matrix.confirm_verification(sas);
                     app.close_popup();
-                }
+                }))
+            }
+            ConfirmBehavior::Verification(_, sas) => EventResult::Consumed(Box::new(|app| {
+                app.matrix.mismatched_verification(sas);
+                app.close_popup();
             })),
-            ConfirmBehavior::Verification => EventResult::Consumed(Box::new(|app| {
-                if let Some(s) = app.sas.clone() {
-                    app.matrix.mismatched_verification(s);
-                    app.close_popup();
-                }
-            })),
-            ConfirmBehavior::VerificationRequest(request) if focused => {
+            ConfirmBehavior::VerificationRequest(_, request) if focused => {
                 EventResult::Consumed(Box::new(|app| {
                     app.matrix.accept_verification(request);
                     app.close_popup();
                 }))
             }
-            ConfirmBehavior::VerificationRequest(request) => {
+            ConfirmBehavior::VerificationRequest(_, request) => {
                 EventResult::Consumed(Box::new(|app| {
                     app.matrix.decline_verification(request);
                     app.close_popup();

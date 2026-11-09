@@ -1,4 +1,4 @@
-use crate::app::{App, Popup};
+use crate::app::{App, NoticeId, Popup};
 use crate::matrix::RoomKey;
 use crate::matrix::emoji::format_emojis;
 use crate::spawn::pasted_file_paths;
@@ -8,7 +8,7 @@ use crate::widgets::error::Error;
 use crate::widgets::help::Help;
 use crate::widgets::homeserver::Homeserver;
 use crate::widgets::oauth::Oauth;
-use crate::widgets::progress::{Progress, ProgressId};
+use crate::widgets::progress::Progress;
 use crate::widgets::qr::Qr;
 use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
@@ -48,8 +48,8 @@ pub enum MatuiEvent {
     OauthStarted(String, Arc<Notify>),
     /// A picture for a room's chat, or `None` if it couldn't be loaded.
     Picture(OwnedRoomId, OwnedMxcUri, Option<DynamicImage>),
-    ProgressStarted(ProgressId, String, u64),
-    ProgressComplete(ProgressId),
+    ProgressStarted(NoticeId, String, u64),
+    Withdraw(NoticeId),
     QrLoginAuth(String),
     QrLoginCode(String),
     QrLoginDone,
@@ -74,16 +74,14 @@ pub enum MatuiEvent {
     VerificationOffered {
         other_session: bool,
     },
-    /// Another device asks to verify, with a prompt naming it.
-    VerificationRequested(VerificationRequest, String),
+    /// Another device asks to verify, with a prompt naming it. The
+    /// verification's owner withdraws the prompt by its ID when it ends.
+    VerificationRequested(NoticeId, VerificationRequest, String),
     /// A verification request or its emoji comparison was cancelled, by
     /// either side.
     VerificationCancelled(CancelInfo),
-    /// Another of the user's devices answered a request, so its prompt
-    /// closes.
-    VerificationAnsweredElsewhere,
-    VerificationStarted(SasVerification, [Emoji; 7]),
-    VerificationCompleted,
+    /// The emoji to compare, withdrawn by the verification's ID.
+    VerificationStarted(NoticeId, SasVerification, [Emoji; 7]),
 }
 
 #[derive(Clone, Debug)]
@@ -135,7 +133,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::LoginStarted => {
             app.show_notice(Popup::Progress(Progress::new(
-                ProgressId::next(),
+                NoticeId::next(),
                 "Logging in",
                 0,
             )));
@@ -150,7 +148,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::ProgressStarted(id, msg, delay) => {
             app.show_notice(Popup::Progress(Progress::new(id, &msg, delay)))
         }
-        MatuiEvent::ProgressComplete(id) => app.complete_progress(id),
+        MatuiEvent::Withdraw(id) => app.withdraw(id),
         MatuiEvent::QrLoginAuth(url) => {
             app.set_popup(Popup::Qr(Qr::auth(url)));
         }
@@ -168,7 +166,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::QrLoginSyncing => {
             app.set_popup(Popup::Progress(Progress::new(
-                ProgressId::next(),
+                NoticeId::next(),
                 "Syncing secrets.",
                 0,
             )));
@@ -304,43 +302,29 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
 
             app.show_notice(Popup::Confirm(confirm));
         }
-        MatuiEvent::VerificationRequested(request, message) => {
+        MatuiEvent::VerificationRequested(id, request, message) => {
             app.show_notice(Popup::Confirm(Confirm::new(
                 "Verification Request".to_string(),
                 message,
                 "Accept".to_string(),
                 "Decline".to_string(),
-                ConfirmBehavior::VerificationRequest(request),
+                ConfirmBehavior::VerificationRequest(id, request),
             )));
         }
+        // the owner withdraws the popup it cancels right after, so the
+        // reason takes its place unless something else is waiting
         MatuiEvent::VerificationCancelled(info) => {
-            app.sas = None;
-
             let heading = if info.cancelled_by_us() {
                 "Verification Cancelled by This Session"
             } else {
                 "Verification Cancelled by the Other Side"
             };
-            let error = Popup::Error(Error::with_heading(
+            app.show_notice(Popup::Error(Error::with_heading(
                 heading.to_string(),
                 format!("{} Try verifying again.", info.reason()),
-            ));
-
-            // the reason takes the place of the prompt it cancels
-            if app.showing_verification() {
-                app.set_popup(error);
-            } else {
-                app.show_notice(error);
-            }
+            )));
         }
-        MatuiEvent::VerificationAnsweredElsewhere => {
-            if app.showing_verification() {
-                app.close_popup();
-            }
-        }
-        MatuiEvent::VerificationStarted(sas, emoji) => {
-            app.sas = Some(sas);
-
+        MatuiEvent::VerificationStarted(id, sas, emoji) => {
             app.show_notice(Popup::Confirm(Confirm::new(
                 "Verify".to_string(),
                 format!(
@@ -349,15 +333,8 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 ),
                 "Yes".to_string(),
                 "No".to_string(),
-                ConfirmBehavior::Verification,
+                ConfirmBehavior::Verification(id, sas),
             )));
-        }
-        MatuiEvent::VerificationCompleted => {
-            if app.showing_verification() {
-                app.close_popup();
-            }
-
-            app.sas = None;
         }
     }
 }
