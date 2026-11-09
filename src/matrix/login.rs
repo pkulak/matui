@@ -130,7 +130,7 @@ impl Matrix {
                             }
                         }
                         GrantLoginProgress::SyncingSecrets => {
-                            matrix.send(ProgressStarted("Syncing secrets.".to_string(), 0));
+                            matrix.send(MatuiEvent::QrLoginSyncing);
                         }
                         GrantLoginProgress::Done => {}
                     }

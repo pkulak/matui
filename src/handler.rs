@@ -54,6 +54,7 @@ pub enum MatuiEvent {
     QrLoginCode(String),
     QrLoginDone,
     QrLoginScanned(CheckCodeSender),
+    QrLoginSyncing,
     Recover(String),
     Receipt(Room, ReceiptEventContent),
     RoomFound(PublicRoomsChunk),
@@ -102,11 +103,11 @@ pub struct Batch {
 pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
     match event {
         MatuiEvent::Confirm(header, msg) => {
-            app.set_popup(Popup::Error(Error::with_heading(header, msg)));
+            app.show_notice(Popup::Error(Error::with_heading(header, msg)));
         }
         MatuiEvent::Error(msg) => {
             log::warn!("Error: {msg}");
-            app.set_popup(Popup::Error(Error::new(msg)));
+            app.show_notice(Popup::Error(Error::new(msg)));
         }
         MatuiEvent::Invited(room, msg) => {
             // only prompt once per session, no matter how many times we hear
@@ -128,20 +129,19 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.set_popup(Popup::Oauth(Oauth::new(url, cancel)));
         }
         MatuiEvent::LoginStarted => {
-            app.set_popup(Popup::Progress(Progress::new("Logging in", 0)));
+            app.show_notice(Popup::Progress(Progress::new("Logging in", 0)));
         }
-        MatuiEvent::LoginComplete => {
-            app.popup = None;
-        }
+        // closes the OAuth popup too
+        MatuiEvent::LoginComplete => app.close_popup(),
         MatuiEvent::Picture(room_id, uri, image) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.picture_event(&room_id, uri.clone(), image.clone());
             }
         }
         MatuiEvent::ProgressStarted(msg, delay) => {
-            app.set_popup(Popup::Progress(Progress::new(&msg, delay)))
+            app.show_notice(Popup::Progress(Progress::new(&msg, delay)))
         }
-        MatuiEvent::ProgressComplete => app.popup = None,
+        MatuiEvent::ProgressComplete => app.complete_progress(),
         MatuiEvent::QrLoginAuth(url) => {
             app.set_popup(Popup::Qr(Qr::auth(url)));
         }
@@ -157,8 +157,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::QrLoginScanned(sender) => {
             app.set_popup(Popup::Qr(Qr::check(sender)));
         }
+        MatuiEvent::QrLoginSyncing => {
+            app.set_popup(Popup::Progress(Progress::new("Syncing secrets.", 0)));
+        }
         MatuiEvent::Recover(key) => {
-            app.set_popup(Popup::Progress(Progress::new(
+            app.show_notice(Popup::Progress(Progress::new(
                 "Fetching encryption keys.",
                 0,
             )));
@@ -203,7 +206,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 name, target, chunk.num_joined_members
             );
 
-            app.set_popup(Popup::Confirm(Confirm::new(
+            app.show_notice(Popup::Confirm(Confirm::new(
                 "Room Found".to_string(),
                 message,
                 "Join".to_string(),
@@ -220,18 +223,23 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::SyncStarted(st) => {
             match st {
-                SyncType::Initial => app.set_popup(Popup::Progress(Progress::new(
+                SyncType::Initial => app.show_notice(Popup::Progress(Progress::new(
                     "Performing initial sync.",
                     0,
                 ))),
-                SyncType::Latest => app.set_popup(Popup::Progress(Progress::new("Syncing", 0))),
+                SyncType::Latest => app.show_notice(Popup::Progress(Progress::new("Syncing", 0))),
             };
         }
         MatuiEvent::SyncComplete => {
+            app.complete_progress();
+
             // start in the room chooser, so no room is open (and read) until
             // someone picks one
             let rooms = Rooms::new(app.matrix.clone(), None);
-            app.popup = (!rooms.room.is_empty()).then_some(Popup::Rooms(rooms));
+
+            if app.popup.is_none() && !rooms.room.is_empty() {
+                app.set_popup(Popup::Rooms(rooms));
+            }
         }
         MatuiEvent::Timeline(event) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
@@ -298,10 +306,10 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 )
             };
 
-            app.set_popup(Popup::Confirm(confirm));
+            app.show_notice(Popup::Confirm(confirm));
         }
         MatuiEvent::VerificationRequested(request, message) => {
-            app.set_popup(Popup::Confirm(Confirm::new(
+            app.show_notice(Popup::Confirm(Confirm::new(
                 "Verification Request".to_string(),
                 message,
                 "Accept".to_string(),
@@ -312,28 +320,32 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::VerificationCancelled(info) => {
             app.sas = None;
 
-            if popup_free_for_verification(app) {
-                let heading = if info.cancelled_by_us() {
-                    "Verification Cancelled by This Session"
-                } else {
-                    "Verification Cancelled by the Other Side"
-                };
+            let heading = if info.cancelled_by_us() {
+                "Verification Cancelled by This Session"
+            } else {
+                "Verification Cancelled by the Other Side"
+            };
+            let error = Popup::Error(Error::with_heading(
+                heading.to_string(),
+                format!("{} Try verifying again.", info.reason()),
+            ));
 
-                app.set_popup(Popup::Error(Error::with_heading(
-                    heading.to_string(),
-                    format!("{} Try verifying again.", info.reason()),
-                )));
+            // the reason takes the place of the prompt it cancels
+            if app.showing_verification() {
+                app.set_popup(error);
+            } else {
+                app.show_notice(error);
             }
         }
         MatuiEvent::VerificationAnsweredElsewhere => {
-            if popup_free_for_verification(app) {
+            if app.showing_verification() {
                 app.close_popup();
             }
         }
         MatuiEvent::VerificationStarted(sas, emoji) => {
             app.sas = Some(sas);
 
-            app.set_popup(Popup::Confirm(Confirm::new(
+            app.show_notice(Popup::Confirm(Confirm::new(
                 "Verify".to_string(),
                 format!(
                     "Do these emojis match your other session?\n\n{}",
@@ -345,19 +357,12 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             )));
         }
         MatuiEvent::VerificationCompleted => {
-            app.popup = None;
+            if app.showing_verification() {
+                app.close_popup();
+            }
+
             app.sas = None;
         }
-    }
-}
-
-/// Whether the popup slot is empty or holds a verification popup, rather
-/// than something such as a message being written.
-fn popup_free_for_verification(app: &App) -> bool {
-    match &app.popup {
-        None => true,
-        Some(Popup::Confirm(confirm)) => confirm.is_verification(),
-        Some(_) => false,
     }
 }
 
@@ -374,7 +379,7 @@ fn handle_chat_key_event(
         Ok(result) => result,
         Err(err) => {
             log::warn!("Error: {err}");
-            app.set_popup(Popup::Error(Error::new(err.to_string())));
+            app.show_notice(Popup::Error(Error::new(err.to_string())));
             return Ok(());
         }
     };

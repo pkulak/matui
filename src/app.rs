@@ -45,6 +45,9 @@ pub struct App {
     /// Hold on to all our widgets. The chat is always the room; a thread
     /// renders on top of it while both keep receiving events.
     pub popup: Option<Popup>,
+    /// Notices waiting for the popup slot, in arrival order. Something is
+    /// always showing while any wait.
+    pub notices: VecDeque<Popup>,
     pub chat: Option<Chat>,
     pub thread: Option<Chat>,
 
@@ -69,6 +72,7 @@ impl App {
             timestamp: 0,
             focus: true,
             popup: None,
+            notices: VecDeque::new(),
             chat: None,
             thread: None,
             matrix: Matrix::new(send, handle),
@@ -107,12 +111,49 @@ impl App {
         self.matrix.room_visit_event(room);
     }
 
+    /// Show a popup the user opened, replacing whatever is showing.
     pub fn set_popup(&mut self, popup: Popup) {
         self.popup = Some(popup);
     }
 
+    /// Show a popup matui raised. It replaces the room switcher or a
+    /// progress popup, and otherwise waits its turn.
+    pub fn show_notice(&mut self, popup: Popup) {
+        match &self.popup {
+            None | Some(Popup::Rooms(_) | Popup::Progress(_)) => self.popup = Some(popup),
+            Some(_) => self.notices.push_back(popup),
+        }
+    }
+
+    /// Close the popup showing, and show the next notice waiting. A progress
+    /// popup gives way to anything behind it, since its work might have
+    /// ended with an error instead of a completion.
     pub fn close_popup(&mut self) {
-        self.popup = None;
+        self.popup = self.notices.pop_front();
+
+        while matches!(self.popup, Some(Popup::Progress(_))) && !self.notices.is_empty() {
+            self.popup = self.notices.pop_front();
+        }
+    }
+
+    /// Some progress finished: close the progress popup showing, or else
+    /// the oldest one waiting.
+    pub fn complete_progress(&mut self) {
+        if matches!(self.popup, Some(Popup::Progress(_))) {
+            self.close_popup();
+        } else if let Some(i) = self
+            .notices
+            .iter()
+            .position(|p| matches!(p, Popup::Progress(_)))
+        {
+            self.notices.remove(i);
+        }
+    }
+
+    /// Whether the popup showing is a verification prompt or emoji
+    /// comparison.
+    pub fn showing_verification(&self) -> bool {
+        matches!(&self.popup, Some(Popup::Confirm(c)) if c.is_verification())
     }
 
     /// Handles the tick event of the terminal. Returns true if this tick
@@ -300,6 +341,107 @@ mod tests {
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
 
         assert!(matches!(app.popup, Some(Popup::Error(_))));
+    }
+
+    fn offer_verification(app: &mut App) {
+        handle_app_event(
+            MatuiEvent::VerificationOffered {
+                other_session: true,
+            },
+            app,
+        );
+    }
+
+    #[tokio::test]
+    async fn a_notice_waits_behind_an_input_popup() {
+        let (mut app, _events) = test_app();
+        app.set_popup(Popup::Search(Search::default()));
+
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+        assert!(matches!(app.popup, Some(Popup::Search(_))));
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+    }
+
+    #[tokio::test]
+    async fn queued_notices_show_in_arrival_order() {
+        let (mut app, _events) = test_app();
+        app.set_popup(Popup::Search(Search::default()));
+
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+        offer_verification(&mut app);
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Confirm(_))));
+
+        app.close_popup();
+        assert!(app.popup.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_popup_the_user_opens_replaces_a_notice() {
+        let (mut app, _events) = test_app();
+        offer_verification(&mut app);
+
+        app.set_popup(Popup::Help(Help::default()));
+
+        assert!(matches!(app.popup, Some(Popup::Help(_))));
+    }
+
+    #[tokio::test]
+    async fn sending_a_message_leaves_the_prompt_behind_it_showing() {
+        let (mut app, _events) = test_app();
+        app.set_popup(Popup::Search(Search::default()));
+        offer_verification(&mut app);
+
+        // the compose popup closes as it sends, then the send shows progress
+        app.close_popup();
+        handle_app_event(
+            MatuiEvent::ProgressStarted("Sending message.".to_string(), 500),
+            &mut app,
+        );
+        assert!(matches!(app.popup, Some(Popup::Confirm(_))));
+
+        handle_app_event(MatuiEvent::ProgressComplete, &mut app);
+        assert!(matches!(app.popup, Some(Popup::Confirm(_))));
+
+        app.close_popup();
+        assert!(app.popup.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_notice_replaces_progress() {
+        let (mut app, _events) = test_app();
+        handle_app_event(
+            MatuiEvent::ProgressStarted("Working.".to_string(), 0),
+            &mut app,
+        );
+
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+        assert!(app.notices.is_empty());
+    }
+
+    #[tokio::test]
+    async fn queued_progress_gives_way_to_a_notice_behind_it() {
+        let (mut app, _events) = test_app();
+        app.set_popup(Popup::Search(Search::default()));
+
+        // work that failed sends an error, but no completion
+        handle_app_event(
+            MatuiEvent::ProgressStarted("Working.".to_string(), 0),
+            &mut app,
+        );
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+        assert!(app.notices.is_empty());
     }
 
     #[tokio::test]

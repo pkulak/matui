@@ -49,6 +49,7 @@ impl Homeserver {
             let homeserver = self.homeserver.value().trim().to_string();
 
             return Consumed(Box::new(move |app| {
+                app.close_popup();
                 app.matrix.start_login(homeserver);
             }));
         }
