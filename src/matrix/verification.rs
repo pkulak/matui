@@ -10,6 +10,7 @@ use matrix_sdk::ruma::events::key::verification::VerificationMethod;
 use matrix_sdk::ruma::events::key::verification::cancel::CancelCode;
 use matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent;
 use matrix_sdk::ruma::events::room::message::{MessageType, OriginalSyncRoomMessageEvent};
+use tokio::task::JoinHandle;
 
 use super::Matrix;
 use crate::app::App;
@@ -210,9 +211,12 @@ async fn request_verification(client: Client, sender: Sender<Event>) {
 }
 
 /// Follow a request into the emoji comparison. The side that sent the
-/// request starts it once the other side is ready.
+/// request starts it once the other side is ready. Some clients, such as
+/// Element X, start one too, and if theirs wins, it replaces ours, so this
+/// goes on to follow the replacement.
 async fn follow_request(request: VerificationRequest, sender: Sender<Event>) {
     let mut stream = request.changes();
+    let mut comparison: Option<JoinHandle<()>> = None;
 
     while let Some(state) = stream.next().await {
         match state {
@@ -233,10 +237,15 @@ async fn follow_request(request: VerificationRequest, sender: Sender<Event>) {
             VerificationRequestState::Transitioned { verification } => {
                 // We only support SAS verification.
                 if let Verification::SasV1(s) = verification {
-                    sas_verification_handler(s, sender).await;
-                    break;
+                    let new = tokio::spawn(sas_verification_handler(s, sender.clone()));
+
+                    if let Some(replaced) = comparison.replace(new) {
+                        replaced.abort();
+                    }
                 }
             }
+            // the comparison shows its own cancellation
+            VerificationRequestState::Cancelled(_) if comparison.is_some() => break,
             VerificationRequestState::Cancelled(info) => {
                 info!("verification request cancelled: {}", info.reason());
 
@@ -313,7 +322,9 @@ mod tests {
 
     use matrix_sdk::encryption::verification::{Emoji, VerificationRequest};
     use matrix_sdk::ruma::exports::serde_json::json;
-    use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, TransactionId, device_id, user_id};
+    use matrix_sdk::ruma::{
+        DeviceId, MilliSecondsSinceUnixEpoch, TransactionId, device_id, user_id,
+    };
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use matrix_sdk::test_utils::mocks::encryption::PendingToDeviceMessages;
     use wiremock::ResponseTemplate;
@@ -326,6 +337,14 @@ mod tests {
     /// with its handlers sending to the returned receiver, and another
     /// device. Every to-device message either sends waits in the queue.
     async fn two_sessions() -> (MatrixMockServer, Client, Client, Queue, Receiver<Event>) {
+        two_sessions_with(device_id!("OTHER")).await
+    }
+
+    /// The same, with the other device's ID, which decides whose emoji
+    /// comparison wins when both sides start one.
+    async fn two_sessions_with(
+        other_device: &DeviceId,
+    ) -> (MatrixMockServer, Client, Client, Queue, Receiver<Event>) {
         let server = MatrixMockServer::new().await;
         server.mock_crypto_endpoints_preset().await;
 
@@ -339,7 +358,7 @@ mod tests {
         server.mock_sync().ok_and_run(&matui, |_| {}).await;
 
         let other = server
-            .set_up_new_device_for_encryption(&matui, device_id!("OTHER"), vec![])
+            .set_up_new_device_for_encryption(&matui, other_device, vec![])
             .await;
 
         let (sender, events) = channel();
@@ -689,6 +708,81 @@ mod tests {
             .await;
 
         let (_, (_, emoji), theirs) = compare_emoji(&server, &matui, &other, &queue).await;
+
+        let symbols = |emoji: &[Emoji]| emoji.iter().map(|e| e.symbol).collect::<Vec<_>>();
+        assert_eq!(symbols(&emoji), symbols(&theirs.emoji().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn follows_the_other_sides_emoji_comparison_when_both_start() {
+        // sorting before MATUI, its comparison replaces matui's
+        let (server, matui, other, queue, _events) = two_sessions_with(device_id!("ELEMENT")).await;
+        let user = matui.user_id().unwrap();
+        let _guard = server
+            .capture_put_to_device_traffic(user, queue.clone())
+            .await;
+
+        let request = matui
+            .encryption()
+            .get_device(user, other.device_id().unwrap())
+            .await
+            .unwrap()
+            .expect("matui knows the other device")
+            .request_verification_with_methods(vec![VerificationMethod::SasV1])
+            .await
+            .unwrap();
+
+        let flow_id = request.flow_id().to_owned();
+        let (sender, events) = channel();
+        tokio::spawn(follow_request(request, sender));
+
+        relay(&server, &queue, &other).await;
+        let theirs = other
+            .encryption()
+            .get_verification_request(user, &flow_id)
+            .await
+            .expect("the other device got the request");
+        theirs.accept().await.unwrap();
+
+        // matui starts a comparison once it hears the other side is ready...
+        relay(&server, &queue, &matui).await;
+        let started = async {
+            while matui
+                .encryption()
+                .get_verification(user, &flow_id)
+                .await
+                .is_none()
+            {
+                tokio::task::yield_now().await;
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(5), started)
+            .await
+            .expect("matui starts a comparison");
+
+        // ...and so does the other side, as Element X does, before hearing
+        // about matui's
+        let theirs = theirs.start_sas().await.unwrap().expect("a comparison");
+
+        let compared = async {
+            loop {
+                tokio::task::yield_now().await;
+                relay(&server, &queue, &matui).await;
+                relay(&server, &queue, &other).await;
+
+                if let Ok(event) = events.try_recv() {
+                    return event;
+                }
+            }
+        };
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), compared)
+            .await
+            .expect("matui shows the emoji");
+
+        let Matui(VerificationStarted(_, emoji)) = event else {
+            panic!("expected the emoji, got {:?}", event);
+        };
 
         let symbols = |emoji: &[Emoji]| emoji.iter().map(|e| e.symbol).collect::<Vec<_>>();
         assert_eq!(symbols(&emoji), symbols(&theirs.emoji().unwrap()));

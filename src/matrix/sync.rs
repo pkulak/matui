@@ -1,10 +1,12 @@
 use std::pin::pin;
+use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use futures::stream::StreamExt;
+use futures::stream::{Stream, StreamExt};
 use log::{error, warn};
 use matrix_sdk::Client;
 use matrix_sdk::RoomState;
+use matrix_sdk::encryption::backups::BackupState;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::MilliSecondsSinceUnixEpoch;
 use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMemberEvent};
@@ -18,6 +20,7 @@ use super::Matrix;
 use super::decryption::RoomKey;
 use super::verification::add_verification_handlers;
 use crate::app::App;
+use crate::event::Event;
 use crate::event::Event::Matui;
 use crate::handler::MatuiEvent::Error;
 use crate::handler::{MatuiEvent, SyncType};
@@ -40,6 +43,10 @@ impl Matrix {
         add_default_handlers(client.clone());
         add_verification_handlers(client.clone(), App::get_sender());
         follow_room_keys(&client).await;
+        App::spawn(show_backup_downloads(
+            client.encryption().backups().state_stream(),
+            App::get_sender(),
+        ));
 
         let sync_service = match SyncService::builder(client.clone())
             .with_offline_mode()
@@ -274,6 +281,40 @@ async fn follow_room_keys(client: &Client) {
     });
 }
 
+/// Show progress while every room key downloads from the backup, such as
+/// after verifying. It can take a while, and a room opened meanwhile has
+/// nothing it can decrypt yet.
+async fn show_backup_downloads<E>(
+    states: impl Stream<Item = Result<BackupState, E>>,
+    sender: Sender<Event>,
+) {
+    let mut states = pin!(states);
+    let mut downloading = false;
+
+    while let Some(state) = states.next().await {
+        // a missed state is fine: the next one says whether it's still going
+        let Ok(state) = state else {
+            continue;
+        };
+
+        let now = state == BackupState::Downloading;
+
+        if now == downloading {
+            continue;
+        }
+
+        downloading = now;
+
+        let event = if downloading {
+            MatuiEvent::ProgressStarted("Downloading encryption keys.".to_string(), 250)
+        } else {
+            MatuiEvent::ProgressComplete
+        };
+
+        let _ = sender.send(Matui(event));
+    }
+}
+
 async fn send_invite_event(room: Room) {
     let name = match room.display_name().await {
         Ok(name) => name.to_string(),
@@ -292,4 +333,64 @@ async fn send_invite_event(room: Room) {
         room,
         format!("{} invited you to {}. Join?", inviter, name),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::channel;
+
+    use futures::stream;
+
+    use super::*;
+
+    /// The progress events sent for these backup states, with `None` for
+    /// a state the stream missed.
+    async fn progress(states: Vec<Option<BackupState>>) -> Vec<&'static str> {
+        let (sender, events) = channel();
+        let states = states.into_iter().map(|s| s.ok_or(()));
+
+        show_backup_downloads(stream::iter(states), sender).await;
+
+        events
+            .try_iter()
+            .map(|event| match event {
+                Matui(MatuiEvent::ProgressStarted(..)) => "started",
+                Matui(MatuiEvent::ProgressComplete) => "complete",
+                event => panic!("expected progress, got {:?}", event),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn shows_progress_while_downloading() {
+        use BackupState::*;
+
+        let events = progress(vec![
+            Some(Unknown),
+            Some(Enabling),
+            Some(Downloading),
+            Some(Enabled),
+        ])
+        .await;
+
+        assert_eq!(events, ["started", "complete"]);
+    }
+
+    #[tokio::test]
+    async fn ends_progress_after_a_missed_state() {
+        use BackupState::*;
+
+        let events = progress(vec![Some(Downloading), None, Some(Enabled)]).await;
+
+        assert_eq!(events, ["started", "complete"]);
+    }
+
+    #[tokio::test]
+    async fn shows_nothing_without_a_download() {
+        use BackupState::*;
+
+        let events = progress(vec![Some(Resuming), Some(Enabled)]).await;
+
+        assert!(events.is_empty());
+    }
 }
