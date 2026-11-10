@@ -2,7 +2,6 @@ use crossterm::{
     event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange},
     execute,
 };
-use log::LevelFilter;
 use matui::app::App;
 use matui::event::{Event, EventHandler};
 use matui::handler::{
@@ -10,7 +9,10 @@ use matui::handler::{
 };
 use matui::pictures::init_picker;
 use matui::settings::watch_settings_forever;
+use std::fs::File;
 use std::io::stdout;
+use std::sync::Mutex;
+use tracing_subscriber::filter::LevelFilter;
 
 fn main() -> anyhow::Result<()> {
     // debug builds always log; MATUI_LOG turns logging on for any build
@@ -18,7 +20,13 @@ fn main() -> anyhow::Result<()> {
         std::env::var_os("MATUI_LOG").or_else(|| cfg!(debug_assertions).then(|| "test.log".into()));
 
     if let Some(path) = log {
-        simple_logging::log_to_file(path, LevelFilter::Info)?;
+        // a subscriber, rather than only a log logger, because matrix-sdk's
+        // tracing spans otherwise reach the log as a line per enter and exit
+        tracing_subscriber::fmt()
+            .with_writer(Mutex::new(File::create(path)?))
+            .with_max_level(LevelFilter::INFO)
+            .with_ansi(false)
+            .init();
         log_panics::init();
     }
 

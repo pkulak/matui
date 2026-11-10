@@ -34,12 +34,12 @@ regex = "1.13.1"
 # TODO: drop with forget_legacy_to_device_token
 rusqlite = { version = "0.40.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
-simple-logging = "2.0"
 termimad = "0.35.5"
 tempfile = "3"
 textwrap = "0.16.4"
 timeago = "0.6"
 tokio = { version = "1.53.1", features = ["rt-multi-thread"] }
+tracing-subscriber = "0.3"
 url = "2.5"
 
 # make sure notify-rust pulls in a zbus build that uses tokio
