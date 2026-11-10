@@ -1,12 +1,10 @@
-use crate::app::{App, NoticeId, Popup};
+use crate::app::{App, NoticeId, Popup, Session};
 use crate::matrix::emoji::format_emojis;
 use crate::spawn::pasted_file_paths;
 use crate::widgets::EventResult;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
-use crate::widgets::homeserver::Homeserver;
-use crate::widgets::oauth::Oauth;
 use crate::widgets::progress::Progress;
 use crate::widgets::qr::Qr;
 use crate::widgets::rooms::{Rooms, sort_rooms};
@@ -37,31 +35,22 @@ pub enum MatuiEvent {
     Error(String),
     Invited(Room, String),
     LoggedOut,
+    /// Signing in reached this step.
+    Login(Login),
     LoginComplete,
     /// The OAuth or QR login flow failed. Its popup only waits for the
     /// flow, so the error replaces it rather than waiting behind it.
     LoginFailed(String),
-    LoginRequired,
-    LoginStarted,
-    PasswordLoginRequired(String),
-    /// The OAuth flow is waiting on the browser at the given URL; the
-    /// Notify cancels it.
-    OauthStarted(String, Arc<Notify>),
     /// A picture for a room's chat, or `None` if it couldn't be loaded.
     Picture(OwnedRoomId, OwnedMxcUri, Option<DynamicImage>),
     ProgressStarted(NoticeId, String, u64),
     Withdraw(NoticeId),
-    /// QR login of this device waits for the other device to approve it,
-    /// by entering this code.
-    QrLoginApprove(String),
+    // The QrLogin events are for granting another device a login, with :qr.
     QrLoginAuth(String),
-    /// A QR code to scan. The Notify is there when this device is the one
-    /// logging in, and cancels that.
-    QrLoginCode(String, Option<Arc<Notify>>),
+    /// A QR code for the other device to scan.
+    QrLoginCode(String),
     QrLoginDone,
-    /// The other device scanned the QR code; the Notify is as for
-    /// `QrLoginCode`.
-    QrLoginScanned(CheckCodeSender, Option<Arc<Notify>>),
+    QrLoginScanned(CheckCodeSender),
     QrLoginSyncing,
     RoomFound(PublicRoomsChunk),
     /// A timeline may have earlier events to page back to again.
@@ -91,6 +80,51 @@ pub enum MatuiEvent {
     VerificationCancelled(CancelInfo),
     /// The emoji to compare, withdrawn by the verification's ID.
     VerificationStarted(NoticeId, SasVerification, [Emoji; 7]),
+}
+
+/// The steps of signing this device in. A Notify cancels the step it's in.
+#[derive(Clone, Debug)]
+pub enum Login {
+    Homeserver,
+    Password {
+        homeserver: String,
+    },
+    /// Waiting on the browser at this URL.
+    Browser {
+        url: String,
+        cancel: Arc<Notify>,
+    },
+    /// A QR code for a signed-in device to scan. Cancelling falls back to
+    /// the browser.
+    QrCode {
+        code: String,
+        cancel: Arc<Notify>,
+    },
+    /// The other device scanned the code, and shows a check code to enter.
+    QrCheck {
+        sender: CheckCodeSender,
+        cancel: Arc<Notify>,
+    },
+    /// Waiting for the other device to approve, by entering this code.
+    QrApprove {
+        code: String,
+    },
+    SyncingSecrets,
+}
+
+impl Login {
+    /// The step's name, for the log.
+    fn name(&self) -> &'static str {
+        match self {
+            Login::Homeserver => "Homeserver",
+            Login::Password { .. } => "Password",
+            Login::Browser { .. } => "Browser",
+            Login::QrCode { .. } => "QrCode",
+            Login::QrCheck { .. } => "QrCheck",
+            Login::QrApprove { .. } => "QrApprove",
+            Login::SyncingSecrets => "SyncingSecrets",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -124,24 +158,14 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::LoggedOut => {
             app.running = false;
         }
-        MatuiEvent::LoginRequired => {
-            app.set_popup(Popup::Homeserver(Homeserver::default()));
+        MatuiEvent::Login(step) => {
+            log::info!("sign-in: {}", step.name());
+            app.session = Session::SignedOut(Signin::from(step));
         }
-        MatuiEvent::PasswordLoginRequired(homeserver) => {
-            app.set_popup(Popup::Signin(Signin::new(homeserver)));
+        MatuiEvent::LoginComplete => {
+            log::info!("sign-in: done");
+            app.session = Session::SignedIn;
         }
-        MatuiEvent::OauthStarted(url, cancel) => {
-            app.set_popup(Popup::Oauth(Oauth::new(url, cancel)));
-        }
-        MatuiEvent::LoginStarted => {
-            app.show_notice(Popup::Progress(Progress::new(
-                NoticeId::next(),
-                "Logging in",
-                0,
-            )));
-        }
-        // closes the OAuth popup too
-        MatuiEvent::LoginComplete => app.close_popup(),
         MatuiEvent::LoginFailed(msg) => {
             log::warn!("Login failed: {msg}");
             app.set_popup(Popup::Error(Error::new(msg)));
@@ -155,18 +179,11 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.show_notice(Popup::Progress(Progress::new(id, &msg, delay)))
         }
         MatuiEvent::Withdraw(id) => app.withdraw(id),
-        MatuiEvent::QrLoginApprove(code) => {
-            app.set_popup(Popup::Progress(Progress::new(
-                NoticeId::next(),
-                &format!("Enter {code} on your other device."),
-                0,
-            )));
-        }
         MatuiEvent::QrLoginAuth(url) => {
             app.set_popup(Popup::Qr(Qr::auth(url)));
         }
-        MatuiEvent::QrLoginCode(code, cancel) => {
-            app.set_popup(Popup::Qr(Qr::code(code, cancel)));
+        MatuiEvent::QrLoginCode(code) => {
+            app.set_popup(Popup::Qr(Qr::code(code)));
         }
         MatuiEvent::QrLoginDone => {
             app.set_popup(Popup::Error(Error::with_heading(
@@ -174,8 +191,8 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 "Login granted.".to_string(),
             )));
         }
-        MatuiEvent::QrLoginScanned(sender, cancel) => {
-            app.set_popup(Popup::Qr(Qr::check(sender, cancel)));
+        MatuiEvent::QrLoginScanned(sender) => {
+            app.set_popup(Popup::Qr(Qr::check(sender)));
         }
         MatuiEvent::QrLoginSyncing => {
             app.set_popup(Popup::Progress(Progress::new(
@@ -378,6 +395,18 @@ pub fn handle_key_event(
         return Ok(());
     }
 
+    // while signing in, the sign-in screen is all there is behind a popup,
+    // and it doesn't take keys a popup ignores
+    if let Session::SignedOut(signin) = &mut app.session {
+        if app.popup.is_none()
+            && let EventResult::Consumed(f) = signin.key_event(&key_event, handler)
+        {
+            f(app);
+        }
+
+        return Ok(());
+    }
+
     // A reaction dialog is part of Chat rather than Popup, but is still modal.
     if app
         .thread
@@ -412,6 +441,13 @@ pub fn handle_key_event(
 pub fn handle_paste_event(value: String, app: &mut App) {
     if let Some(popup) = app.popup.as_mut() {
         if let EventResult::Consumed(f) = popup.paste_event(&value) {
+            f(app);
+        }
+        return;
+    }
+
+    if let Session::SignedOut(signin) = &mut app.session {
+        if let EventResult::Consumed(f) = signin.paste_event(&value) {
             f(app);
         }
         return;

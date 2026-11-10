@@ -7,9 +7,9 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
+use crate::consumed;
 use crate::event::EventHandler;
 use crate::spawn::spawn_editor;
-use crate::{close, consumed};
 
 use super::{EventResult, get_margin};
 
@@ -44,11 +44,9 @@ impl Oauth {
             }
             KeyCode::Esc => {
                 self.cancel.notify_one();
-                close!()
+                consumed!()
             }
-            // swallow everything else: a stray key shouldn't kill a
-            // pending login
-            _ => consumed!(),
+            _ => EventResult::Ignored,
         }
     }
 }

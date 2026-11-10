@@ -9,7 +9,7 @@ use log::info;
 use matrix_sdk::Client;
 use matrix_sdk::authentication::oauth::ClientRegistrationData;
 use matrix_sdk::authentication::oauth::qrcode::{
-    GeneratedQrProgress, GrantLoginProgress, LoginProgress, QRCodeLoginError,
+    CheckCodeSender, GeneratedQrProgress, GrantLoginProgress, LoginProgress, QRCodeLoginError,
 };
 use matrix_sdk::authentication::oauth::registration::{
     ApplicationType, ClientMetadata, Localized, OAuthGrantType,
@@ -24,7 +24,7 @@ use tokio::sync::Notify;
 use super::Matrix;
 use super::session::{build_client, persist_session, restore_session};
 use crate::handler::MatuiEvent::{Error, LoginFailed};
-use crate::handler::{MatuiEvent, SyncType};
+use crate::handler::{Login, MatuiEvent, SyncType};
 
 impl Matrix {
     pub fn init(&self) {
@@ -33,7 +33,7 @@ impl Matrix {
         let (_, session_file) = Matrix::dirs();
 
         if !session_file.exists() {
-            self.send(MatuiEvent::LoginRequired);
+            self.send(MatuiEvent::Login(Login::Homeserver));
             return;
         }
 
@@ -70,9 +70,11 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(MatuiEvent::LoginStarted);
+            let progress = matrix.progress("Logging in", 0);
+            let result = login(&data_dir, &session_file, &homeserver, &user, &pass).await;
+            drop(progress);
 
-            match login(&data_dir, &session_file, &homeserver, &user, &pass).await {
+            match result {
                 Ok(client) => matrix.finish_signin(client).await,
                 Err(err) => matrix.send(Error(err.to_string())),
             }
@@ -92,7 +94,7 @@ impl Matrix {
                 Ok(LoginKind::Qr) => matrix.login_qr(homeserver),
                 Ok(LoginKind::Oauth) => matrix.login_oauth(homeserver),
                 Ok(LoginKind::Password) => {
-                    matrix.send(MatuiEvent::PasswordLoginRequired(homeserver))
+                    matrix.send(MatuiEvent::Login(Login::Password { homeserver }))
                 }
                 Err(err) => matrix.send(Error(err.to_string())),
             }
@@ -110,6 +112,18 @@ impl Matrix {
                 Ok(Some(client)) => matrix.finish_signin(client).await,
                 Ok(None) => matrix.login_oauth(homeserver),
                 Err(err) => matrix.send(LoginFailed(err.to_string())),
+            }
+        });
+    }
+
+    /// Answer the other device with the check code it shows, whichever
+    /// side of a QR login this is.
+    pub fn send_check_code(&self, sender: CheckCodeSender, code: u8) {
+        let matrix = self.clone();
+
+        self.spawn(async move {
+            if let Err(err) = sender.send(code).await {
+                matrix.send(Error(err.to_string()));
             }
         });
     }
@@ -135,12 +149,12 @@ impl Matrix {
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrReady(data),
                         ) => match render_qr_code(data.to_bytes()) {
-                            Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code, None)),
+                            Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code)),
                             Err(err) => matrix.send(LoginFailed(err.to_string())),
                         },
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrScanned(sender),
-                        ) => matrix.send(MatuiEvent::QrLoginScanned(sender, None)),
+                        ) => matrix.send(MatuiEvent::QrLoginScanned(sender)),
                         GrantLoginProgress::WaitingForAuth {
                             verification_uri,
                             continuation_sender,
@@ -175,12 +189,10 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            matrix.send(MatuiEvent::LoginStarted);
-
             match login_oauth_flow(&matrix, &data_dir, &session_file, &homeserver).await {
                 Ok(Some(client)) => matrix.finish_signin(client).await,
-                // cancelled from the waiting popup; back to the form
-                Ok(None) => matrix.send(MatuiEvent::LoginRequired),
+                // cancelled while waiting on the browser; back to the form
+                Ok(None) => matrix.send(MatuiEvent::Login(Login::Homeserver)),
                 Err(err) => matrix.send(LoginFailed(err.to_string())),
             }
         });
@@ -365,30 +377,37 @@ async fn show_qr_login_progress(
             LoginProgress::Starting => {}
             LoginProgress::EstablishingSecureChannel(GeneratedQrProgress::QrReady(data)) => {
                 match render_qr_code(data.to_bytes()) {
-                    Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code, Some(cancel.clone()))),
+                    Ok(code) => matrix.send(MatuiEvent::Login(Login::QrCode {
+                        code,
+                        cancel: cancel.clone(),
+                    })),
                     Err(err) => matrix.send(LoginFailed(err.to_string())),
                 }
             }
             LoginProgress::EstablishingSecureChannel(GeneratedQrProgress::QrScanned(sender)) => {
-                matrix.send(MatuiEvent::QrLoginScanned(sender, Some(cancel.clone())))
+                matrix.send(MatuiEvent::Login(Login::QrCheck {
+                    sender,
+                    cancel: cancel.clone(),
+                }))
             }
             LoginProgress::WaitingForToken { user_code } => {
-                matrix.send(MatuiEvent::QrLoginApprove(user_code))
+                matrix.send(MatuiEvent::Login(Login::QrApprove { code: user_code }))
             }
-            LoginProgress::SyncingSecrets => matrix.send(MatuiEvent::QrLoginSyncing),
+            LoginProgress::SyncingSecrets => matrix.send(MatuiEvent::Login(Login::SyncingSecrets)),
             LoginProgress::Done => {}
         }
     }
 }
 
 /// Run the browser-based OAuth login flow. Returns None if the user
-/// cancelled from the waiting popup.
+/// cancelled while waiting on the browser.
 async fn login_oauth_flow(
     matrix: &Matrix,
     data_dir: &Path,
     session_file: &Path,
     homeserver: &str,
 ) -> anyhow::Result<Option<Client>> {
+    let progress = matrix.progress("Logging in", 0);
     let (client, client_session) = build_client(data_dir, homeserver).await?;
 
     let (redirect_url, redirect) = LocalServerBuilder::new()
@@ -415,15 +434,16 @@ async fn login_oauth_flow(
         .build()
         .await?;
 
-    // best effort: the waiting popup has fallbacks if this doesn't work
+    // best effort: the waiting screen has fallbacks if this doesn't work
     let _ = open::that_detached(auth_data.url.as_str());
 
     let cancel = Arc::new(tokio::sync::Notify::new());
 
-    matrix.send(MatuiEvent::OauthStarted(
-        auth_data.url.to_string(),
-        cancel.clone(),
-    ));
+    drop(progress);
+    matrix.send(MatuiEvent::Login(Login::Browser {
+        url: auth_data.url.to_string(),
+        cancel: cancel.clone(),
+    }));
 
     let query = tokio::select! {
         query = redirect.into_future() => query,

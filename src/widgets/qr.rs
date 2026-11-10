@@ -5,12 +5,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
-use std::sync::Arc;
-use tokio::sync::Notify;
 
 use crate::app::{NoticeId, Popup};
 use crate::event::EventHandler;
-use crate::handler::MatuiEvent;
 use crate::spawn::spawn_editor;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::progress::Progress;
@@ -18,31 +15,25 @@ use crate::widgets::textinput::TextInput;
 use crate::widgets::{EventResult, get_margin};
 use crate::{close, consumed};
 
-/// The steps of QR login. `cancel` is there when this device is the one
-/// logging in, and Esc cancels that login rather than just closing.
+/// The steps of granting another device a login with a QR code.
 pub enum Qr {
-    Code {
-        code: String,
-        cancel: Option<Arc<Notify>>,
-    },
+    Code(String),
     Check {
         input: TextInput,
         sender: CheckCodeSender,
-        cancel: Option<Arc<Notify>>,
     },
     Auth(String),
 }
 
 impl Qr {
-    pub fn code(code: String, cancel: Option<Arc<Notify>>) -> Self {
-        Self::Code { code, cancel }
+    pub fn code(code: String) -> Self {
+        Self::Code(code)
     }
 
-    pub fn check(sender: CheckCodeSender, cancel: Option<Arc<Notify>>) -> Self {
+    pub fn check(sender: CheckCodeSender) -> Self {
         Self::Check {
-            input: TextInput::new(String::new(), true, false),
+            input: check_input(),
             sender,
-            cancel,
         }
     }
 
@@ -63,21 +54,20 @@ impl Qr {
 
     pub fn key_event(&mut self, input: &KeyEvent, handler: &EventHandler) -> EventResult {
         match self {
-            Qr::Code { cancel, .. } => match input.code {
-                KeyCode::Esc => cancel_and_close(cancel),
+            Qr::Code(_) => match input.code {
+                KeyCode::Esc => close!(),
                 _ => consumed!(),
             },
             Qr::Check {
                 input: field,
                 sender,
-                cancel,
             } => {
                 if let Consumed(_) = field.key_event(input) {
                     return consumed!();
                 }
 
                 match input.code {
-                    KeyCode::Esc => cancel_and_close(cancel),
+                    KeyCode::Esc => close!(),
                     KeyCode::Enter => {
                         let Ok(code) = field.value().trim().parse::<u8>() else {
                             return consumed!();
@@ -90,13 +80,7 @@ impl Qr {
                                 "Checking QR login code.",
                                 0,
                             )));
-
-                            let matrix = app.matrix.clone();
-                            app.matrix.spawn(async move {
-                                if let Err(err) = sender.send(code).await {
-                                    matrix.send(MatuiEvent::Error(err.to_string()));
-                                }
-                            });
+                            app.matrix.send_check_code(sender, code);
                         }))
                     }
                     _ => Ignored,
@@ -121,12 +105,9 @@ impl Qr {
     }
 }
 
-fn cancel_and_close(cancel: &Option<Arc<Notify>>) -> EventResult {
-    if let Some(cancel) = cancel {
-        cancel.notify_one();
-    }
-
-    close!()
+/// The field for the check code the other device shows.
+pub fn check_input() -> TextInput {
+    TextInput::new(String::new(), true, false)
 }
 
 pub struct QrWidget<'a> {
@@ -136,8 +117,8 @@ pub struct QrWidget<'a> {
 impl Widget for QrWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         match self.qr {
-            Qr::Code { code, cancel } => render_code(code, cancel.is_some(), area, buf),
-            Qr::Check { input, cancel, .. } => render_check(input, cancel.is_some(), area, buf),
+            Qr::Code(code) => render_code(code, false, area, buf),
+            Qr::Check { input, .. } => render_check(input, false, area, buf),
             Qr::Auth(url) => render_auth(url, area, buf),
         }
     }
@@ -174,7 +155,8 @@ fn frame(area: Rect, buf: &mut Buffer, width: u16, height: u16) -> Vec<Rect> {
         .to_vec()
 }
 
-fn render_code(code: &str, logging_in: bool, area: Rect, buf: &mut Buffer) {
+/// Show a QR code, for the device logging in or the one granting it.
+pub fn render_code(code: &str, logging_in: bool, area: Rect, buf: &mut Buffer) {
     let width = code.lines().map(str::len).max().unwrap_or(60) as u16 + 4;
     let height = code.lines().count() as u16 + 6;
     let splits = frame(area, buf, width, height);
@@ -202,7 +184,7 @@ fn render_code(code: &str, logging_in: bool, area: Rect, buf: &mut Buffer) {
         .render(splits[2], buf);
 }
 
-fn render_check(input: &TextInput, logging_in: bool, area: Rect, buf: &mut Buffer) {
+pub fn render_check(input: &TextInput, logging_in: bool, area: Rect, buf: &mut Buffer) {
     let splits = frame(area, buf, 60, 10);
 
     let (heading, footer) = if logging_in {

@@ -48,10 +48,7 @@ impl Homeserver {
         if let Consumed(_) = self.continue_button.key_event(input) {
             let homeserver = self.homeserver.value().trim().to_string();
 
-            return Consumed(Box::new(move |app| {
-                app.close_popup();
-                app.matrix.start_login(homeserver);
-            }));
+            return Consumed(Box::new(move |app| app.matrix.start_login(homeserver)));
         }
 
         match input.code {

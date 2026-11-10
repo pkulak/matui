@@ -10,6 +10,7 @@ pub mod help;
 pub mod homeserver;
 pub mod members;
 pub mod oauth;
+pub mod password;
 pub mod progress;
 pub mod qr;
 pub mod recover;

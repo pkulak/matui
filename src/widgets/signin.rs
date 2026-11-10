@@ -1,132 +1,144 @@
+use std::sync::Arc;
+
 use crossterm::event::{KeyCode, KeyEvent};
+use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
+use tokio::sync::Notify;
 
+use crate::app::NoticeId;
 use crate::consumed;
+use crate::event::EventHandler;
+use crate::handler::Login;
+use crate::widgets::EventResult;
 use crate::widgets::EventResult::{Consumed, Ignored};
-use crate::widgets::button::Button;
+use crate::widgets::homeserver::Homeserver;
+use crate::widgets::oauth::Oauth;
+use crate::widgets::password::Password;
+use crate::widgets::progress::Progress;
+use crate::widgets::qr::{check_input, render_check, render_code};
 use crate::widgets::textinput::TextInput;
-use crate::widgets::{EventResult, Focusable, focus_next, focus_prev, get_margin};
 
-pub struct Signin {
-    homeserver: String,
-    pub username: TextInput,
-    pub password: TextInput,
-    submit: Button,
+/// The screen for signing in, at the step it's reached.
+pub enum Signin {
+    Homeserver(Homeserver),
+    Password(Password),
+    Browser(Oauth),
+    QrCode {
+        code: String,
+        cancel: Arc<Notify>,
+    },
+    QrCheck {
+        input: TextInput,
+        sender: CheckCodeSender,
+        cancel: Arc<Notify>,
+    },
+    /// Waiting on the other device.
+    Waiting(Progress),
+}
+
+impl From<Login> for Signin {
+    fn from(step: Login) -> Self {
+        match step {
+            Login::Homeserver => Signin::Homeserver(Homeserver::default()),
+            Login::Password { homeserver } => Signin::Password(Password::new(homeserver)),
+            Login::Browser { url, cancel } => Signin::Browser(Oauth::new(url, cancel)),
+            Login::QrCode { code, cancel } => Signin::QrCode { code, cancel },
+            Login::QrCheck { sender, cancel } => Signin::QrCheck {
+                input: check_input(),
+                sender,
+                cancel,
+            },
+            Login::QrApprove { code } => waiting(&format!("Enter {code} on your other device.")),
+            Login::SyncingSecrets => waiting("Syncing secrets."),
+        }
+    }
+}
+
+fn waiting(text: &str) -> Signin {
+    Signin::Waiting(Progress::new(NoticeId::next(), text, 0))
 }
 
 impl Signin {
-    pub fn new(homeserver: String) -> Self {
-        let username = TextInput::new("Username".to_string(), true, false);
-        let password = TextInput::new("Password".to_string(), false, true);
-
-        let submit = Button::new("Submit".to_string(), false);
-
-        Self {
-            homeserver,
-            username,
-            password,
-            submit,
-        }
-    }
-
-    fn focus_order(&mut self) -> Vec<Box<dyn Focusable + '_>> {
-        vec![
-            Box::new(&mut self.username),
-            Box::new(&mut self.password),
-            Box::new(&mut self.submit),
-        ]
-    }
-
     pub fn widget(&self) -> SigninWidget<'_> {
         SigninWidget { signin: self }
     }
 
-    pub fn paste_event(&mut self, value: &str) -> EventResult {
-        if let Consumed(_) = self.username.paste_event(value) {
-            return consumed!();
+    pub fn tick_event(&mut self, timestamp: usize) {
+        if let Signin::Waiting(progress) = self {
+            progress.tick_event(timestamp);
         }
-
-        self.password.paste_event(value)
     }
 
-    pub fn key_event(&mut self, input: &KeyEvent) -> EventResult {
-        if let Consumed(_) = self.username.key_event(input) {
-            return consumed!();
+    pub fn paste_event(&mut self, value: &str) -> EventResult {
+        match self {
+            Signin::Homeserver(w) => w.paste_event(value),
+            Signin::Password(w) => w.paste_event(value),
+            Signin::QrCheck { input, .. } => input.paste_event(value),
+            Signin::Browser(_) | Signin::QrCode { .. } | Signin::Waiting(_) => Ignored,
         }
+    }
 
-        if let Consumed(_) = self.password.key_event(input) {
-            return consumed!();
-        }
+    pub fn key_event(&mut self, input: &KeyEvent, handler: &EventHandler) -> EventResult {
+        match self {
+            Signin::Homeserver(w) => w.key_event(input),
+            Signin::Password(w) => w.key_event(input),
+            Signin::Browser(w) => w.key_event(input, handler),
+            Signin::QrCode { cancel, .. } => {
+                if input.code == KeyCode::Esc {
+                    cancel.notify_one();
+                }
 
-        if let Consumed(_) = self.submit.key_event(input) {
-            let homeserver = self.homeserver.clone();
-            let username = self.username.value();
-            let password = self.password.value();
+                consumed!()
+            }
+            Signin::QrCheck {
+                input: field,
+                sender,
+                cancel,
+            } => {
+                if let Consumed(_) = field.key_event(input) {
+                    return consumed!();
+                }
 
-            return EventResult::Consumed(Box::new(move |app| {
-                app.matrix
-                    .login(homeserver.as_str(), username.trim(), password.as_str());
-                app.close_popup();
-            }));
-        }
+                match input.code {
+                    KeyCode::Esc => {
+                        cancel.notify_one();
+                        consumed!()
+                    }
+                    KeyCode::Enter => {
+                        let Ok(code) = field.value().trim().parse::<u8>() else {
+                            return consumed!();
+                        };
 
-        match input.code {
-            KeyCode::Enter | KeyCode::Tab | KeyCode::Down => focus_next(self.focus_order()),
-            KeyCode::BackTab | KeyCode::Up => focus_prev(self.focus_order()),
-            _ => Ignored,
+                        let sender = sender.clone();
+                        *self = waiting("Checking QR login code.");
+
+                        Consumed(Box::new(move |app| {
+                            app.matrix.send_check_code(sender, code)
+                        }))
+                    }
+                    _ => Ignored,
+                }
+            }
+            Signin::Waiting(_) => Ignored,
         }
     }
 }
 
 pub struct SigninWidget<'a> {
-    pub signin: &'a Signin,
+    signin: &'a Signin,
 }
 
 impl Widget for SigninWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let area = Layout::default()
-            .horizontal_margin(get_margin(area.width, 60))
-            .vertical_margin(get_margin(area.height, 17))
-            .constraints([Constraint::Percentage(100)])
-            .split(area)[0];
-
-        buf.merge(&Buffer::empty(area));
-
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .horizontal_margin(8)
-            .vertical_margin(2)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(3),
-                Constraint::Length(1),
-                Constraint::Length(3),
-                Constraint::Length(1),
-                Constraint::Length(3),
-            ])
-            .split(area);
-
-        let block = Block::default()
-            .title("Sign In")
-            .title_alignment(Alignment::Center)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .style(Style::default().bg(Color::Reset));
-
-        block.render(area, buf);
-        Paragraph::new(format!("Homeserver: {}", self.signin.homeserver)).render(splits[0], buf);
-        self.signin.username.widget().render(splits[2], buf);
-        self.signin.password.widget().render(splits[4], buf);
-
-        let submit_area = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(splits[6])[1];
-
-        self.signin.submit.widget().render(submit_area, buf);
+        match self.signin {
+            Signin::Homeserver(w) => w.widget().render(area, buf),
+            Signin::Password(w) => w.widget().render(area, buf),
+            Signin::Browser(w) => w.widget().render(area, buf),
+            Signin::QrCode { code, .. } => render_code(code, true, area, buf),
+            Signin::QrCheck { input, .. } => render_check(input, true, area, buf),
+            Signin::Waiting(w) => w.widget().render(area, buf),
+        }
     }
 }

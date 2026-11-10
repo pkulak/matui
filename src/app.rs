@@ -17,9 +17,7 @@ use crate::widgets::confirm::Confirm;
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
-use crate::widgets::homeserver::Homeserver;
 use crate::widgets::members::Members;
-use crate::widgets::oauth::Oauth;
 use crate::widgets::progress::Progress;
 use crate::widgets::qr::Qr;
 use crate::widgets::recover::Recover;
@@ -41,6 +39,14 @@ impl NoticeId {
     }
 }
 
+/// What's underneath the popups.
+pub enum Session {
+    /// Signed in, or restoring a saved session: the chat.
+    SignedIn,
+    /// Signing in, at the step the screen shows.
+    SignedOut(Signin),
+}
+
 /// Application.
 pub struct App {
     /// Is the application running?
@@ -52,6 +58,8 @@ pub struct App {
     /// Does the terminal have focus? Terminals that don't report focus
     /// never change this, so it starts out true.
     pub focus: bool,
+
+    pub session: Session,
 
     /// Hold on to all our widgets. The chat is always the room; a thread
     /// renders on top of it while both keep receiving events.
@@ -75,6 +83,7 @@ impl App {
             running: true,
             timestamp: 0,
             focus: true,
+            session: Session::SignedIn,
             popup: None,
             notices: VecDeque::new(),
             chat: None,
@@ -165,6 +174,11 @@ impl App {
         let mut render = false;
 
         // send out the ticks
+        if let Session::SignedOut(signin) = &mut self.session {
+            signin.tick_event(self.timestamp);
+            render = true;
+        }
+
         if let Some(w) = self.popup.as_mut() {
             w.tick_event(self.timestamp);
             render = true;
@@ -180,7 +194,9 @@ impl App {
 
     /// Renders the user interface widgets.
     pub fn render(&mut self, frame: &mut Frame) {
-        if let Some(t) = &self.thread {
+        if let Session::SignedOut(signin) = &self.session {
+            frame.render_widget(signin.widget(), frame.area());
+        } else if let Some(t) = &self.thread {
             frame.render_widget(t.widget(), frame.area());
         } else if let Some(c) = &self.chat {
             frame.render_widget(c.widget(), frame.area());
@@ -202,14 +218,11 @@ pub enum Popup {
     Compose(Compose),
     Create(Create),
     Error(Error),
-    Homeserver(Homeserver),
     Members(Members),
     Progress(Progress),
     Qr(Qr),
     Recover(Recover),
     Rooms(Rooms),
-    Oauth(Oauth),
-    Signin(Signin),
     Search(Search),
     Upload(Upload),
     Help(Help),
@@ -232,14 +245,11 @@ impl Popup {
             Popup::Compose(w) => w.key_event(event, handler),
             Popup::Create(w) => w.key_event(event),
             Popup::Error(w) => w.key_event(event),
-            Popup::Homeserver(w) => w.key_event(event),
             Popup::Members(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Qr(w) => w.key_event(event, handler),
             Popup::Recover(w) => w.key_event(event),
             Popup::Rooms(w) => w.key_event(event),
-            Popup::Oauth(w) => w.key_event(event, handler),
-            Popup::Signin(w) => w.key_event(event),
             Popup::Search(w) => w.key_event(event),
             Popup::Help(w) => w.key_event(event),
             Popup::Upload(w) => w.key_event(event),
@@ -251,19 +261,15 @@ impl Popup {
             Popup::Command(w) => w.paste_event(value),
             Popup::Compose(w) => w.paste_event(value),
             Popup::Create(w) => w.paste_event(value),
-            Popup::Homeserver(w) => w.paste_event(value),
             Popup::Members(w) => w.paste_event(value),
             Popup::Qr(w) => w.paste_event(value),
             Popup::Recover(w) => w.paste_event(value),
             Popup::Rooms(w) => w.paste_event(value),
-            Popup::Signin(w) => w.paste_event(value),
             Popup::Search(w) => w.paste_event(value),
             Popup::Upload(w) => w.paste_event(value),
-            Popup::Confirm(_)
-            | Popup::Error(_)
-            | Popup::Progress(_)
-            | Popup::Oauth(_)
-            | Popup::Help(_) => EventResult::Ignored,
+            Popup::Confirm(_) | Popup::Error(_) | Popup::Progress(_) | Popup::Help(_) => {
+                EventResult::Ignored
+            }
         }
     }
 
@@ -283,14 +289,11 @@ impl Popup {
             Popup::Compose(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Create(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
-            Popup::Homeserver(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Members(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Qr(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Rooms(w) => frame.render_widget(w.widget(), frame.area()),
-            Popup::Oauth(w) => frame.render_widget(w.widget(), frame.area()),
-            Popup::Signin(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Search(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Help(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Upload(w) => frame.render_widget(w.widget(), frame.area()),
@@ -424,11 +427,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_login_failure_replaces_the_popup_waiting_for_it() {
         let (mut app, _events) = test_app();
-        let cancel = std::sync::Arc::new(tokio::sync::Notify::new());
-        app.set_popup(Popup::Oauth(Oauth::new(
-            "https://example.org".into(),
-            cancel,
-        )));
+        app.set_popup(Popup::Qr(Qr::code("code".to_string())));
 
         handle_app_event(MatuiEvent::LoginFailed("denied".to_string()), &mut app);
 
