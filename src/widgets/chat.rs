@@ -2083,8 +2083,13 @@ pub(crate) mod tests {
         server
             .mock_room_messages()
             .match_from("p2")
-            .ok(RoomMessagesResponseTemplate::default()
-                .events(raw(vec![text_event("$0:example.org", 500, "zero")])))
+            .ok(
+                RoomMessagesResponseTemplate::default().events(raw(vec![text_event(
+                    "$0:example.org",
+                    500,
+                    "zero",
+                )])),
+            )
             .mount()
             .await;
 
@@ -2120,9 +2125,7 @@ pub(crate) mod tests {
 
                     // the header's second line, drawn as the next page starts
                     if more {
-                        let line: String = (0..area.width)
-                            .map(|x| buf[(x, 2)].symbol())
-                            .collect();
+                        let line: String = (0..area.width).map(|x| buf[(x, 2)].symbol()).collect();
                         assert!(line.contains("Searching..."), "header was {line:?}");
                         pages += 1;
                     }
