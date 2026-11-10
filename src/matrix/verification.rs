@@ -696,7 +696,7 @@ mod tests {
             .await;
         let timeline = Arc::new(room.timeline().await.unwrap());
         let room = DecoratedRoom::from_room(room).await;
-        app.set_popup(Popup::Compose(Compose::new(
+        app.open_popup(Popup::Compose(Compose::new(
             room,
             timeline,
             app.matrix.clone(),

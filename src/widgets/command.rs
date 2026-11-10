@@ -72,7 +72,7 @@ impl Command {
                         app.close_popup();
                     })),
                     ("verify", _) => Consumed(Box::new(|app| {
-                        app.set_popup(Popup::Recover(Recover::default()))
+                        app.replace_popup(Popup::Recover(Recover::default()))
                     })),
                     ("leave", _) => Consumed(Box::new(|app| {
                         if let Some(chat) = &app.chat {
@@ -87,10 +87,10 @@ impl Command {
                         app.close_popup();
                     })),
                     ("create", _) => Consumed(Box::new(|app| {
-                        app.set_popup(Popup::Create(Create::default()))
+                        app.replace_popup(Popup::Create(Create::default()))
                     })),
                     ("invite", "") => Consumed(Box::new(|app| {
-                        app.set_popup(Popup::Error(Error::new(
+                        app.open_popup(Popup::Error(Error::new(
                             "Usage: :invite <user>".to_string(),
                         )))
                     })),
@@ -108,7 +108,7 @@ impl Command {
                                     app.matrix.invite_user(chat.room(), id);
                                     app.close_popup();
                                 }
-                                Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                                Err(err) => app.open_popup(Popup::Error(Error::new(format!(
                                     "Invalid user ID: {}",
                                     err
                                 )))),
@@ -116,7 +116,7 @@ impl Command {
                         }))
                     }
                     ("dm", "") => Consumed(Box::new(|app| {
-                        app.set_popup(Popup::Error(Error::new(
+                        app.open_popup(Popup::Error(Error::new(
                             "Usage: :dm <user> [nocrypt]".to_string(),
                         )))
                     })),
@@ -130,7 +130,7 @@ impl Command {
                             let message = format!("Unknown flag: {}", flag);
 
                             Consumed(Box::new(move |app| {
-                                app.set_popup(Popup::Error(Error::new(message)))
+                                app.open_popup(Popup::Error(Error::new(message)))
                             }))
                         } else {
                             let encrypted = flag.is_empty();
@@ -141,7 +141,7 @@ impl Command {
                                     app.matrix.create_dm(id, encrypted);
                                     app.close_popup();
                                 }
-                                Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                                Err(err) => app.open_popup(Popup::Error(Error::new(format!(
                                     "Invalid user ID: {}",
                                     err
                                 )))),
@@ -152,7 +152,7 @@ impl Command {
                         let message = format!("Usage: :{} <user> [reason]", action);
 
                         Consumed(Box::new(move |app| {
-                            app.set_popup(Popup::Error(Error::new(message)))
+                            app.open_popup(Popup::Error(Error::new(message)))
                         }))
                     }
                     (action @ ("ban" | "unban" | "kick"), arg) => {
@@ -181,7 +181,7 @@ impl Command {
                                     app.matrix.moderate(chat.room(), action, id, reason);
                                     app.close_popup();
                                 }
-                                Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                                Err(err) => app.open_popup(Popup::Error(Error::new(format!(
                                     "Invalid user ID: {}",
                                     err
                                 )))),
@@ -192,7 +192,7 @@ impl Command {
                         let message = format!("Usage: :{} <user>", action);
 
                         Consumed(Box::new(move |app| {
-                            app.set_popup(Popup::Error(Error::new(message)))
+                            app.open_popup(Popup::Error(Error::new(message)))
                         }))
                     }
                     (action @ ("ignore" | "unignore"), user) => {
@@ -204,14 +204,14 @@ impl Command {
                                 app.matrix.ignore_user(id, ignore);
                                 app.close_popup();
                             }
-                            Err(err) => app.set_popup(Popup::Error(Error::new(format!(
+                            Err(err) => app.open_popup(Popup::Error(Error::new(format!(
                                 "Invalid user ID: {}",
                                 err
                             )))),
                         }))
                     }
                     ("join", "") => Consumed(Box::new(|app| {
-                        app.set_popup(Popup::Error(Error::new(
+                        app.open_popup(Popup::Error(Error::new(
                             "Usage: :join <#alias, !id, or name>".to_string(),
                         )))
                     })),
@@ -225,7 +225,7 @@ impl Command {
                                 let message = format!("Invalid room: {}", err);
 
                                 Consumed(Box::new(move |app| {
-                                    app.set_popup(Popup::Error(Error::new(message)))
+                                    app.open_popup(Popup::Error(Error::new(message)))
                                 }))
                             }
                         }
@@ -242,7 +242,7 @@ impl Command {
                         let message = format!("Unknown command: {}", value);
 
                         Consumed(Box::new(move |app| {
-                            app.set_popup(Popup::Error(Error::new(message)))
+                            app.open_popup(Popup::Error(Error::new(message)))
                         }))
                     }
                 }

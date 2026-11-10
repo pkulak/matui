@@ -18,9 +18,11 @@ use crate::{close, consumed};
 /// The steps of granting another device a login with a QR code.
 pub enum Qr {
     Code(String),
+    /// The check code to enter, with the ID of the flow's progress popups.
     Check {
         input: TextInput,
         sender: CheckCodeSender,
+        id: NoticeId,
     },
     Auth(String),
 }
@@ -30,10 +32,11 @@ impl Qr {
         Self::Code(code)
     }
 
-    pub fn check(sender: CheckCodeSender) -> Self {
+    pub fn check(sender: CheckCodeSender, id: NoticeId) -> Self {
         Self::Check {
             input: check_input(),
             sender,
+            id,
         }
     }
 
@@ -61,6 +64,7 @@ impl Qr {
             Qr::Check {
                 input: field,
                 sender,
+                id,
             } => {
                 if let Consumed(_) = field.key_event(input) {
                     return consumed!();
@@ -74,9 +78,10 @@ impl Qr {
                         };
 
                         let sender = sender.clone();
+                        let id = *id;
                         Consumed(Box::new(move |app| {
-                            app.set_popup(Popup::Progress(Progress::new(
-                                NoticeId::next(),
+                            app.replace_popup(Popup::Progress(Progress::new(
+                                id,
                                 "Checking QR login code.",
                                 0,
                             )));

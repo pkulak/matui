@@ -102,7 +102,7 @@ impl Members {
                     &format!("{} ", id),
                 );
 
-                Consumed(Box::new(|app| app.set_popup(Popup::Compose(compose))))
+                Consumed(Box::new(|app| app.replace_popup(Popup::Compose(compose))))
             }
             _ => {
                 if let Consumed(_) = self.textinput.key_event(input) {

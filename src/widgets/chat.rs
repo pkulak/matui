@@ -242,7 +242,7 @@ impl Chat {
             );
 
             return Ok(Consumed(Box::new(|app| {
-                app.set_popup(Popup::Confirm(confirm))
+                app.open_popup(Popup::Confirm(confirm))
             })));
         }
 
@@ -356,7 +356,7 @@ impl Chat {
                 let matrix = self.matrix.clone();
 
                 Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Compose(Compose::new(room, timeline, matrix, "")))
+                    app.open_popup(Popup::Compose(Compose::new(room, timeline, matrix, "")))
                 })))
             }
             KeyCode::Char('@') => {
@@ -379,7 +379,7 @@ impl Chat {
                 );
 
                 Ok(Consumed(Box::new(|app| {
-                    app.set_popup(Popup::Members(members))
+                    app.open_popup(Popup::Members(members))
                 })))
             }
             KeyCode::Char('I') => {
@@ -507,14 +507,14 @@ impl Chat {
                 let matrix = self.matrix.clone();
 
                 Ok(Consumed(Box::new(move |app| {
-                    app.set_popup(Popup::Upload(Upload::new(matrix, timeline, paths)))
+                    app.open_popup(Popup::Upload(Upload::new(matrix, timeline, paths)))
                 })))
             }
             KeyCode::Char('/') => Ok(Consumed(Box::new(|app| {
-                app.set_popup(Popup::Search(Search::default()))
+                app.open_popup(Popup::Search(Search::default()))
             }))),
             KeyCode::Char(':') => Ok(Consumed(Box::new(|app| {
-                app.set_popup(Popup::Command(Command::default()))
+                app.open_popup(Popup::Command(Command::default()))
             }))),
             KeyCode::Char('U') => {
                 let message = match self.selected_reply() {
@@ -525,7 +525,7 @@ impl Chat {
                 let sender = message.sender.id.clone();
 
                 Ok(Consumed(Box::new(move |app| {
-                    app.set_popup(Popup::Command(Command::with_user(&sender)))
+                    app.open_popup(Popup::Command(Command::with_user(&sender)))
                 })))
             }
             _ => Ok(EventResult::Ignored),

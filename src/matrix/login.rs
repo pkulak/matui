@@ -140,7 +140,10 @@ impl Matrix {
         let matrix = self.clone();
 
         self.spawn(async move {
-            let _progress = matrix.progress("Preparing QR login.", 0);
+            // every progress popup of the flow shares this ID, so they all
+            // go when it ends, even ones the user covered
+            let flow = matrix.progress("Preparing QR login.", 0);
+            let id = flow.id();
 
             let client = matrix.client();
             let oauth = client.oauth();
@@ -162,7 +165,7 @@ impl Matrix {
                         },
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrScanned(sender),
-                        ) => matrix.send(MatuiEvent::QrLoginScanned(sender)),
+                        ) => matrix.send(MatuiEvent::QrLoginScanned(sender, id)),
                         GrantLoginProgress::WaitingForAuth {
                             verification_uri,
                             continuation_sender,
@@ -176,7 +179,7 @@ impl Matrix {
                             }
                         }
                         GrantLoginProgress::SyncingSecrets => {
-                            matrix.send(MatuiEvent::QrLoginSyncing);
+                            matrix.send(MatuiEvent::QrLoginSyncing(id));
                         }
                         GrantLoginProgress::Done => {}
                     }

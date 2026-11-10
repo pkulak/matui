@@ -60,9 +60,10 @@ pub struct App {
     /// Hold on to all our widgets. The chat is always the room; a thread
     /// renders on top of it while both keep receiving events.
     pub popup: Option<Popup>,
-    /// Notices waiting for the popup slot, in arrival order. Something is
+    /// Popups waiting for the slot: those covered by a popup opened over
+    /// them, most recent first, then notices in arrival order. Something is
     /// always showing while any wait.
-    pub notices: VecDeque<Popup>,
+    pub waiting: VecDeque<Popup>,
     pub chat: Option<Chat>,
     pub thread: Option<Chat>,
 
@@ -80,7 +81,7 @@ impl App {
             timestamp: 0,
             session: Session::SignedIn,
             popup: None,
-            notices: VecDeque::new(),
+            waiting: VecDeque::new(),
             chat: None,
             thread: None,
             matrix: Matrix::new(send, handle),
@@ -111,8 +112,17 @@ impl App {
         self.matrix.room_opened_event(&room);
     }
 
-    /// Show a popup the user opened, replacing whatever is showing.
-    pub fn set_popup(&mut self, popup: Popup) {
+    /// Show a popup over whatever is showing, which comes back when it
+    /// closes.
+    pub fn open_popup(&mut self, popup: Popup) {
+        if let Some(covered) = self.popup.replace(popup) {
+            self.waiting.push_front(covered);
+        }
+    }
+
+    /// Show a popup in place of whatever is showing, such as a popup's next
+    /// step.
+    pub fn replace_popup(&mut self, popup: Popup) {
         self.popup = Some(popup);
     }
 
@@ -121,7 +131,7 @@ impl App {
     pub fn show_notice(&mut self, popup: Popup) {
         match &self.popup {
             None | Some(Popup::Rooms(_) | Popup::Progress(_)) => self.popup = Some(popup),
-            Some(_) => self.notices.push_back(popup),
+            Some(_) => self.waiting.push_back(popup),
         }
     }
 
@@ -130,10 +140,10 @@ impl App {
     /// before its completion. With nothing waiting and no room open, there's
     /// nothing behind the popups, so go back to the room switcher.
     pub fn close_popup(&mut self) {
-        self.popup = self.notices.pop_front();
+        self.popup = self.waiting.pop_front();
 
-        while matches!(self.popup, Some(Popup::Progress(_))) && !self.notices.is_empty() {
-            self.popup = self.notices.pop_front();
+        while matches!(self.popup, Some(Popup::Progress(_))) && !self.waiting.is_empty() {
+            self.popup = self.waiting.pop_front();
         }
 
         if self.popup.is_none() && self.chat.is_none() {
@@ -149,7 +159,7 @@ impl App {
     pub fn withdraw(&mut self, id: NoticeId) {
         let is_it = |p: &Popup| p.id() == Some(id);
 
-        self.notices.retain(|p| !is_it(p));
+        self.waiting.retain(|p| !is_it(p));
 
         if self.popup.as_ref().is_some_and(is_it) {
             self.close_popup();
@@ -382,7 +392,7 @@ pub(crate) mod tests {
         app.select_room(room);
         assert!(app.chat.is_some());
 
-        app.set_popup(Popup::Help(Help::default()));
+        app.open_popup(Popup::Help(Help::default()));
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
 
         app.close_popup();
@@ -399,7 +409,7 @@ pub(crate) mod tests {
                 InvitedRoomBuilder::new(room_id!("!invite:localhost")),
             )
             .await;
-        app.set_popup(Popup::Help(Help::default()));
+        app.open_popup(Popup::Help(Help::default()));
 
         for _ in 0..2 {
             handle_app_event(
@@ -436,7 +446,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_notice_waits_behind_an_input_popup() {
         let (mut app, _events) = test_app();
-        app.set_popup(Popup::Search(Search::default()));
+        app.open_popup(Popup::Search(Search::default()));
 
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
         assert!(matches!(app.popup, Some(Popup::Search(_))));
@@ -448,18 +458,18 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_qr_login_failure_replaces_the_popup_waiting_for_it() {
         let (mut app, _events) = test_app();
-        app.set_popup(Popup::Qr(Qr::code("code".to_string())));
+        app.open_popup(Popup::Qr(Qr::code("code".to_string())));
 
         handle_app_event(MatuiEvent::QrLoginFailed("denied".to_string()), &mut app);
 
         assert!(matches!(app.popup, Some(Popup::Error(_))));
-        assert!(app.notices.is_empty());
+        assert!(app.waiting.is_empty());
     }
 
     #[tokio::test]
     async fn queued_notices_show_in_arrival_order() {
         let (mut app, _events) = test_app();
-        app.set_popup(Popup::Search(Search::default()));
+        app.open_popup(Popup::Search(Search::default()));
 
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
         offer_verification(&mut app);
@@ -475,19 +485,62 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_popup_the_user_opens_replaces_a_notice() {
+    async fn a_popup_the_user_opens_covers_a_notice() {
         let (mut app, _events) = test_app();
         offer_verification(&mut app);
 
-        app.set_popup(Popup::Help(Help::default()));
-
+        app.open_popup(Popup::Help(Help::default()));
         assert!(matches!(app.popup, Some(Popup::Help(_))));
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Confirm(_))));
+    }
+
+    /// Press these keys in the popup showing, as the user would.
+    fn press(app: &mut App, keys: &[KeyCode]) {
+        for &key in keys {
+            let key = KeyEvent::from(key);
+
+            let result = match app.popup.as_mut() {
+                Some(Popup::Command(w)) => w.key_event(&key),
+                Some(Popup::Confirm(w)) => w.key_event(&key),
+                _ => panic!("no popup to press keys in"),
+            };
+
+            if let EventResult::Consumed(f) = result {
+                f(app);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_recovery_key_takes_the_offers_place() {
+        let (mut app, _events) = test_app();
+        offer_verification(&mut app);
+
+        press(&mut app, &[KeyCode::Tab, KeyCode::Enter]);
+        assert!(matches!(app.popup, Some(Popup::Recover(_))));
+
+        app.close_popup();
+        assert!(app.popup.is_none());
+    }
+
+    #[tokio::test]
+    async fn closing_a_commands_error_goes_back_to_the_command() {
+        let (mut app, _events) = test_app();
+        app.open_popup(Popup::Command(Command::default()));
+
+        press(&mut app, &[KeyCode::Char('x'), KeyCode::Enter]);
+        assert!(matches!(app.popup, Some(Popup::Error(_))));
+
+        app.close_popup();
+        assert!(matches!(app.popup, Some(Popup::Command(_))));
     }
 
     #[tokio::test]
     async fn sending_a_message_leaves_the_prompt_behind_it_showing() {
         let (mut app, _events) = test_app();
-        app.set_popup(Popup::Search(Search::default()));
+        app.open_popup(Popup::Search(Search::default()));
         offer_verification(&mut app);
 
         // the compose popup closes as it sends, then the send shows progress
@@ -536,7 +589,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn recovering_closes_the_key_popup_and_shows_progress() {
         let (_server, _client, mut app, _room, events) = app_with_room().await;
-        app.set_popup(Popup::Recover(Recover::default()));
+        app.open_popup(Popup::Recover(Recover::default()));
 
         let Some(Popup::Recover(recover)) = app.popup.as_mut() else {
             unreachable!()
@@ -567,7 +620,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn completing_queued_progress_unqueues_only_it() {
         let (mut app, _events) = test_app();
-        app.set_popup(Popup::Search(Search::default()));
+        app.open_popup(Popup::Search(Search::default()));
 
         let first = start_progress(&mut app);
         let second = start_progress(&mut app);
@@ -577,6 +630,20 @@ pub(crate) mod tests {
 
         app.close_popup();
         assert_eq!(showing_progress(&app), Some(second));
+    }
+
+    #[tokio::test]
+    async fn a_covered_qr_progress_popup_goes_when_the_flow_ends() {
+        let (mut app, _events) = test_app();
+        let flow = start_progress(&mut app);
+        handle_app_event(MatuiEvent::QrLoginSyncing(flow), &mut app);
+        app.open_popup(Popup::Help(Help::default()));
+
+        handle_app_event(MatuiEvent::QrLoginDone, &mut app);
+        handle_app_event(MatuiEvent::Withdraw(flow), &mut app);
+
+        app.close_popup();
+        assert!(app.popup.is_none());
     }
 
     #[tokio::test]
@@ -598,13 +665,13 @@ pub(crate) mod tests {
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
 
         assert!(matches!(app.popup, Some(Popup::Error(_))));
-        assert!(app.notices.is_empty());
+        assert!(app.waiting.is_empty());
     }
 
     #[tokio::test]
     async fn queued_progress_gives_way_to_a_notice_behind_it() {
         let (mut app, _events) = test_app();
-        app.set_popup(Popup::Search(Search::default()));
+        app.open_popup(Popup::Search(Search::default()));
 
         // work that failed sends its error before its completion
         start_progress(&mut app);
@@ -612,13 +679,13 @@ pub(crate) mod tests {
 
         app.close_popup();
         assert!(matches!(app.popup, Some(Popup::Error(_))));
-        assert!(app.notices.is_empty());
+        assert!(app.waiting.is_empty());
     }
 
     #[tokio::test]
     async fn search_sends_on_the_apps_channel() {
         let (mut app, events) = test_app();
-        app.set_popup(Popup::Search(Search::default()));
+        app.open_popup(Popup::Search(Search::default()));
 
         let Some(Popup::Search(search)) = app.popup.as_mut() else {
             unreachable!()

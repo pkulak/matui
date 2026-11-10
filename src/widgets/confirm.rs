@@ -171,7 +171,7 @@ impl Confirm {
 /// Swap the popup for the recovery key prompt.
 fn recover() -> EventResult {
     EventResult::Consumed(Box::new(|app| {
-        app.set_popup(Popup::Recover(Recover::default()))
+        app.replace_popup(Popup::Recover(Recover::default()))
     }))
 }
 

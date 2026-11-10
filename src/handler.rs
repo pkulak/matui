@@ -50,8 +50,10 @@ pub enum MatuiEvent {
     /// Its popup only waits for the flow, so the error replaces it rather
     /// than waiting behind it.
     QrLoginFailed(String),
-    QrLoginScanned(CheckCodeSender),
-    QrLoginSyncing,
+    /// The other device scanned the code. The ID is the flow's, which
+    /// withdraws its progress popups when it ends.
+    QrLoginScanned(CheckCodeSender, NoticeId),
+    QrLoginSyncing(NoticeId),
     RoomFound(PublicRoomsChunk),
     /// A timeline may have earlier events to page back to again.
     NotAtStart(Arc<Timeline>),
@@ -167,10 +169,6 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             log::info!("sign-in: done");
             app.session = Session::SignedIn;
         }
-        MatuiEvent::QrLoginFailed(msg) => {
-            log::warn!("QR login failed: {msg}");
-            app.set_popup(Popup::Error(Error::new(msg)));
-        }
         MatuiEvent::Picture(room_id, uri, image) => {
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
                 c.picture_event(&room_id, uri.clone(), image.clone());
@@ -180,27 +178,29 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.show_notice(Popup::Progress(Progress::new(id, &msg, delay)))
         }
         MatuiEvent::Withdraw(id) => app.withdraw(id),
+        // each step of :qr replaces the one before, assuming it's showing.
+        // A notice that showed instead, such as after Esc, is lost.
+        MatuiEvent::QrLoginFailed(msg) => {
+            log::warn!("QR login failed: {msg}");
+            app.replace_popup(Popup::Error(Error::new(msg)));
+        }
         MatuiEvent::QrLoginAuth(url) => {
-            app.set_popup(Popup::Qr(Qr::auth(url)));
+            app.replace_popup(Popup::Qr(Qr::auth(url)));
         }
         MatuiEvent::QrLoginCode(code) => {
-            app.set_popup(Popup::Qr(Qr::code(code)));
+            app.replace_popup(Popup::Qr(Qr::code(code)));
         }
         MatuiEvent::QrLoginDone => {
-            app.set_popup(Popup::Error(Error::with_heading(
+            app.replace_popup(Popup::Error(Error::with_heading(
                 "QR Login".to_string(),
                 "Login granted.".to_string(),
             )));
         }
-        MatuiEvent::QrLoginScanned(sender) => {
-            app.set_popup(Popup::Qr(Qr::check(sender)));
+        MatuiEvent::QrLoginScanned(sender, id) => {
+            app.replace_popup(Popup::Qr(Qr::check(sender, id)));
         }
-        MatuiEvent::QrLoginSyncing => {
-            app.set_popup(Popup::Progress(Progress::new(
-                NoticeId::next(),
-                "Syncing secrets.",
-                0,
-            )));
+        MatuiEvent::QrLoginSyncing(id) => {
+            app.replace_popup(Popup::Progress(Progress::new(id, "Syncing secrets.", 0)));
         }
 
         // if we just left the room we're looking at, move to the top one
@@ -262,7 +262,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             let rooms = Rooms::new(app.matrix.clone(), None);
 
             if app.popup.is_none() && !rooms.room.is_empty() {
-                app.set_popup(Popup::Rooms(rooms));
+                app.open_popup(Popup::Rooms(rooms));
             }
         }
         MatuiEvent::Timeline(event) => app.matrix.timeline_event(event),
@@ -428,12 +428,12 @@ pub fn handle_key_event(
         KeyCode::Char(' ') => {
             let current = app.chat.as_ref().map(|c| c.room());
 
-            app.set_popup(Popup::Rooms(Rooms::new(app.matrix.clone(), current)));
+            app.open_popup(Popup::Rooms(Rooms::new(app.matrix.clone(), current)));
 
             return Ok(());
         }
         KeyCode::Char('?') => {
-            app.set_popup(Popup::Help(Help::default()));
+            app.open_popup(Popup::Help(Help::default()));
             return Ok(());
         }
         _ => {}
@@ -480,7 +480,7 @@ pub fn handle_paste_event(value: String, app: &mut App) {
         return;
     };
 
-    app.set_popup(Popup::Upload(Upload::new(
+    app.open_popup(Popup::Upload(Upload::new(
         app.matrix.clone(),
         timeline,
         paths,
