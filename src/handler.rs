@@ -38,9 +38,6 @@ pub enum MatuiEvent {
     /// Signing in reached this step.
     Login(Login),
     LoginComplete,
-    /// The OAuth or QR login flow failed. Its popup only waits for the
-    /// flow, so the error replaces it rather than waiting behind it.
-    LoginFailed(String),
     /// A picture for a room's chat, or `None` if it couldn't be loaded.
     Picture(OwnedRoomId, OwnedMxcUri, Option<DynamicImage>),
     ProgressStarted(NoticeId, String, u64),
@@ -50,6 +47,9 @@ pub enum MatuiEvent {
     /// A QR code for the other device to scan.
     QrLoginCode(String),
     QrLoginDone,
+    /// Its popup only waits for the flow, so the error replaces it rather
+    /// than waiting behind it.
+    QrLoginFailed(String),
     QrLoginScanned(CheckCodeSender),
     QrLoginSyncing,
     RoomFound(PublicRoomsChunk),
@@ -166,8 +166,8 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             log::info!("sign-in: done");
             app.session = Session::SignedIn;
         }
-        MatuiEvent::LoginFailed(msg) => {
-            log::warn!("Login failed: {msg}");
+        MatuiEvent::QrLoginFailed(msg) => {
+            log::warn!("QR login failed: {msg}");
             app.set_popup(Popup::Error(Error::new(msg)));
         }
         MatuiEvent::Picture(room_id, uri, image) => {

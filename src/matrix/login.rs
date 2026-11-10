@@ -2,6 +2,7 @@ use std::fs;
 use std::future::IntoFuture;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, bail};
 use futures::stream::StreamExt;
@@ -21,9 +22,10 @@ use matrix_sdk::ruma::serde::Raw;
 use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
 use tokio::sync::Notify;
 
-use super::Matrix;
 use super::session::{build_client, persist_session, restore_session};
-use crate::handler::MatuiEvent::{Error, LoginFailed};
+use super::sync::NO_SLIDING_SYNC;
+use super::{Matrix, Notice};
+use crate::handler::MatuiEvent::{Error, QrLoginFailed};
 use crate::handler::{Login, MatuiEvent, SyncType};
 
 impl Matrix {
@@ -83,16 +85,18 @@ impl Matrix {
 
     /// Start the best login flow this homeserver supports: a QR code to
     /// scan with a signed-in device, then browser login, then
-    /// username/password.
+    /// username/password. The progress stays up until the flow's first
+    /// screen does, so the form can't be submitted twice.
     pub fn start_login(&self, homeserver: String) {
         let matrix = self.clone();
 
         self.spawn(async move {
-            let _progress = matrix.progress("Checking homeserver.", 0);
+            // delayed, since it's usually over before it would show
+            let progress = matrix.progress("Checking homeserver.", 500);
 
             match login_kind(&homeserver).await {
-                Ok(LoginKind::Qr) => matrix.login_qr(homeserver),
-                Ok(LoginKind::Oauth) => matrix.login_oauth(homeserver),
+                Ok(LoginKind::Qr) => matrix.login_qr(homeserver, progress),
+                Ok(LoginKind::Oauth) => matrix.login_oauth(homeserver, progress),
                 Ok(LoginKind::Password) => {
                     matrix.send(MatuiEvent::Login(Login::Password { homeserver }))
                 }
@@ -102,16 +106,20 @@ impl Matrix {
     }
 
     /// Log this device in by showing a QR code for a signed-in device to
-    /// scan. Cancelling falls back to browser login.
-    pub fn login_qr(&self, homeserver: String) {
+    /// scan. Cancelling falls back to browser login. The progress closes
+    /// once the code shows.
+    fn login_qr(&self, homeserver: String, progress: Notice) {
         let (data_dir, session_file) = Matrix::dirs();
         let matrix = self.clone();
 
         self.spawn(async move {
-            match login_qr_flow(&matrix, &data_dir, &session_file, &homeserver).await {
+            match login_qr_flow(&matrix, &data_dir, &session_file, &homeserver, progress).await {
                 Ok(Some(client)) => matrix.finish_signin(client).await,
-                Ok(None) => matrix.login_oauth(homeserver),
-                Err(err) => matrix.send(LoginFailed(err.to_string())),
+                Ok(None) => {
+                    let progress = matrix.progress("Logging in", 500);
+                    matrix.login_oauth(homeserver, progress);
+                }
+                Err(err) => matrix.signin_failed(err),
             }
         });
     }
@@ -150,7 +158,7 @@ impl Matrix {
                             GeneratedQrProgress::QrReady(data),
                         ) => match render_qr_code(data.to_bytes()) {
                             Ok(code) => matrix.send(MatuiEvent::QrLoginCode(code)),
-                            Err(err) => matrix.send(LoginFailed(err.to_string())),
+                            Err(err) => matrix.send(QrLoginFailed(err.to_string())),
                         },
                         GrantLoginProgress::EstablishingSecureChannel(
                             GeneratedQrProgress::QrScanned(sender),
@@ -164,7 +172,7 @@ impl Matrix {
                             matrix.send(MatuiEvent::QrLoginAuth(url));
 
                             if let Err(err) = continuation_sender.confirm().await {
-                                matrix.send(LoginFailed(err.to_string()));
+                                matrix.send(QrLoginFailed(err.to_string()));
                             }
                         }
                         GrantLoginProgress::SyncingSecrets => {
@@ -177,25 +185,34 @@ impl Matrix {
 
             match grant.await {
                 Ok(()) => matrix.send(MatuiEvent::QrLoginDone),
-                Err(err) => matrix.send(LoginFailed(err.to_string())),
+                Err(err) => matrix.send(QrLoginFailed(err.to_string())),
             }
 
             progress_task.abort();
         });
     }
 
-    pub fn login_oauth(&self, homeserver: String) {
+    /// Log in with the browser. The progress closes once the login is
+    /// waiting on the browser.
+    fn login_oauth(&self, homeserver: String, progress: Notice) {
         let (data_dir, session_file) = Matrix::dirs();
         let matrix = self.clone();
 
         self.spawn(async move {
-            match login_oauth_flow(&matrix, &data_dir, &session_file, &homeserver).await {
+            match login_oauth_flow(&matrix, &data_dir, &session_file, &homeserver, progress).await {
                 Ok(Some(client)) => matrix.finish_signin(client).await,
                 // cancelled while waiting on the browser; back to the form
                 Ok(None) => matrix.send(MatuiEvent::Login(Login::Homeserver)),
-                Err(err) => matrix.send(LoginFailed(err.to_string())),
+                Err(err) => matrix.signin_failed(err),
             }
         });
+    }
+
+    /// Go back to the start of signing in, and say why.
+    fn signin_failed(&self, err: anyhow::Error) {
+        log::warn!("sign-in failed: {err}");
+        self.send(MatuiEvent::Login(Login::Homeserver));
+        self.send(Error(err.to_string()));
     }
 
     /// Everything that happens after a fresh login, no matter the flow.
@@ -293,6 +310,10 @@ async fn login_kind(homeserver: &str) -> anyhow::Result<LoginKind> {
         .await
         .with_context(|| format!("could not connect to {homeserver}"))?;
 
+    if client.available_sliding_sync_versions().await.is_empty() {
+        bail!(NO_SLIDING_SYNC);
+    }
+
     let metadata = match client.oauth().server_metadata().await {
         Ok(metadata) => metadata,
         Err(err) if err.is_not_supported() => return Ok(LoginKind::Password),
@@ -330,20 +351,25 @@ async fn login_qr_flow(
     data_dir: &Path,
     session_file: &Path,
     homeserver: &str,
+    progress: Notice,
 ) -> anyhow::Result<Option<Client>> {
-    let (client, client_session) = build_client(data_dir, homeserver).await?;
+    let (mut client, mut client_session) = build_client(data_dir, homeserver).await?;
     let registration: ClientRegistrationData =
         client_metadata(vec![OAuthGrantType::DeviceCode])?.into();
     let cancel = Arc::new(Notify::new());
-    let oauth = client.oauth();
+    let mut progress = Some(progress);
 
     loop {
+        let oauth = client.oauth();
         let login = oauth.login_with_qr_code(Some(&registration)).generate();
+        let scanned = Arc::new(AtomicBool::new(false));
 
         let progress_task = matrix.spawn(show_qr_login_progress(
             matrix.clone(),
             login.subscribe_to_progress(),
             cancel.clone(),
+            scanned.clone(),
+            progress.take(),
         ));
 
         let result = tokio::select! {
@@ -355,8 +381,17 @@ async fn login_qr_flow(
 
         match result {
             Some(Ok(())) => break,
-            // the code expired before anyone scanned it, so show a new one
-            Some(Err(QRCodeLoginError::NotFound)) => continue,
+            // the server ends the login a while after showing the code, so
+            // show a new one
+            Some(Err(QRCodeLoginError::NotFound)) if !scanned.load(Ordering::Relaxed) => continue,
+            Some(Err(QRCodeLoginError::NotFound)) => {
+                matrix.send(Error(
+                    "The QR login took too long. Scan the new code to try again.".to_string(),
+                ));
+
+                // this client may be partway signed in, so start over
+                (client, client_session) = build_client(data_dir, homeserver).await?;
+            }
             Some(Err(err)) => return Err(err.into()),
             None => return Ok(None),
         }
@@ -371,6 +406,8 @@ async fn show_qr_login_progress(
     matrix: Matrix,
     mut progress: impl futures::Stream<Item = LoginProgress<GeneratedQrProgress>> + Unpin,
     cancel: Arc<Notify>,
+    scanned: Arc<AtomicBool>,
+    mut checking: Option<Notice>,
 ) {
     while let Some(state) = progress.next().await {
         match state {
@@ -381,10 +418,13 @@ async fn show_qr_login_progress(
                         code,
                         cancel: cancel.clone(),
                     })),
-                    Err(err) => matrix.send(LoginFailed(err.to_string())),
+                    Err(err) => matrix.send(Error(err.to_string())),
                 }
+
+                checking.take();
             }
             LoginProgress::EstablishingSecureChannel(GeneratedQrProgress::QrScanned(sender)) => {
+                scanned.store(true, Ordering::Relaxed);
                 matrix.send(MatuiEvent::Login(Login::QrCheck {
                     sender,
                     cancel: cancel.clone(),
@@ -406,8 +446,8 @@ async fn login_oauth_flow(
     data_dir: &Path,
     session_file: &Path,
     homeserver: &str,
+    progress: Notice,
 ) -> anyhow::Result<Option<Client>> {
-    let progress = matrix.progress("Logging in", 0);
     let (client, client_session) = build_client(data_dir, homeserver).await?;
 
     let (redirect_url, redirect) = LocalServerBuilder::new()
@@ -464,9 +504,66 @@ async fn login_oauth_flow(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::Receiver;
+    use std::time::Duration;
+
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
 
     use super::*;
+    use crate::app::tests::test_app;
+    use crate::app::{App, Popup, Session};
+    use crate::event::Event;
+    use crate::handler::handle_app_event;
+    use crate::widgets::signin::Signin;
+
+    /// Handle the app's events until an error shows.
+    async fn until_error(app: &mut App, events: &Receiver<Event>) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+
+        while !matches!(app.popup, Some(Popup::Error(_))) {
+            assert!(tokio::time::Instant::now() < deadline, "no error showed");
+
+            match events.try_recv() {
+                Ok(Event::Matui(event)) => handle_app_event(event, app),
+                _ => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_homeserver_leaves_its_form_showing() {
+        let (mut app, events) = test_app();
+        handle_app_event(MatuiEvent::Login(Login::Homeserver), &mut app);
+
+        app.matrix.start_login("http://127.0.0.1:1".to_string());
+        until_error(&mut app, &events).await;
+        app.close_popup();
+
+        assert!(app.popup.is_none());
+        assert!(matches!(
+            app.session,
+            Session::SignedOut(Signin::Homeserver(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_failed_signin_shows_its_error_over_the_homeserver_form() {
+        let (mut app, events) = test_app();
+        handle_app_event(
+            MatuiEvent::Login(Login::QrApprove {
+                code: "42".to_string(),
+            }),
+            &mut app,
+        );
+
+        app.matrix.signin_failed(anyhow::anyhow!("denied"));
+        until_error(&mut app, &events).await;
+
+        assert!(matches!(
+            app.session,
+            Session::SignedOut(Signin::Homeserver(_))
+        ));
+    }
 
     async fn kind(oauth: bool, msc4108: bool) -> LoginKind {
         let server = MatrixMockServer::new().await;
@@ -481,12 +578,23 @@ mod tests {
 
         server
             .mock_versions()
+            .with_simplified_sliding_sync()
             .with_feature("org.matrix.msc4108", msc4108)
             .ok()
             .mount()
             .await;
 
         login_kind(&server.uri()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn login_kind_rejects_a_homeserver_without_sliding_sync() {
+        let server = MatrixMockServer::new().await;
+        server.mock_versions().ok().mount().await;
+
+        let err = login_kind(&server.uri()).await.unwrap_err();
+
+        assert_eq!(err.to_string(), NO_SLIDING_SYNC);
     }
 
     #[tokio::test]

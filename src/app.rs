@@ -425,11 +425,11 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_login_failure_replaces_the_popup_waiting_for_it() {
+    async fn a_qr_login_failure_replaces_the_popup_waiting_for_it() {
         let (mut app, _events) = test_app();
         app.set_popup(Popup::Qr(Qr::code("code".to_string())));
 
-        handle_app_event(MatuiEvent::LoginFailed("denied".to_string()), &mut app);
+        handle_app_event(MatuiEvent::QrLoginFailed("denied".to_string()), &mut app);
 
         assert!(matches!(app.popup, Some(Popup::Error(_))));
         assert!(app.notices.is_empty());

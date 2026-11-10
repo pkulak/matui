@@ -18,6 +18,9 @@ use super::{Matrix, Notice};
 use crate::handler::MatuiEvent::Error;
 use crate::handler::{MatuiEvent, SyncType};
 
+pub(super) const NO_SLIDING_SYNC: &str =
+    "Matui needs a homeserver that supports sliding sync (MSC4186), and this one doesn't.";
+
 impl Matrix {
     /// Start syncing forever, and show the rooms: a restored session's from
     /// the store right away, and a new login's once the room list has synced.
@@ -30,11 +33,7 @@ impl Matrix {
         progress: Notice,
     ) -> bool {
         if client.available_sliding_sync_versions().await.is_empty() {
-            self.send(Error(
-                "Matui needs a homeserver that supports sliding sync (MSC4186), \
-                 and this one doesn't."
-                    .to_string(),
-            ));
+            self.send(Error(NO_SLIDING_SYNC.to_string()));
             return false;
         }
 
