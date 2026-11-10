@@ -1112,34 +1112,6 @@ impl Widget for ChatWidget<'_> {
 
         header.render(splits[0], buf);
 
-        let p_area = Layout::default()
-            .direction(Direction::Vertical)
-            .horizontal_margin(2)
-            .vertical_margin(1)
-            .constraints([Constraint::Percentage(100)])
-            .split(splits[0])[0];
-
-        let (p_content, p_color) = if let Some(typing) = &self.chat.typing {
-            (typing.to_string(), Color::Yellow)
-        } else if self.chat.fetching.get() {
-            let term = if self.chat.search_term.is_empty() {
-                "Loading"
-            } else {
-                "Searching"
-            };
-
-            (
-                format!("{}... ({})", term, self.chat.event_count()),
-                Color::Yellow,
-            )
-        } else {
-            (self.chat.pretty_members().to_string(), Color::Magenta)
-        };
-
-        Paragraph::new(p_content)
-            .style(Style::default().fg(p_color))
-            .render(p_area, buf);
-
         let mut line_types = self.chat.line_types.lock().unwrap();
         line_types.clear();
 
@@ -1187,6 +1159,35 @@ impl Widget for ChatWidget<'_> {
         // page back here, where it's known how much is above the selection
         drop(line_types);
         self.chat.try_fetch_previous();
+
+        // after paging, so a search shows as searching between its pages
+        let p_area = Layout::default()
+            .direction(Direction::Vertical)
+            .horizontal_margin(2)
+            .vertical_margin(1)
+            .constraints([Constraint::Percentage(100)])
+            .split(splits[0])[0];
+
+        let (p_content, p_color) = if let Some(typing) = &self.chat.typing {
+            (typing.to_string(), Color::Yellow)
+        } else if self.chat.fetching.get() {
+            let term = if self.chat.search_term.is_empty() {
+                "Loading"
+            } else {
+                "Searching"
+            };
+
+            (
+                format!("{}... ({})", term, self.chat.event_count()),
+                Color::Yellow,
+            )
+        } else {
+            (self.chat.pretty_members().to_string(), Color::Magenta)
+        };
+
+        Paragraph::new(p_content)
+            .style(Style::default().fg(p_color))
+            .render(p_area, buf);
 
         // reaction window
         if let Some(react) = self.chat.react.as_ref() {
@@ -2064,6 +2065,76 @@ pub(crate) mod tests {
 
         assert_eq!(chat.event_count(), 5);
         assert_eq!(ids(&chat), ["$2:example.org"]);
+    }
+
+    #[tokio::test]
+    async fn search_says_searching_between_pages() {
+        let (server, client, room) = joined().await;
+
+        server
+            .mock_room_messages()
+            .match_from("p1")
+            .ok(RoomMessagesResponseTemplate::default()
+                .events(raw(vec![text_event("$1:example.org", 1000, "one")]))
+                .end_token("p2"))
+            .mount()
+            .await;
+
+        server
+            .mock_room_messages()
+            .match_from("p2")
+            .ok(RoomMessagesResponseTemplate::default()
+                .events(raw(vec![text_event("$0:example.org", 500, "zero")])))
+            .mount()
+            .await;
+
+        let newest = JoinedRoomBuilder::new(room_id())
+            .set_timeline_limited()
+            .set_timeline_prev_batch("p1")
+            .add_timeline_bulk(raw(vec![text_event("$2:example.org", 2000, "two")]));
+        server.sync_room(&client, newest).await;
+
+        let (mut chat, events) = chat(&client, room).await;
+        chat.search_event("needle");
+
+        let mut pages = 0;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !chat.hit_start {
+                while let Ok(event) = events.try_recv() {
+                    let more = match event {
+                        Event::Matui(MatuiEvent::TimelineItems(timeline, items)) => {
+                            chat.items_event(&timeline, &items);
+                            false
+                        }
+                        Event::Matui(MatuiEvent::Paginated(timeline, hit_start)) => {
+                            chat.paginated_event(&timeline, hit_start);
+                            !hit_start
+                        }
+                        _ => false,
+                    };
+
+                    let area = Rect::new(0, 0, 80, 24);
+                    let mut buf = Buffer::empty(area);
+                    chat.render(area, &mut buf);
+
+                    // the header's second line, drawn as the next page starts
+                    if more {
+                        let line: String = (0..area.width)
+                            .map(|x| buf[(x, 2)].symbol())
+                            .collect();
+                        assert!(line.contains("Searching..."), "header was {line:?}");
+                        pages += 1;
+                    }
+                }
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the search never reached the start");
+
+        assert!(pages > 0);
     }
 
     #[tokio::test]
