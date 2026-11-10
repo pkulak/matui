@@ -5,6 +5,7 @@
 - Log in by scanning a QR code with a device that's already logged in, such as Element X, when the homeserver supports it. The new session comes verified, with your keys. Esc falls back to logging in with the browser.
 - Fetch each encryption key from the backup when a message first fails to decrypt, as Element X does, instead of downloading every key at once after verifying. Old messages fill in as you open rooms and scroll, and a key that wasn't in the backup yet is tried again later.
 - Mention people by typing their user ID (`@bob:example.com`) in any message, or pick a room member with `@`. Replies now mention the person you're replying to, and edits keep their mentions.
+- Say so in the room's header when loading earlier messages fails, and try again when you scroll up, instead of showing "Loading..." for good until you switch rooms.
 - Don't mark a room as read when it's opened while the terminal is out of focus, such as by clicking a notification.
 - Start in the room switcher instead of opening the most recent room, and refresh the switcher when the terminal regains focus. Until a room is open, the switcher comes back whenever nothing else is showing, such as after verifying, instead of leaving a blank screen.
 - Send a small JPEG thumbnail with every uploaded image and video, so other clients can show a preview.

@@ -55,8 +55,9 @@ pub enum MatuiEvent {
     RoomFound(PublicRoomsChunk),
     /// A timeline may have earlier events to page back to again.
     NotAtStart(Arc<Timeline>),
-    /// A timeline paged back, and whether it reached the start.
-    Paginated(Arc<Timeline>, bool),
+    /// A timeline paged back: whether it reached the start, or why it
+    /// couldn't.
+    Paginated(Arc<Timeline>, Result<bool, String>),
     RoomLeft(Room),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
@@ -270,9 +271,13 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 c.items_event(&timeline, &items);
             }
         }
-        MatuiEvent::Paginated(timeline, hit_start) => {
+        MatuiEvent::Paginated(timeline, result) => {
+            if let Err(msg) = &result {
+                app.show_notice(Popup::Error(Error::new(msg.clone())));
+            }
+
             for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
-                c.paginated_event(&timeline, hit_start);
+                c.paginated_event(&timeline, &result);
             }
         }
         MatuiEvent::NotAtStart(timeline) => {

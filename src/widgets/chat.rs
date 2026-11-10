@@ -50,6 +50,18 @@ use ratatui::widgets::{Block, BorderType, Borders, ListItem, ListState, Paragrap
 
 use super::confirm::{Confirm, ConfirmBehavior};
 
+/// How far paging back through the timeline has got.
+enum Paging {
+    /// The room's timeline isn't built yet.
+    Opening,
+    Idle,
+    Fetching(AbortHandle),
+    AtStart,
+    /// The last page failed. Drawing doesn't retry it, or every frame would;
+    /// scrolling up does.
+    Failed,
+}
+
 pub struct Chat {
     matrix: Matrix,
     room: DecoratedRoom,
@@ -61,10 +73,8 @@ pub struct Chat {
     react: Option<React>,
     typing: Option<String>,
     list_state: Cell<ListState>,
-    hit_start: bool,
     max_events: usize,
-    fetching: Cell<bool>,
-    fetch: Cell<Option<AbortHandle>>,
+    paging: RefCell<Paging>,
     follow: Option<AbortHandle>,
     height: Cell<usize>,
     line_types: Mutex<Vec<LineType>>,
@@ -84,9 +94,11 @@ pub struct Chat {
 // stop following and paging a room nobody is looking at
 impl Drop for Chat {
     fn drop(&mut self) {
-        let handles = [self.fetch.take(), self.follow.take()];
+        if let Paging::Fetching(handle) = self.paging.get_mut() {
+            handle.abort();
+        }
 
-        for handle in handles.into_iter().flatten() {
+        if let Some(handle) = &self.follow {
             handle.abort();
         }
     }
@@ -109,10 +121,8 @@ impl Chat {
             react: None,
             typing: None,
             list_state: Cell::new(ListState::default()),
-            hit_start: false,
             max_events: max_events(),
-            fetching: Cell::new(true),
-            fetch: Cell::new(None),
+            paging: RefCell::new(Paging::Opening),
             follow: Some(follow),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
@@ -144,10 +154,8 @@ impl Chat {
             react: None,
             typing: None,
             list_state: Cell::new(ListState::default()),
-            hit_start: false,
             max_events: self.max_events,
-            fetching: Cell::new(false),
-            fetch: Cell::new(None),
+            paging: RefCell::new(Paging::Idle),
             follow: Some(follow),
             height: Cell::new(20),
             line_types: Mutex::new(vec![]),
@@ -548,7 +556,6 @@ impl Chat {
             return;
         }
 
-        let first = self.timeline.is_none();
         let reset = self.messages.is_empty();
 
         self.timeline = Some(timeline.clone());
@@ -565,8 +572,10 @@ impl Chat {
         }
 
         // done loading; drawing it pages back until there's enough to show
-        if first {
-            self.fetching.set(false);
+        let paging = self.paging.get_mut();
+
+        if matches!(paging, Paging::Opening) {
+            *paging = Paging::Idle;
         }
     }
 
@@ -608,8 +617,8 @@ impl Chat {
         ));
     }
 
-    /// A timeline paged back.
-    pub fn paginated_event(&mut self, timeline: &Arc<SdkTimeline>, hit_start: bool) {
+    /// A timeline paged back, reaching its start or not, or failed to.
+    pub fn paginated_event(&mut self, timeline: &Arc<SdkTimeline>, result: &Result<bool, String>) {
         if !self
             .timeline
             .as_ref()
@@ -618,11 +627,11 @@ impl Chat {
             return;
         }
 
-        self.hit_start = hit_start;
-
-        if self.fetch.take().is_some() {
-            self.fetching.set(false);
-        }
+        *self.paging.get_mut() = match result {
+            Ok(true) => Paging::AtStart,
+            Ok(false) => Paging::Idle,
+            Err(_) => Paging::Failed,
+        };
     }
 
     /// A timeline may have lost its earlier events, so page back to them
@@ -633,7 +642,11 @@ impl Chat {
             .as_ref()
             .is_some_and(|t| Arc::ptr_eq(t, timeline))
         {
-            self.hit_start = false;
+            let paging = self.paging.get_mut();
+
+            if matches!(paging, Paging::AtStart) {
+                *paging = Paging::Idle;
+            }
         }
     }
 
@@ -895,7 +908,7 @@ impl Chat {
             return;
         };
 
-        if self.hit_start || self.fetching.get() {
+        if !matches!(*self.paging.borrow(), Paging::Idle) {
             return;
         }
 
@@ -908,10 +921,8 @@ impl Chat {
         if buffer < 100 && count < self.max_events {
             let limit = if self.search_term.is_empty() { 32 } else { 256 };
 
-            self.fetch
-                .set(Some(self.matrix.paginate(timeline.clone(), limit)));
-
-            self.fetching.set(true);
+            let fetch = self.matrix.paginate(timeline.clone(), limit);
+            *self.paging.borrow_mut() = Paging::Fetching(fetch);
             info!("fetching more events... {}", count)
         }
     }
@@ -921,6 +932,13 @@ impl Chat {
     }
 
     fn next(&mut self, step: usize) {
+        // scrolling up retries a page that failed
+        let paging = self.paging.get_mut();
+
+        if matches!(paging, Paging::Failed) {
+            *paging = Paging::Idle;
+        }
+
         let total = self.total_list_items();
 
         if total == 0 {
@@ -1170,7 +1188,10 @@ impl Widget for ChatWidget<'_> {
 
         let (p_content, p_color) = if let Some(typing) = &self.chat.typing {
             (typing.to_string(), Color::Yellow)
-        } else if self.chat.fetching.get() {
+        } else if matches!(
+            *self.chat.paging.borrow(),
+            Paging::Opening | Paging::Fetching(_)
+        ) {
             let term = if self.chat.search_term.is_empty() {
                 "Loading"
             } else {
@@ -1180,6 +1201,11 @@ impl Widget for ChatWidget<'_> {
             (
                 format!("{}... ({})", term, self.chat.event_count()),
                 Color::Yellow,
+            )
+        } else if matches!(*self.chat.paging.borrow(), Paging::Failed) {
+            (
+                "Couldn't load earlier messages. Scroll up to retry.".to_string(),
+                Color::Red,
             )
         } else {
             (self.chat.pretty_members().to_string(), Color::Magenta)
@@ -1665,8 +1691,8 @@ pub(crate) mod tests {
                         Event::Matui(MatuiEvent::TimelineItems(timeline, items)) => {
                             chat.items_event(&timeline, &items)
                         }
-                        Event::Matui(MatuiEvent::Paginated(timeline, hit_start)) => {
-                            chat.paginated_event(&timeline, hit_start)
+                        Event::Matui(MatuiEvent::Paginated(timeline, result)) => {
+                            chat.paginated_event(&timeline, &result)
                         }
                         Event::Matui(MatuiEvent::NotAtStart(timeline)) => {
                             chat.not_at_start_event(&timeline)
@@ -1688,6 +1714,14 @@ pub(crate) mod tests {
         })
         .await
         .expect("the chat never matched");
+    }
+
+    fn idle(chat: &Chat) -> bool {
+        matches!(*chat.paging.borrow(), Paging::Idle)
+    }
+
+    fn at_start(chat: &Chat) -> bool {
+        matches!(*chat.paging.borrow(), Paging::AtStart)
     }
 
     fn message<'a>(chat: &'a Chat, id: &str) -> Option<&'a Message> {
@@ -1908,7 +1942,7 @@ pub(crate) mod tests {
         let mut thread = tokio::task::block_in_place(|| chat.thread(root.clone())).unwrap();
 
         until(&mut thread, events, |c| {
-            c.hit_start && message(c, root.as_str()).is_some()
+            at_start(c) && message(c, root.as_str()).is_some()
         })
         .await;
 
@@ -2054,14 +2088,11 @@ pub(crate) mod tests {
         chat.max_events = 5;
         chat.search_event("needle");
 
-        until(&mut chat, &events, |c| {
-            !c.fetching.get() && c.event_count() >= 5
-        })
-        .await;
+        until(&mut chat, &events, |c| idle(c) && c.event_count() >= 5).await;
 
         // give it a chance to page too far
         tokio::time::sleep(Duration::from_millis(100)).await;
-        until(&mut chat, &events, |c| !c.fetching.get()).await;
+        until(&mut chat, &events, idle).await;
 
         assert_eq!(chat.event_count(), 5);
         assert_eq!(ids(&chat), ["$2:example.org"]);
@@ -2105,16 +2136,16 @@ pub(crate) mod tests {
         let mut pages = 0;
 
         tokio::time::timeout(Duration::from_secs(5), async {
-            while !chat.hit_start {
+            while !at_start(&chat) {
                 while let Ok(event) = events.try_recv() {
                     let more = match event {
                         Event::Matui(MatuiEvent::TimelineItems(timeline, items)) => {
                             chat.items_event(&timeline, &items);
                             false
                         }
-                        Event::Matui(MatuiEvent::Paginated(timeline, hit_start)) => {
-                            chat.paginated_event(&timeline, hit_start);
-                            !hit_start
+                        Event::Matui(MatuiEvent::Paginated(timeline, result)) => {
+                            chat.paginated_event(&timeline, &result);
+                            result == Ok(false)
                         }
                         _ => false,
                     };
@@ -2177,7 +2208,7 @@ pub(crate) mod tests {
 
         let (mut chat, events) = chat(&client, room).await;
         until(&mut chat, &events, |c| {
-            c.hit_start && ids(c) == ["$3:example.org", "$2:example.org", "$1:example.org"]
+            at_start(c) && ids(c) == ["$3:example.org", "$2:example.org", "$1:example.org"]
         })
         .await;
 
@@ -2238,10 +2269,9 @@ pub(crate) mod tests {
         let (mut chat, events) = chat(&client, room).await;
         chat.max_events = 3;
         until(&mut chat, &events, |c| {
-            !c.fetching.get() && ids(c) == ["$3:example.org", "$2:example.org", "$1:example.org"]
+            idle(c) && ids(c) == ["$3:example.org", "$2:example.org", "$1:example.org"]
         })
         .await;
-        assert!(!chat.hit_start);
 
         server
             .sync_room(&client, limited("p3", texts(&[("$4", 4000)])))
@@ -2296,7 +2326,65 @@ pub(crate) mod tests {
         let (mut chat, events) = chat(&client, room).await;
 
         until(&mut chat, &events, |c| {
-            c.hit_start && ids(c) == ["$5:example.org", "$1:example.org"]
+            at_start(c) && ids(c) == ["$5:example.org", "$1:example.org"]
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_page_says_so_until_scrolling_up_retries_it() {
+        let (server, client, room) = joined().await;
+
+        server
+            .mock_room_messages()
+            .match_from("p1")
+            .error500()
+            .up_to_n_times(1)
+            .mount()
+            .await;
+
+        server
+            .mock_room_messages()
+            .match_from("p1")
+            .ok(
+                RoomMessagesResponseTemplate::default().events(raw(vec![text_event(
+                    "$1:example.org",
+                    1000,
+                    "one",
+                )])),
+            )
+            .mount()
+            .await;
+
+        let newest = JoinedRoomBuilder::new(room_id())
+            .set_timeline_limited()
+            .set_timeline_prev_batch("p1")
+            .add_timeline_bulk(raw(vec![text_event("$2:example.org", 2000, "two")]));
+        server.sync_room(&client, newest).await;
+
+        let (mut chat, events) = chat(&client, room).await;
+        until(&mut chat, &events, |c| {
+            matches!(*c.paging.borrow(), Paging::Failed)
+        })
+        .await;
+
+        // drawing again doesn't retry
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        chat.render(area, &mut buf);
+        assert!(matches!(*chat.paging.borrow(), Paging::Failed));
+
+        let line: String = (0..area.width).map(|x| buf[(x, 2)].symbol()).collect();
+        assert!(
+            line.contains("Couldn't load earlier messages."),
+            "header was {line:?}"
+        );
+
+        // drawing after scrolling pages back, as `k` does
+        chat.next(1);
+        chat.render(area, &mut buf);
+        until(&mut chat, &events, |c| {
+            at_start(c) && ids(c) == ["$2:example.org", "$1:example.org"]
         })
         .await;
     }

@@ -89,7 +89,7 @@ impl Matrix {
     }
 
     /// Page the timeline back by about this many events, and say when it's
-    /// done, normally after the page's items. Abort the returned handle to
+    /// done or has failed, normally after the page's items. Abort the returned handle to
     /// stop, including any retries.
     pub fn paginate(&self, timeline: Arc<Timeline>, events: u16) -> AbortHandle {
         const RETRY_DELAY: Duration = Duration::from_secs(3);
@@ -105,7 +105,7 @@ impl Matrix {
                 match timeline.paginate_backwards(events).await {
                     Ok(hit_start) => {
                         tokio::time::sleep(SHOW_DELAY).await;
-                        matrix.send(MatuiEvent::Paginated(timeline, hit_start));
+                        matrix.send(MatuiEvent::Paginated(timeline, Ok(hit_start)));
                         return;
                     }
                     // a lost connection comes back by itself, so wait it out
@@ -114,7 +114,7 @@ impl Matrix {
                         tokio::time::sleep(RETRY_DELAY).await;
                     }
                     Err(err) => {
-                        matrix.send(Error(err.to_string()));
+                        matrix.send(MatuiEvent::Paginated(timeline, Err(err.to_string())));
                         return;
                     }
                 }
