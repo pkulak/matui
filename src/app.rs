@@ -57,15 +57,13 @@ pub struct App {
 
     pub session: Session,
 
-    /// Hold on to all our widgets. The chat is always the room; a thread
-    /// renders on top of it while both keep receiving events.
+    /// Hold on to all our widgets.
     pub popup: Option<Popup>,
     /// Popups waiting for the slot: those covered by a popup opened over
     /// them, most recent first, then notices in arrival order. Something is
     /// always showing while any wait.
     pub waiting: VecDeque<Popup>,
-    pub chat: Option<Chat>,
-    pub thread: Option<Chat>,
+    pub view: Option<View>,
 
     /// And our Matrix client
     pub matrix: Matrix,
@@ -82,8 +80,7 @@ impl App {
             session: Session::SignedIn,
             popup: None,
             waiting: VecDeque::new(),
-            chat: None,
-            thread: None,
+            view: None,
             matrix: Matrix::new(send, handle),
             invites_seen: HashSet::new(),
         }
@@ -91,25 +88,63 @@ impl App {
 
     pub fn select_room(&mut self, room: Room) {
         // don't re-select the same room
-        if let Some(c) = &self.chat
-            && c.room().room_id() == room.room_id()
+        if self
+            .current_room()
+            .is_some_and(|r| r.room_id() == room.room_id())
         {
             return;
         }
 
-        // a new room means any open thread is stale
-        self.thread = None;
-
-        let chat = Chat::try_new(self.matrix.clone(), room.clone());
-
-        if chat.is_none() {
+        let Some(chat) = Chat::try_new(self.matrix.clone(), room.clone()) else {
             warn!("could not switch to room");
             return;
-        }
+        };
 
-        self.chat = chat;
+        self.view = Some(View {
+            room: chat,
+            thread: None,
+        });
         self.matrix.subscribe_to_room(&room);
         self.matrix.room_opened_event(&room);
+    }
+
+    /// The open room, if any.
+    pub fn current_room(&self) -> Option<Room> {
+        self.view.as_ref().map(|v| v.room.room())
+    }
+
+    /// The chat being looked at: the thread if one is open, or the room.
+    pub fn focused(&self) -> Option<&Chat> {
+        self.view
+            .as_ref()
+            .map(|v| v.thread.as_ref().unwrap_or(&v.room))
+    }
+
+    pub fn focused_mut(&mut self) -> Option<&mut Chat> {
+        self.view
+            .as_mut()
+            .map(|v| v.thread.as_mut().unwrap_or(&mut v.room))
+    }
+
+    /// Every open chat: the room's, then the thread's.
+    pub fn chats_mut(&mut self) -> impl Iterator<Item = &mut Chat> {
+        self.view
+            .iter_mut()
+            .flat_map(|v| std::iter::once(&mut v.room).chain(v.thread.as_mut()))
+    }
+
+    /// Show a thread of the open room.
+    pub fn open_thread(&mut self, thread: Chat) {
+        if let Some(view) = &mut self.view {
+            view.thread = Some(thread);
+        }
+    }
+
+    /// Go back from a thread to its room.
+    pub fn close_thread(&mut self) {
+        if let Some(view) = &mut self.view {
+            view.thread = None;
+        }
     }
 
     /// Show a popup over whatever is showing, which comes back when it
@@ -146,7 +181,7 @@ impl App {
             self.popup = self.waiting.pop_front();
         }
 
-        if self.popup.is_none() && self.chat.is_none() {
+        if self.popup.is_none() && self.view.is_none() {
             let rooms = Rooms::new(self.matrix.clone(), None);
 
             if !rooms.room.is_empty() {
@@ -201,16 +236,21 @@ impl App {
     pub fn render(&mut self, frame: &mut Frame) {
         if let Session::SignedOut(signin) = &self.session {
             frame.render_widget(signin.widget(), frame.area());
-        } else if let Some(t) = &self.thread {
-            frame.render_widget(t.widget(), frame.area());
-        } else if let Some(c) = &self.chat {
-            frame.render_widget(c.widget(), frame.area());
+        } else if let Some(chat) = self.focused() {
+            frame.render_widget(chat.widget(), frame.area());
         }
 
         if let Some(w) = &self.popup {
             w.render(frame);
         }
     }
+}
+
+/// The open room, and a thread of it shown on top. Both keep receiving
+/// events.
+pub struct View {
+    pub room: Chat,
+    pub thread: Option<Chat>,
 }
 
 // As far as I can tell, there's no way to use dynamic dispatch here, so
@@ -390,7 +430,7 @@ pub(crate) mod tests {
     async fn closing_every_popup_leaves_an_open_room_showing() {
         let (_server, _client, mut app, room, _events) = app_with_room().await;
         app.select_room(room);
-        assert!(app.chat.is_some());
+        assert!(app.view.is_some());
 
         app.open_popup(Popup::Help(Help::default()));
         handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);

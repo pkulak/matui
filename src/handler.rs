@@ -170,7 +170,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             app.session = Session::SignedIn;
         }
         MatuiEvent::Picture(room_id, uri, image) => {
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+            for c in app.chats_mut() {
                 c.picture_event(&room_id, uri.clone(), image.clone());
             }
         }
@@ -205,28 +205,23 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
 
         // if we just left the room we're looking at, move to the top one
         MatuiEvent::RoomLeft(room) => {
-            if let Some(t) = &app.thread
-                && t.room().room_id() == room.room_id()
-            {
-                app.thread = None;
-            }
-
-            if let Some(c) = &app.chat
-                && c.room().room_id() == room.room_id()
+            if app
+                .current_room()
+                .is_some_and(|r| r.room_id() == room.room_id())
             {
                 let mut rooms = app.matrix.fetch_rooms();
                 sort_rooms(&mut rooms);
 
                 match rooms.first() {
                     Some(next) => app.select_room(next.inner()),
-                    None => app.chat = None,
+                    None => app.view = None,
                 }
             }
         }
 
         // Let the chat update when we learn about room membership
         MatuiEvent::RoomMember(room, member) => {
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+            for c in app.chats_mut() {
                 c.room_member_event(room.clone(), member.clone());
             }
         }
@@ -252,7 +247,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::Search(search_term) => {
             // only the chat being looked at searches
-            if let Some(c) = app.thread.as_mut().or(app.chat.as_mut()) {
+            if let Some(c) = app.focused_mut() {
                 c.search_event(&search_term);
             }
         }
@@ -267,7 +262,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
         }
         MatuiEvent::Timeline(event) => app.matrix.timeline_event(event),
         MatuiEvent::TimelineItems(timeline, items) => {
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+            for c in app.chats_mut() {
                 c.items_event(&timeline, &items);
             }
         }
@@ -276,17 +271,17 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 app.show_notice(Popup::Error(Error::new(msg.clone())));
             }
 
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+            for c in app.chats_mut() {
                 c.paginated_event(&timeline, &result);
             }
         }
         MatuiEvent::NotAtStart(timeline) => {
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+            for c in app.chats_mut() {
                 c.not_at_start_event(&timeline);
             }
         }
         MatuiEvent::Typing(room, ids) => {
-            for c in app.chat.iter_mut().chain(app.thread.iter_mut()) {
+            for c in app.chats_mut() {
                 c.typing_event(room.clone(), ids.clone());
             }
         }
@@ -357,7 +352,7 @@ fn handle_chat_key_event(
     app: &mut App,
     handler: &EventHandler,
 ) -> anyhow::Result<()> {
-    let Some(chat) = app.thread.as_mut().or(app.chat.as_mut()) else {
+    let Some(chat) = app.focused_mut() else {
         return Ok(());
     };
 
@@ -413,12 +408,7 @@ pub fn handle_key_event(
     }
 
     // A reaction dialog is part of Chat rather than Popup, but is still modal.
-    if app
-        .thread
-        .as_ref()
-        .or(app.chat.as_ref())
-        .is_some_and(|chat| chat.reacting())
-    {
+    if app.focused().is_some_and(|chat| chat.reacting()) {
         handle_chat_key_event(&key_event, app, handler)?;
         return Ok(());
     }
@@ -426,7 +416,7 @@ pub fn handle_key_event(
     // we own a few key events
     match key_event.code {
         KeyCode::Char(' ') => {
-            let current = app.chat.as_ref().map(|c| c.room());
+            let current = app.current_room();
 
             app.open_popup(Popup::Rooms(Rooms::new(app.matrix.clone(), current)));
 
@@ -458,7 +448,7 @@ pub fn handle_paste_event(value: String, app: &mut App) {
         return;
     }
 
-    if let Some(chat) = app.thread.as_mut().or(app.chat.as_mut())
+    if let Some(chat) = app.focused_mut()
         && let EventResult::Consumed(f) = chat.paste_event(&value)
     {
         f(app);
@@ -471,12 +461,7 @@ pub fn handle_paste_event(value: String, app: &mut App) {
         return;
     }
 
-    let Some(timeline) = app
-        .thread
-        .as_ref()
-        .or(app.chat.as_ref())
-        .and_then(|chat| chat.timeline())
-    else {
+    let Some(timeline) = app.focused().and_then(|chat| chat.timeline()) else {
         return;
     };
 
@@ -490,13 +475,16 @@ pub fn handle_paste_event(value: String, app: &mut App) {
 pub fn handle_focus_event(app: &mut App) {
     app.matrix.focus_event();
 
-    if let Some(chat) = &mut app.chat {
-        chat.focus_event();
+    // the room's chat keeps the read marker, even under a thread
+    if let Some(view) = &mut app.view {
+        view.room.focus_event();
     }
 
     // the room chooser could have been open for a long time
+    let current = app.current_room();
+
     if let Some(Popup::Rooms(rooms)) = &mut app.popup {
-        rooms.refresh(app.matrix.clone(), app.chat.as_ref().map(|c| c.room()));
+        rooms.refresh(app.matrix.clone(), current);
     }
 }
 

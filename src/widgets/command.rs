@@ -75,14 +75,14 @@ impl Command {
                         app.replace_popup(Popup::Recover(Recover::default()))
                     })),
                     ("leave", _) => Consumed(Box::new(|app| {
-                        if let Some(chat) = &app.chat {
-                            app.matrix.leave_room(chat.room(), false);
+                        if let Some(room) = app.current_room() {
+                            app.matrix.leave_room(room, false);
                         }
                         app.close_popup();
                     })),
                     ("forget", _) => Consumed(Box::new(|app| {
-                        if let Some(chat) = &app.chat {
-                            app.matrix.leave_room(chat.room(), true);
+                        if let Some(room) = app.current_room() {
+                            app.matrix.leave_room(room, true);
                         }
                         app.close_popup();
                     })),
@@ -98,14 +98,14 @@ impl Command {
                         let user = user.to_string();
 
                         Consumed(Box::new(move |app| {
-                            let Some(chat) = &app.chat else {
+                            let Some(room) = app.current_room() else {
                                 app.close_popup();
                                 return;
                             };
 
                             match resolve_user(app, &user) {
                                 Ok(id) => {
-                                    app.matrix.invite_user(chat.room(), id);
+                                    app.matrix.invite_user(room, id);
                                     app.close_popup();
                                 }
                                 Err(err) => app.open_popup(Popup::Error(Error::new(format!(
@@ -171,14 +171,14 @@ impl Command {
                         };
 
                         Consumed(Box::new(move |app| {
-                            let Some(chat) = &app.chat else {
+                            let Some(room) = app.current_room() else {
                                 app.close_popup();
                                 return;
                             };
 
                             match resolve_user(app, &user) {
                                 Ok(id) => {
-                                    app.matrix.moderate(chat.room(), action, id, reason);
+                                    app.matrix.moderate(room, action, id, reason);
                                     app.close_popup();
                                 }
                                 Err(err) => app.open_popup(Popup::Error(Error::new(format!(

@@ -282,7 +282,7 @@ impl Chat {
                     {
                         let thread = self.thread(id.clone())?;
 
-                        return Ok(Consumed(Box::new(move |app| app.thread = Some(thread))));
+                        return Ok(Consumed(Box::new(move |app| app.open_thread(thread))));
                     }
 
                     message.open(self.matrix.clone())
@@ -290,7 +290,7 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Esc if self.thread_root.is_some() => {
-                Ok(Consumed(Box::new(|app| app.thread = None)))
+                Ok(Consumed(Box::new(|app| app.close_thread())))
             }
             KeyCode::Char('s') => {
                 if let Some(message) = &self.selected_reply() {
@@ -454,7 +454,7 @@ impl Chat {
                 // message is what actually creates the thread
                 let thread = self.thread(id.clone())?;
 
-                Ok(Consumed(Box::new(move |app| app.thread = Some(thread))))
+                Ok(Consumed(Box::new(move |app| app.open_thread(thread))))
             }
             KeyCode::Char('v') => {
                 let message = match self.selected_reply() {
