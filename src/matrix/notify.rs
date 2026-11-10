@@ -9,10 +9,7 @@ use std::{
     fs,
     io::{BufWriter, Cursor},
     path::PathBuf,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Mutex,
 };
 
 use image::imageops::FilterType;
@@ -26,8 +23,6 @@ use matrix_sdk::{
 };
 
 pub struct Notify {
-    focus: AtomicBool,
-    room_id: Mutex<Option<OwnedRoomId>>,
     rooms: Arc<Mutex<HashMap<String, u32>>>,
     // newest event timestamp seen in each room
     marks: Mutex<HashMap<OwnedRoomId, MilliSecondsSinceUnixEpoch>>,
@@ -36,8 +31,6 @@ pub struct Notify {
 impl Default for Notify {
     fn default() -> Self {
         Notify {
-            focus: AtomicBool::new(false),
-            room_id: Mutex::new(None),
             rooms: Arc::new(Mutex::new(HashMap::new())),
             marks: Mutex::new(HashMap::new()),
         }
@@ -56,25 +49,15 @@ impl Notify {
         if let Some(message) = Message::try_from(&event) {
             let newer_than = self.raise_mark(&event, sync_started);
 
-            {
-                let current_room_id = self.room_id.lock().unwrap();
-
-                let focused_room = if self.focus.load(Ordering::Relaxed) {
-                    current_room_id.as_deref()
-                } else {
-                    None
-                };
-
-                if !should_notify(
-                    &event,
-                    client.user_id().unwrap(),
-                    newer_than,
-                    is_muted(event.room_id()),
-                    mentions_override_mute(),
-                    focused_room,
-                ) {
-                    return Ok(());
-                }
+            if !should_notify(
+                &event,
+                client.user_id().unwrap(),
+                newer_than,
+                is_muted(event.room_id()),
+                mentions_override_mute(),
+                matrix.looking_at().as_deref(),
+            ) {
+                return Ok(());
             }
 
             let room = client.get_room(event.room_id()).unwrap();
@@ -111,27 +94,14 @@ impl Notify {
         old
     }
 
-    pub fn focus_event(&self) {
-        self.focus.store(true, Ordering::Relaxed);
-    }
-
-    pub fn blur_event(&self) {
-        self.focus.store(false, Ordering::Relaxed);
-    }
-
-    pub fn room_visit_event(&self, matrix: &Matrix, room: Room) {
-        self.close_notification(matrix, room.room_id().as_str());
-        *self.room_id.lock().unwrap() = Some(room.room_id().to_owned());
-    }
-
     // Rooms are visited from Tokio tasks too, where blocking on D-Bus panics.
     #[cfg(not(target_os = "macos"))]
-    fn close_notification(&self, matrix: &Matrix, room_id: &str) {
+    pub fn close_notification(&self, matrix: &Matrix, room_id: &RoomId) {
         let handle_id = self
             .rooms
             .lock()
             .expect("could not lock rooms")
-            .remove(room_id);
+            .remove(room_id.as_str());
 
         if let Some(handle_id) = handle_id {
             matrix.spawn(async move {
@@ -145,11 +115,11 @@ impl Notify {
     }
 
     #[cfg(target_os = "macos")]
-    fn close_notification(&self, _matrix: &Matrix, room_id: &str) {
+    pub fn close_notification(&self, _matrix: &Matrix, room_id: &RoomId) {
         self.rooms
             .lock()
             .expect("could not lock rooms")
-            .remove(room_id);
+            .remove(room_id.as_str());
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -317,8 +287,7 @@ impl Notify {
 }
 
 // Should this event send a desktop notification? `newer_than` is the room's
-// mark from `raise_mark`. `focused_room` is the room on screen, or None when
-// Matui doesn't have focus.
+// mark from `raise_mark`. `focused_room` is the room the user is looking at.
 fn should_notify(
     event: &AnyTimelineEvent,
     me: &UserId,

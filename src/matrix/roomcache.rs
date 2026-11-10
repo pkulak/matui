@@ -71,10 +71,11 @@ impl RoomCache {
                     .iter_mut()
                     .find(|r| r.room_id() == room.room_id())
                 {
-                    // an update to the room doesn't unvisit it
+                    // the server's count lags our read receipt, so only a
+                    // newer message unvisits it
                     Some(existing) => {
                         *existing = DecoratedRoom {
-                            visited: existing.visited,
+                            visited: existing.visited && room.last_ts <= existing.last_ts,
                             ..room
                         }
                     }
@@ -119,14 +120,11 @@ impl RoomCache {
             .cloned()
     }
 
-    pub fn room_visit_event(&self, room: Room) {
+    /// Count the room as read up to its latest message.
+    pub fn visit(&self, room_id: &RoomId) {
         let mut inner = self.inner.lock().expect("to unlock rooms");
 
-        if let Some(dec) = inner
-            .rooms
-            .iter_mut()
-            .find(|r| r.room_id() == room.room_id())
-        {
+        if let Some(dec) = inner.rooms.iter_mut().find(|r| r.room_id() == room_id) {
             dec.visited = true;
         }
     }
@@ -150,6 +148,7 @@ fn rooms_in(diff: &VectorDiff<RoomListItem>) -> Vec<Room> {
 pub struct DecoratedRoom {
     pub inner: Room,
     pub name: RoomDisplayName,
+    /// Read up to `last_ts`, whatever the server's count says.
     pub visited: bool,
     pub last_message: Option<String>,
     pub last_sender: Option<String>,
@@ -457,32 +456,90 @@ mod tests {
         sync(
             &server,
             &client,
-            json!({ "!a:localhost": { "initial": true, "notification_count": 1 } }),
-        )
-        .await;
-
-        rooms_once(&cache, |rooms| rooms.len() == 1).await;
-        let room = client.get_room(room_id!("!a:localhost")).unwrap();
-        cache.room_visit_event(room);
-
-        sync(
-            &server,
-            &client,
             json!({
                 "!a:localhost": {
-                    "notification_count": 2,
+                    "initial": true,
+                    "notification_count": 1,
                     "timeline": [message("$1", "@bob:localhost", 1000, "hello")],
                 },
             }),
         )
         .await;
 
-        let rooms = rooms_once(&cache, |rooms| {
+        rooms_once(&cache, |rooms| {
             rooms.first().and_then(|r| r.last_message.as_deref()) == Some("hello")
+        })
+        .await;
+        cache.visit(room_id!("!a:localhost"));
+
+        // the server hasn't caught up with our read receipt
+        sync(
+            &server,
+            &client,
+            json!({
+                "!a:localhost": {
+                    "notification_count": 2,
+                    "required_state": [{
+                        "type": "m.room.name",
+                        "event_id": "$name",
+                        "sender": "@bob:localhost",
+                        "state_key": "",
+                        "origin_server_ts": 1500,
+                        "content": { "name": "Renamed" },
+                    }],
+                },
+            }),
+        )
+        .await;
+
+        let rooms = rooms_once(&cache, |rooms| {
+            rooms.first().map(|r| r.name.to_string()).as_deref() == Some("Renamed")
         })
         .await;
 
         assert_eq!(rooms[0].unread_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_newer_message_makes_a_visited_room_unread() {
+        let (server, client, cache) = follow().await;
+
+        sync(
+            &server,
+            &client,
+            json!({
+                "!a:localhost": {
+                    "initial": true,
+                    "timeline": [message("$1", "@bob:localhost", 1000, "hello")],
+                },
+            }),
+        )
+        .await;
+
+        rooms_once(&cache, |rooms| {
+            rooms.first().and_then(|r| r.last_message.as_deref()) == Some("hello")
+        })
+        .await;
+        cache.visit(room_id!("!a:localhost"));
+
+        sync(
+            &server,
+            &client,
+            json!({
+                "!a:localhost": {
+                    "notification_count": 1,
+                    "timeline": [message("$2", "@bob:localhost", 2000, "again")],
+                },
+            }),
+        )
+        .await;
+
+        let rooms = rooms_once(&cache, |rooms| {
+            rooms.first().and_then(|r| r.last_message.as_deref()) == Some("again")
+        })
+        .await;
+
+        assert_eq!(rooms[0].unread_count(), 1);
     }
 
     #[tokio::test]

@@ -55,10 +55,6 @@ pub struct App {
     /// How many ticks have passed?
     pub timestamp: usize,
 
-    /// Does the terminal have focus? Terminals that don't report focus
-    /// never change this, so it starts out true.
-    pub focus: bool,
-
     pub session: Session,
 
     /// Hold on to all our widgets. The chat is always the room; a thread
@@ -82,7 +78,6 @@ impl App {
         Self {
             running: true,
             timestamp: 0,
-            focus: true,
             session: Session::SignedIn,
             popup: None,
             notices: VecDeque::new(),
@@ -104,7 +99,7 @@ impl App {
         // a new room means any open thread is stale
         self.thread = None;
 
-        let chat = Chat::try_new(self.matrix.clone(), room.clone(), self.focus);
+        let chat = Chat::try_new(self.matrix.clone(), room.clone());
 
         if chat.is_none() {
             warn!("could not switch to room");
@@ -113,7 +108,7 @@ impl App {
 
         self.chat = chat;
         self.matrix.subscribe_to_room(&room);
-        self.matrix.room_visit_event(room);
+        self.matrix.room_opened_event(&room);
     }
 
     /// Show a popup the user opened, replacing whatever is showing.
@@ -307,12 +302,13 @@ pub(crate) mod tests {
 
     use crossterm::event::{KeyCode, KeyModifiers};
     use matrix_sdk::Client;
+    use matrix_sdk::ruma::exports::serde_json::json;
     use matrix_sdk::ruma::room_id;
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
-    use matrix_sdk_test::InvitedRoomBuilder;
+    use matrix_sdk_test::{InvitedRoomBuilder, JoinedRoomBuilder};
 
     use super::*;
-    use crate::handler::{MatuiEvent, handle_app_event};
+    use crate::handler::{MatuiEvent, handle_app_event, handle_blur_event, handle_focus_event};
 
     /// An app with nothing showing and no client, sending to the returned
     /// receiver.
@@ -353,6 +349,31 @@ pub(crate) mod tests {
 
         app.close_popup();
         assert!(matches!(app.popup, Some(Popup::Rooms(_))));
+    }
+
+    #[tokio::test]
+    async fn the_room_being_looked_at_counts_as_read() {
+        let (mut app, _events) = test_app();
+        let server = MatrixMockServer::new().await;
+        let client = server.client_builder().build().await;
+        let room = server
+            .sync_room(
+                &client,
+                JoinedRoomBuilder::new(room_id!("!room:localhost"))
+                    .set_unread_notifications_count(json!({ "notification_count": 2 })),
+            )
+            .await;
+
+        app.matrix.set_client(client.clone());
+        app.matrix.add_room(room.clone()).await;
+
+        // opened from a notification, out of focus
+        handle_blur_event(&mut app);
+        app.select_room(room);
+        assert_eq!(app.matrix.fetch_rooms()[0].unread_count(), 2);
+
+        handle_focus_event(&mut app);
+        assert_eq!(app.matrix.fetch_rooms()[0].unread_count(), 0);
     }
 
     #[tokio::test]

@@ -80,7 +80,6 @@ pub struct Chat {
     line_types: Mutex<Vec<LineType>>,
     pictures: RefCell<Pictures>,
     bookmark: Cell<Option<Bookmark>>,
-    focus: bool,
     search_term: String,
     thread_root: Option<OwnedEventId>,
     delete_combo: KeyCombo,
@@ -105,7 +104,7 @@ impl Drop for Chat {
 }
 
 impl Chat {
-    pub fn try_new(matrix: Matrix, room: Room, focus: bool) -> Option<Self> {
+    pub fn try_new(matrix: Matrix, room: Room) -> Option<Self> {
         let decorated_room = matrix.wrap_room(&room)?;
 
         let follow = matrix.follow_timeline(room);
@@ -128,7 +127,6 @@ impl Chat {
             line_types: Mutex::new(vec![]),
             pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
-            focus,
             search_term: "".to_string(),
             thread_root: None,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
@@ -161,7 +159,6 @@ impl Chat {
             line_types: Mutex::new(vec![]),
             pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
-            focus: true,
             search_term: "".to_string(),
             thread_root: Some(root),
             delete_combo: KeyCombo::new(vec!['d', 'd']),
@@ -536,12 +533,7 @@ impl Chat {
     }
 
     pub fn focus_event(&mut self) {
-        self.focus = true;
         self.set_fully_read();
-    }
-
-    pub fn blur_event(&mut self) {
-        self.focus = false;
     }
 
     /// A timeline changed, to these items. The room chat takes the room's
@@ -791,7 +783,9 @@ impl Chat {
     fn set_fully_read(&mut self) {
         // the thread view leaves the room's read marker alone; the room
         // chat underneath keeps it current
-        if !self.focus || self.thread_root.is_some() {
+        if self.thread_root.is_some()
+            || self.matrix.looking_at().as_deref() != Some(self.room.room_id())
+        {
             return;
         }
 
@@ -1678,8 +1672,13 @@ pub(crate) mod tests {
         let matrix = Matrix::new(sender, Handle::current());
         matrix.set_client(client.clone());
         matrix.add_room(room.clone()).await;
+        matrix.room_opened_event(&room);
 
-        (Chat::try_new(matrix, room, focus).unwrap(), events)
+        if !focus {
+            matrix.blur_event();
+        }
+
+        (Chat::try_new(matrix, room).unwrap(), events)
     }
 
     /// Hand the chat its timeline's events until it matches.

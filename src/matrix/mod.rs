@@ -17,14 +17,14 @@ pub use rooms::Moderation;
 
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 use log::error;
 use matrix_sdk::Client;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
-use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedUserId};
+use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedRoomId, OwnedUserId, RoomId};
 use matrix_sdk_ui::sync_service::SyncService;
 use once_cell::sync::OnceCell;
 use tokio::runtime::Handle;
@@ -57,6 +57,19 @@ impl Drop for Notice {
     }
 }
 
+/// What the user is looking at: the open room, while the terminal has focus.
+/// Terminals that don't report focus always count as focused.
+struct Attention {
+    focused: bool,
+    room: Option<OwnedRoomId>,
+}
+
+impl Attention {
+    fn looking_at(&self) -> Option<&RoomId> {
+        self.room.as_deref().filter(|_| self.focused)
+    }
+}
+
 /// A Matrix client that maintains it's own Tokio runtime
 #[derive(Clone)]
 pub struct Matrix {
@@ -65,6 +78,7 @@ pub struct Matrix {
     subscription_lock: Arc<tokio::sync::Mutex<()>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
+    attention: Arc<Mutex<Attention>>,
     sync_started: Arc<OnceCell<MilliSecondsSinceUnixEpoch>>,
     sender: Sender<Event>,
     handle: Handle,
@@ -78,6 +92,10 @@ impl Matrix {
             subscription_lock: Arc::new(tokio::sync::Mutex::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
+            attention: Arc::new(Mutex::new(Attention {
+                focused: true,
+                room: None,
+            })),
             sync_started: Arc::new(OnceCell::default()),
             sender,
             handle,
@@ -145,6 +163,11 @@ impl Matrix {
     }
 
     pub fn fetch_rooms(&self) -> Vec<DecoratedRoom> {
+        // the room being looked at is read, whatever the server's count says
+        if let Some(room) = self.looking_at() {
+            self.room_cache.visit(&room);
+        }
+
         self.room_cache.get_rooms()
     }
 
@@ -181,16 +204,34 @@ impl Matrix {
         });
     }
 
+    /// The room the user is looking at, if any.
+    pub fn looking_at(&self) -> Option<OwnedRoomId> {
+        let attention = self.attention.lock().unwrap();
+        attention.looking_at().map(ToOwned::to_owned)
+    }
+
     pub fn focus_event(&self) {
-        self.notify.focus_event();
+        self.attention.lock().unwrap().focused = true;
+
+        if let Some(room) = self.looking_at() {
+            self.notify.close_notification(self, &room);
+        }
     }
 
     pub fn blur_event(&self) {
-        self.notify.blur_event();
+        self.attention.lock().unwrap().focused = false;
     }
 
+    /// The app opened this room, which the user is looking at if the
+    /// terminal has focus.
+    pub fn room_opened_event(&self, room: &Room) {
+        self.attention.lock().unwrap().room = Some(room.room_id().to_owned());
+        self.notify.close_notification(self, room.room_id());
+    }
+
+    /// The user read this room, here or in another session.
     pub fn room_visit_event(&self, room: Room) {
-        self.notify.room_visit_event(self, room.clone());
-        self.room_cache.room_visit_event(room);
+        self.notify.close_notification(self, room.room_id());
+        self.room_cache.visit(room.room_id());
     }
 }

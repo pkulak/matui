@@ -7,6 +7,7 @@
 - Mention people by typing their user ID (`@bob:example.com`) in any message, or pick a room member with `@`. Replies now mention the person you're replying to, and edits keep their mentions.
 - Say so in the room's header when loading earlier messages fails, and try again when you scroll up, instead of showing "Loading..." for good until you switch rooms.
 - Don't mark a room as read when it's opened while the terminal is out of focus, such as by clicking a notification.
+- Don't notify for messages in the open room until the terminal reports losing focus. In a terminal that doesn't report focus, the open room never notifies.
 - Start in the room switcher instead of opening the most recent room, and refresh the switcher when the terminal regains focus. Until a room is open, the switcher comes back whenever nothing else is showing, such as after verifying, instead of leaving a blank screen.
 - Send a small JPEG thumbnail with every uploaded image and video, so other clients can show a preview.
 - Show encrypted messages in the open room as soon as their keys arrive, such as after verifying or recovering, instead of only after switching rooms or restarting.
