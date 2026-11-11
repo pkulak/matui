@@ -3,7 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::pictures::{Pictures, picker};
-use crate::settings::{is_muted, max_events, toggle_mute};
+use crate::settings::{is_muted, is_thread_muted, max_events, toggle_mute, toggle_thread_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::command::Command;
@@ -299,7 +299,10 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('m') => {
-                toggle_mute(self.room().room_id());
+                match &self.thread_root {
+                    Some(root) => toggle_thread_mute(root),
+                    None => toggle_mute(self.room().room_id()),
+                }
                 Ok(consumed!())
             }
             KeyCode::Char('c') => {
@@ -777,7 +780,10 @@ impl Chat {
     }
 
     fn muted(&self) -> bool {
-        is_muted(self.room.room_id())
+        match &self.thread_root {
+            Some(root) => is_thread_muted(root),
+            None => is_muted(self.room.room_id()),
+        }
     }
 
     fn set_fully_read(&mut self) {
@@ -839,6 +845,11 @@ impl Chat {
 
     pub fn room(&self) -> Room {
         self.room.inner()
+    }
+
+    /// The root of the thread this chat views, if it views one.
+    pub fn thread_root(&self) -> Option<&EventId> {
+        self.thread_root.as_deref()
     }
 
     /// The room's timeline, once it's loaded.

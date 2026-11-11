@@ -139,7 +139,7 @@ fn key_rows() -> Vec<Row<'static>> {
         Row::new(vec!["u", "Upload a file with an optional caption."]),
         Row::new(vec![
             "m",
-            "Mute or unmute the current room (until restart).",
+            "Mute or unmute the current room or thread (until restart).",
         ]),
         Row::new(vec!["/", "Search the current room"]),
         Row::new(vec![":", "Open the command prompt."]),

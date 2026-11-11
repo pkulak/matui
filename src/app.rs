@@ -1,7 +1,7 @@
 use crossterm::event::KeyEvent;
 use log::warn;
 use matrix_sdk::room::Room;
-use matrix_sdk::ruma::OwnedRoomId;
+use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId};
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -108,6 +108,29 @@ impl App {
         self.matrix.room_opened_event(&room);
     }
 
+    /// Open a thread over its room, such as from a notification, however
+    /// long ago it started.
+    pub fn select_thread(&mut self, room: Room, root: OwnedEventId) {
+        let room_id = room.room_id().to_owned();
+        self.select_room(room);
+
+        let Some(view) = &self.view else {
+            return;
+        };
+
+        // the room didn't open, or the thread already is
+        if view.room.room().room_id() != room_id
+            || view.thread.as_ref().and_then(Chat::thread_root) == Some(&*root)
+        {
+            return;
+        }
+
+        match view.room.thread(root) {
+            Ok(thread) => self.open_thread(thread),
+            Err(e) => self.show_notice(Popup::Error(Error::new(e.to_string()))),
+        }
+    }
+
     /// The open room, if any.
     pub fn current_room(&self) -> Option<Room> {
         self.view.as_ref().map(|v| v.room.room())
@@ -135,7 +158,10 @@ impl App {
 
     /// Show a thread of the open room.
     pub fn open_thread(&mut self, thread: Chat) {
-        if let Some(view) = &mut self.view {
+        if let Some(view) = &mut self.view
+            && let Some(root) = thread.thread_root()
+        {
+            self.matrix.thread_opened_event(root);
             view.thread = Some(thread);
         }
     }
@@ -143,6 +169,7 @@ impl App {
     /// Go back from a thread to its room.
     pub fn close_thread(&mut self) {
         if let Some(view) = &mut self.view {
+            self.matrix.thread_closed_event();
             view.thread = None;
         }
     }
@@ -353,7 +380,7 @@ pub(crate) mod tests {
     use crossterm::event::{KeyCode, KeyModifiers};
     use matrix_sdk::Client;
     use matrix_sdk::ruma::exports::serde_json::json;
-    use matrix_sdk::ruma::room_id;
+    use matrix_sdk::ruma::{event_id, room_id};
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use matrix_sdk_test::{InvitedRoomBuilder, JoinedRoomBuilder};
 
@@ -424,6 +451,19 @@ pub(crate) mod tests {
 
         handle_focus_event(&mut app);
         assert_eq!(app.matrix.fetch_rooms()[0].unread_count(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn selecting_a_thread_opens_it_over_its_room() {
+        let (_server, _client, mut app, room, _events) = app_with_room().await;
+        let root = event_id!("$root:localhost");
+
+        tokio::task::block_in_place(|| app.select_thread(room.clone(), root.to_owned()));
+
+        let view = app.view.as_ref().unwrap();
+        assert_eq!(view.room.room().room_id(), room.room_id());
+        assert_eq!(view.thread.as_ref().and_then(Chat::thread_root), Some(root));
+        assert!(app.matrix.sees(room.room_id(), Some(root)));
     }
 
     #[tokio::test]

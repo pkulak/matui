@@ -1,6 +1,6 @@
 use config::Config;
 use log::{info, warn};
-use matrix_sdk::ruma::RoomId;
+use matrix_sdk::ruma::{EventId, RoomId};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -73,6 +73,12 @@ pub fn is_muted(room: &RoomId) -> bool {
     muted.iter().any(|m| m == "*" || m == room.as_str())
 }
 
+/// Whether every room is muted, with `muted = ["*"]`.
+pub fn all_muted() -> bool {
+    let muted: Vec<String> = get_settings().get("muted").unwrap_or_default();
+    muted.iter().any(|m| m == "*")
+}
+
 pub fn toggle_mute(room: &RoomId) {
     if is_muted(room) {
         unmute(room);
@@ -98,6 +104,19 @@ fn unmute(room: &RoomId) {
 
     with_override_set("muted", |set| {
         set.remove(&room.to_string());
+    });
+}
+
+/// Threads are only muted by toggling them, until restart.
+pub fn is_thread_muted(root: &EventId) -> bool {
+    overridden("muted_threads", root.as_str())
+}
+
+pub fn toggle_thread_mute(root: &EventId) {
+    with_override_set("muted_threads", |set| {
+        if !set.remove(root.as_str()) {
+            set.insert(root.to_string());
+        }
     });
 }
 

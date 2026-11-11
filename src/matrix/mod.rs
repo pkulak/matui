@@ -24,7 +24,9 @@ use log::error;
 use matrix_sdk::Client;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
-use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedRoomId, OwnedUserId, RoomId};
+use matrix_sdk::ruma::{
+    EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId, RoomId,
+};
 use matrix_sdk_ui::sync_service::SyncService;
 use once_cell::sync::OnceCell;
 use tokio::runtime::Handle;
@@ -57,16 +59,24 @@ impl Drop for Notice {
     }
 }
 
-/// What the user is looking at: the open room, while the terminal has focus.
-/// Terminals that don't report focus always count as focused.
+/// What the user is looking at: the open room, and the thread open in it,
+/// while the terminal has focus. Terminals that don't report focus always
+/// count as focused.
 struct Attention {
     focused: bool,
     room: Option<OwnedRoomId>,
+    thread: Option<OwnedEventId>,
 }
 
 impl Attention {
     fn looking_at(&self) -> Option<&RoomId> {
         self.room.as_deref().filter(|_| self.focused)
+    }
+
+    /// Whether the user is looking at this room, or at this thread in it.
+    /// The room counts as seen under an open thread, as it counts as read.
+    fn sees(&self, room: &RoomId, thread: Option<&EventId>) -> bool {
+        self.looking_at() == Some(room) && (thread.is_none() || self.thread.as_deref() == thread)
     }
 }
 
@@ -95,6 +105,7 @@ impl Matrix {
             attention: Arc::new(Mutex::new(Attention {
                 focused: true,
                 room: None,
+                thread: None,
             })),
             sync_started: Arc::new(OnceCell::default()),
             sender,
@@ -210,11 +221,24 @@ impl Matrix {
         attention.looking_at().map(ToOwned::to_owned)
     }
 
-    pub fn focus_event(&self) {
-        self.attention.lock().unwrap().focused = true;
+    /// Whether the user is looking at this room, or at this thread in it.
+    pub fn sees(&self, room: &RoomId, thread: Option<&EventId>) -> bool {
+        self.attention.lock().unwrap().sees(room, thread)
+    }
 
-        if let Some(room) = self.looking_at() {
-            self.notify.close_notification(self, &room);
+    pub fn focus_event(&self) {
+        let mut attention = self.attention.lock().unwrap();
+        attention.focused = true;
+        let room = attention.room.clone();
+        let thread = attention.thread.clone();
+        drop(attention);
+
+        if let Some(room) = room {
+            self.notify.close_notification(self, room.as_str());
+        }
+
+        if let Some(root) = thread {
+            self.notify.close_notification(self, root.as_str());
         }
     }
 
@@ -225,13 +249,30 @@ impl Matrix {
     /// The app opened this room, which the user is looking at if the
     /// terminal has focus.
     pub fn room_opened_event(&self, room: &Room) {
-        self.attention.lock().unwrap().room = Some(room.room_id().to_owned());
-        self.notify.close_notification(self, room.room_id());
+        let mut attention = self.attention.lock().unwrap();
+        attention.room = Some(room.room_id().to_owned());
+        attention.thread = None;
+        drop(attention);
+
+        self.notify
+            .close_notification(self, room.room_id().as_str());
+    }
+
+    /// The app opened this thread over the open room.
+    pub fn thread_opened_event(&self, root: &EventId) {
+        self.attention.lock().unwrap().thread = Some(root.to_owned());
+        self.notify.close_notification(self, root.as_str());
+    }
+
+    /// The app went back from a thread to its room.
+    pub fn thread_closed_event(&self) {
+        self.attention.lock().unwrap().thread = None;
     }
 
     /// The user read this room, here or in another session.
     pub fn room_visit_event(&self, room: Room) {
-        self.notify.close_notification(self, room.room_id());
+        self.notify
+            .close_notification(self, room.room_id().as_str());
         self.room_cache.visit(room.room_id());
     }
 }

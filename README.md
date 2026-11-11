@@ -130,7 +130,7 @@ then typing the command name (without the colon) into the prompt.
 | V      | View the current room, with its full member list, in the external editor. |
 | u      | Upload a file with an optional caption.                |
 | U      | Open the command prompt with the selected message's sender. |
-| m      | Mute or unmute the current room (until restart).       |
+| m      | Mute or unmute the current room or thread (until restart). |
 | /      | Search the current room.                               |
 | ?      | Show this helper.                                      |
 

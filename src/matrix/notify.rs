@@ -1,7 +1,10 @@
 use log::error;
+use matrix_sdk::ruma::api::client::room::get_room_event;
+use matrix_sdk::ruma::events::room::message::Relation;
 use matrix_sdk::ruma::events::{AnyMessageLikeEvent, MessageLikeEvent};
-use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, RoomId, UserId};
-use matrix_sdk::ruma::{OwnedRoomId, events::AnyTimelineEvent};
+use matrix_sdk::ruma::exports::serde_json::Value;
+use matrix_sdk::ruma::{EventId, MilliSecondsSinceUnixEpoch, UserId};
+use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId, events::AnyTimelineEvent};
 use std::fs::OpenOptions;
 use std::sync::Arc;
 use std::{
@@ -15,7 +18,7 @@ use std::{
 use image::imageops::FilterType;
 
 use super::Matrix;
-use crate::settings::{is_muted, mentions_override_mute};
+use crate::settings::{all_muted, is_muted, is_thread_muted, mentions_override_mute};
 use crate::widgets::message::Message;
 use matrix_sdk::{
     media::MediaFormat,
@@ -23,7 +26,9 @@ use matrix_sdk::{
 };
 
 pub struct Notify {
-    rooms: Arc<Mutex<HashMap<String, u32>>>,
+    // the notification showing for each room, or for each thread by its
+    // root's ID, so clicking one opens the thread
+    shown: Arc<Mutex<HashMap<String, u32>>>,
     // newest event timestamp seen in each room
     marks: Mutex<HashMap<OwnedRoomId, MilliSecondsSinceUnixEpoch>>,
 }
@@ -31,7 +36,7 @@ pub struct Notify {
 impl Default for Notify {
     fn default() -> Self {
         Notify {
-            rooms: Arc::new(Mutex::new(HashMap::new())),
+            shown: Arc::new(Mutex::new(HashMap::new())),
             marks: Mutex::new(HashMap::new()),
         }
     }
@@ -47,20 +52,37 @@ impl Notify {
         let client = matrix.client();
 
         if let Some(message) = Message::try_from(&event) {
+            let me = client.user_id().unwrap();
             let newer_than = self.raise_mark(&event, sync_started);
+            let thread = thread_root(&event);
+
+            // a thread mutes on its own, ignoring its room's mute, unless
+            // every room is muted and this one wasn't unmuted
+            let muted = match thread {
+                Some(root) => is_thread_muted(root) || all_muted() && is_muted(event.room_id()),
+                None => is_muted(event.room_id()),
+            };
 
             if !should_notify(
                 &event,
-                client.user_id().unwrap(),
+                me,
                 newer_than,
-                is_muted(event.room_id()),
+                muted,
                 mentions_override_mute(),
-                matrix.looking_at().as_deref(),
+                matrix.sees(event.room_id(), thread),
             ) {
                 return Ok(());
             }
 
             let room = client.get_room(event.room_id()).unwrap();
+
+            // a thread only notifies the people in it
+            if let Some(root) = thread
+                && !mentions_user(&event, me)
+                && !participated(&room, root).await?
+            {
+                return Ok(());
+            }
 
             let user = room
                 .get_member(<&UserId>::try_from(message.sender.as_str()).unwrap())
@@ -70,7 +92,8 @@ impl Notify {
             let avatar = Notify::get_image(room.clone(), user.clone()).await;
             let body = message.display();
 
-            self.send_notification(matrix, user.name(), body, room, avatar)?;
+            let thread = thread.map(ToOwned::to_owned);
+            self.send_notification(matrix, user.name(), body, room, thread, avatar)?;
         }
 
         Ok(())
@@ -95,13 +118,14 @@ impl Notify {
     }
 
     // Rooms are visited from Tokio tasks too, where blocking on D-Bus panics.
+    // `key` is a room's ID, or a thread root's.
     #[cfg(not(target_os = "macos"))]
-    pub fn close_notification(&self, matrix: &Matrix, room_id: &RoomId) {
+    pub fn close_notification(&self, matrix: &Matrix, key: &str) {
         let handle_id = self
-            .rooms
+            .shown
             .lock()
-            .expect("could not lock rooms")
-            .remove(room_id.as_str());
+            .expect("could not lock notifications")
+            .remove(key);
 
         if let Some(handle_id) = handle_id {
             matrix.spawn(async move {
@@ -115,11 +139,11 @@ impl Notify {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn close_notification(&self, _matrix: &Matrix, room_id: &RoomId) {
-        self.rooms
+    pub fn close_notification(&self, _matrix: &Matrix, key: &str) {
+        self.shown
             .lock()
-            .expect("could not lock rooms")
-            .remove(room_id.as_str());
+            .expect("could not lock notifications")
+            .remove(key);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -129,6 +153,7 @@ impl Notify {
         summary: &str,
         body: &str,
         room: Room,
+        thread: Option<OwnedEventId>,
         image: Option<PathBuf>,
     ) -> anyhow::Result<()> {
         use crate::handler::MatuiEvent;
@@ -144,10 +169,17 @@ impl Notify {
             notification.hint(Hint::ImagePath(path.to_str().unwrap().to_string()));
         }
 
-        let mut map = self.rooms.lock().expect("could not lock rooms");
+        // the notification showing for the same room or thread is replaced,
+        // keeping its close callback
+        let key = match &thread {
+            Some(root) => root.to_string(),
+            None => room.room_id().to_string(),
+        };
+
+        let mut map = self.shown.lock().expect("could not lock notifications");
         let mut watch = true; // should we monitor for the close callback?
 
-        if let Some(handle_id) = map.remove(room.room_id().as_str()) {
+        if let Some(handle_id) = map.remove(&key) {
             notification.id(handle_id);
             watch = false;
         }
@@ -155,8 +187,7 @@ impl Notify {
         drop(map);
 
         // Clone what we need for the async block
-        let room_id = room.room_id().to_string();
-        let rooms = self.rooms.clone();
+        let shown = self.shown.clone();
         let on_close = matrix.clone();
 
         matrix.spawn(async move {
@@ -165,8 +196,8 @@ impl Notify {
                     let handle_id = handle.id();
 
                     // Add to the map
-                    let mut map = rooms.lock().expect("could not lock rooms");
-                    map.insert(room_id, handle_id);
+                    let mut map = shown.lock().expect("could not lock notifications");
+                    map.insert(key, handle_id);
                     drop(map); // Release lock
 
                     if watch {
@@ -180,7 +211,12 @@ impl Notify {
                                     return;
                                 }
 
-                                on_close.send(MatuiEvent::RoomSelected(room.clone()));
+                                on_close.send(match &thread {
+                                    Some(root) => {
+                                        MatuiEvent::ThreadSelected(room.clone(), root.clone())
+                                    }
+                                    None => MatuiEvent::RoomSelected(room.clone()),
+                                });
                             });
                         });
                     }
@@ -201,6 +237,7 @@ impl Notify {
         summary: &str,
         body: &str,
         _room: Room,
+        _thread: Option<OwnedEventId>,
         image: Option<PathBuf>,
     ) -> anyhow::Result<()> {
         let mut notification = notify_rust::Notification::new();
@@ -287,14 +324,15 @@ impl Notify {
 }
 
 // Should this event send a desktop notification? `newer_than` is the room's
-// mark from `raise_mark`. `focused_room` is the room the user is looking at.
+// mark from `raise_mark`. `seen` is whether the user is looking at the
+// event's room, or its thread if it's in one.
 fn should_notify(
     event: &AnyTimelineEvent,
     me: &UserId,
     newer_than: MilliSecondsSinceUnixEpoch,
     muted: bool,
     mentions_override_mute: bool,
-    focused_room: Option<&RoomId>,
+    seen: bool,
 ) -> bool {
     // only messages we haven't seen; the room list and room subscriptions
     // also deliver older events
@@ -307,13 +345,40 @@ fn should_notify(
         return false;
     }
 
-    // not muted rooms, unless the message mentions us
+    // not muted rooms or threads, unless the message mentions us
     if muted && !(mentions_override_mute && mentions_user(event, me)) {
         return false;
     }
 
-    // not the room we're looking at
-    focused_room != Some(event.room_id())
+    // not what we're looking at
+    !seen
+}
+
+// the root of the thread the event is in, if it's in one
+fn thread_root(event: &AnyTimelineEvent) -> Option<&EventId> {
+    if let AnyTimelineEvent::MessageLike(AnyMessageLikeEvent::RoomMessage(
+        MessageLikeEvent::Original(c),
+    )) = event
+        && let Some(Relation::Thread(thread)) = &c.content.relates_to
+    {
+        return Some(&thread.event_id);
+    }
+
+    None
+}
+
+// Did we send the thread's root, or a reply in it? The server says so in the
+// thread summary it bundles with the root, so this fetches the root fresh.
+async fn participated(room: &Room, root: &EventId) -> anyhow::Result<bool> {
+    let request = get_room_event::v3::Request::new(room.room_id().to_owned(), root.to_owned());
+    let unsigned: Option<Value> = room
+        .client()
+        .send(request)
+        .await?
+        .event
+        .get_field("unsigned")?;
+
+    Ok(unsigned.is_some_and(|u| u["m.relations"]["m.thread"]["current_user_participated"] == true))
 }
 
 // does the event intentionally mention the given user (or the whole room)?
@@ -331,14 +396,15 @@ fn mentions_user(event: &AnyTimelineEvent, me: &UserId) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Notify, mentions_user, should_notify};
-    use crate::matrix::Matrix;
+    use super::{Notify, mentions_user, participated, should_notify};
+    use crate::matrix::{Attention, Matrix};
     use matrix_sdk::ruma::events::AnyTimelineEvent;
     use matrix_sdk::ruma::exports::serde_json::{Value, from_value, json};
-    use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, UInt, room_id, user_id};
+    use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, UInt, event_id, room_id, user_id};
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use std::sync::mpsc::channel;
     use tokio::runtime::Handle;
+    use wiremock::ResponseTemplate;
 
     fn message_event(mentions: Option<Value>) -> AnyTimelineEvent {
         event_from("@bob:example.org", 1_000, mentions)
@@ -388,13 +454,13 @@ mod tests {
         let me = user_id!("@alice:example.org");
 
         let event = event_from("@bob:example.org", 999, None);
-        assert!(!should_notify(&event, me, started(), false, true, None));
+        assert!(!should_notify(&event, me, started(), false, true, false));
 
         let event = event_from("@bob:example.org", 1_000, None);
-        assert!(!should_notify(&event, me, started(), false, true, None));
+        assert!(!should_notify(&event, me, started(), false, true, false));
 
         let event = event_from("@bob:example.org", 1_001, None);
-        assert!(should_notify(&event, me, started(), false, true, None));
+        assert!(should_notify(&event, me, started(), false, true, false));
     }
 
     #[test]
@@ -424,12 +490,12 @@ mod tests {
             .sync_joined_room(&client, room_id!("!room:localhost"))
             .await;
 
-        let rooms = matrix.notify.rooms.clone();
-        rooms.lock().unwrap().insert(room.room_id().to_string(), 1);
+        let shown = matrix.notify.shown.clone();
+        shown.lock().unwrap().insert(room.room_id().to_string(), 1);
 
         matrix.room_visit_event(room);
 
-        assert!(rooms.lock().unwrap().is_empty());
+        assert!(shown.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -437,7 +503,7 @@ mod tests {
         let me = user_id!("@alice:example.org");
         let event = event_from("@alice:example.org", 2_000, None);
 
-        assert!(!should_notify(&event, me, started(), false, true, None));
+        assert!(!should_notify(&event, me, started(), false, true, false));
     }
 
     #[test]
@@ -450,35 +516,85 @@ mod tests {
             Some(json!({ "user_ids": ["@alice:example.org"] })),
         );
 
-        assert!(!should_notify(&plain, me, started(), true, true, None));
-        assert!(should_notify(&mention, me, started(), true, true, None));
+        assert!(!should_notify(&plain, me, started(), true, true, false));
+        assert!(should_notify(&mention, me, started(), true, true, false));
 
         // the override is off
-        assert!(!should_notify(&mention, me, started(), true, false, None));
+        assert!(!should_notify(&mention, me, started(), true, false, false));
     }
 
     #[test]
-    fn it_skips_the_focused_room() {
+    fn it_skips_what_the_user_sees() {
         let me = user_id!("@alice:example.org");
         let event = event_from("@bob:example.org", 2_000, None);
-        let this_room = Some(room_id!("!room:example.org"));
-        let other_room = Some(room_id!("!other:example.org"));
 
-        assert!(!should_notify(
-            &event,
-            me,
-            started(),
-            false,
-            true,
-            this_room
-        ));
-        assert!(should_notify(
-            &event,
-            me,
-            started(),
-            false,
-            true,
-            other_room
-        ));
+        assert!(!should_notify(&event, me, started(), false, true, true));
+        assert!(should_notify(&event, me, started(), false, true, false));
+    }
+
+    #[test]
+    fn only_the_open_thread_is_seen_but_the_room_is_seen_under_it() {
+        let room = room_id!("!room:example.org");
+        let root = event_id!("$root:example.org");
+        let mut attention = Attention {
+            focused: true,
+            room: Some(room.to_owned()),
+            thread: None,
+        };
+
+        // the room's timeline leaves out its threads
+        assert!(attention.sees(room, None));
+        assert!(!attention.sees(room, Some(root)));
+        assert!(!attention.sees(room_id!("!other:example.org"), None));
+
+        // the room under an open thread counts as read, so as seen
+        attention.thread = Some(root.to_owned());
+        assert!(attention.sees(room, Some(root)));
+        assert!(attention.sees(room, None));
+        assert!(!attention.sees(room, Some(event_id!("$other:example.org"))));
+
+        attention.focused = false;
+        assert!(!attention.sees(room, Some(root)));
+    }
+
+    #[tokio::test]
+    async fn it_asks_the_server_whether_we_participated_in_a_thread() {
+        let server = MatrixMockServer::new().await;
+        let client = server.client_builder().build().await;
+        let room = server
+            .sync_joined_room(&client, room_id!("!room:localhost"))
+            .await;
+
+        let root = |participated: bool| {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "type": "m.room.message",
+                "event_id": "$root:localhost",
+                "sender": "@bob:localhost",
+                "origin_server_ts": 1_000,
+                "room_id": "!room:localhost",
+                "content": { "msgtype": "m.text", "body": "root" },
+                "unsigned": { "m.relations": { "m.thread": {
+                    "count": 1,
+                    "current_user_participated": participated,
+                }}},
+            }))
+        };
+
+        server
+            .mock_room_event()
+            .ok_with_template(root(true))
+            .mock_once()
+            .mount()
+            .await;
+        server
+            .mock_room_event()
+            .ok_with_template(root(false))
+            .mock_once()
+            .mount()
+            .await;
+
+        let id = event_id!("$root:localhost");
+        assert!(participated(&room, id).await.unwrap());
+        assert!(!participated(&room, id).await.unwrap());
     }
 }

@@ -14,7 +14,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use image::DynamicImage;
 use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
-use matrix_sdk::ruma::{OwnedMxcUri, OwnedRoomId, OwnedRoomOrAliasId, OwnedUserId};
+use matrix_sdk::ruma::{OwnedEventId, OwnedMxcUri, OwnedRoomId, OwnedRoomOrAliasId, OwnedUserId};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -63,6 +63,7 @@ pub enum MatuiEvent {
     RoomLeft(Room),
     RoomMember(Room, RoomMember),
     RoomSelected(Room),
+    ThreadSelected(Room, OwnedEventId),
     Search(String),
     SyncComplete,
     /// An event from sync, for notifications.
@@ -245,6 +246,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
             )));
         }
         MatuiEvent::RoomSelected(room) => app.select_room(room),
+        MatuiEvent::ThreadSelected(room, root) => app.select_thread(room, root),
         MatuiEvent::Search(search_term) => {
             // only the chat being looked at searches
             if let Some(c) = app.focused_mut() {
