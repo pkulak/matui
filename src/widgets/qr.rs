@@ -162,7 +162,11 @@ fn frame(area: Rect, buf: &mut Buffer, width: u16, height: u16) -> Vec<Rect> {
 
 /// Show a QR code, for the device logging in or the one granting it.
 pub fn render_code(code: &str, logging_in: bool, area: Rect, buf: &mut Buffer) {
-    let width = code.lines().map(str::len).max().unwrap_or(60) as u16 + 4;
+    // A large code gets a wider popup rather than being cut off.
+    let width = code
+        .lines()
+        .map(|line| line.chars().count() as u16 + 4)
+        .fold(60, u16::max);
     let height = code.lines().count() as u16 + 6;
     let splits = frame(area, buf, width, height);
 
@@ -223,10 +227,17 @@ pub fn render_check(input: &TextInput, logging_in: bool, area: Rect, buf: &mut B
         .constraints([Constraint::Length(7), Constraint::Length(6)])
         .split(input_area);
 
+    // On the input's middle row, level with the text.
+    let label_area = Rect {
+        y: input_splits[0].y + 1,
+        height: 1,
+        ..input_splits[0]
+    };
+
     Paragraph::new("Code:")
         .alignment(Alignment::Right)
         .style(Style::default().fg(Color::LightGreen))
-        .render(input_splits[0], buf);
+        .render(label_area, buf);
 
     input.widget().render(input_splits[1], buf);
 
