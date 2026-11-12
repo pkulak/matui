@@ -146,7 +146,15 @@ pub fn spawn_editor(
 }
 
 pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<Option<String>> {
-    let editor = &var("EDITOR").unwrap_or("/usr/bin/vi".to_string());
+    let editor = ["VISUAL", "EDITOR"]
+        .into_iter()
+        .filter_map(|name| var(name).ok())
+        .find(|value| !value.trim().is_empty())
+        .unwrap_or("vi".to_string());
+
+    // the first word, without any arguments
+    let program = editor.split_whitespace().next().unwrap_or_default();
+
     let tmpfile = Builder::new().suffix(".md").tempfile()?;
 
     let mut to_write = "".to_string();
@@ -163,7 +171,8 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
         std::fs::write(&tmpfile, to_write)?;
     }
 
-    let mut command = Command::new(editor);
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(format!("{editor} \"$@\"")).arg("sh");
 
     // xterm1 is a terminfo that explicitly ignores the alternate screen,
     // which is great for us, because an editor forcing us back to the
@@ -172,7 +181,7 @@ pub fn get_text(existing: Option<&str>, suffix: Option<&str>) -> anyhow::Result<
     command.env("MATUI_EDITOR", "1");
 
     // set up vim just right, if that's what we're using
-    if editor.ends_with("vim") || editor.ends_with("vi") {
+    if program.ends_with("vim") || program.ends_with("vi") {
         if clean_vim() {
             command.arg("--clean");
         }

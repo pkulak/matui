@@ -164,8 +164,8 @@ it in your image viewer, or set `images = false` to turn them off.
 
 # External Applications
 
-The only requirement is an editor, and the $EDITOR environmental variable should
-be set.
+The only requirement is an editor, and the $VISUAL/$EDITOR environmental variable
+should be set.
 
 ## File Viewing
 
