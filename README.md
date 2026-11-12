@@ -14,10 +14,12 @@ is not conserved at all.
 # New sliding-sync requirement
 
 Version 1.1 now requires a sliding-sync server. I resisted this for a while,
-but it's so much faster and at this point the two servers anyone should be
-using (tuwunel and synapse) both have sliding-sync built in. Apologies to
-anyone using Dendrite. If that's you, I'm receptive to an issue where we can
-chat about maintaining a special backports branch.
+but it's so much faster and at this point the three popular servers (tuwunel,
+continuwuity and synapse) all have sliding-sync built in. Apologies to anyone
+using Dendrite or Beeper. If that's you, I'm maintaining a backport branch
+[here](https://github.com/pkulak/matui/tree/classic). It won't be feature
+complete with this version, but I'll pull commits into it that aren't too
+difficult to merge.
 
 # Who should use this client?
 
