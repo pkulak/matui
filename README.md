@@ -145,8 +145,8 @@ view, and your first message there creates the thread.
 
 # External Applications
 
-The only requirement is an editor, and the $EDITOR environmental variable should
-be set.
+The only requirement is an editor, and the $VISUAL/$EDITOR environmental variable
+should be set.
 
 ## File Viewing
 
