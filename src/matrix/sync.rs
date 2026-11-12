@@ -4,8 +4,10 @@ use futures::stream::StreamExt;
 use log::error;
 use matrix_sdk::Client;
 use matrix_sdk::RoomState;
+use matrix_sdk::config::RequestConfig;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::MilliSecondsSinceUnixEpoch;
+use matrix_sdk::ruma::api::FeatureFlag;
 use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMemberEvent};
 use matrix_sdk::ruma::events::{
     AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, SyncEphemeralRoomEvent,
@@ -21,6 +23,18 @@ use crate::handler::{MatuiEvent, SyncType};
 pub(super) const NO_SLIDING_SYNC: &str =
     "Matui needs a homeserver that supports sliding sync (MSC4186), and this one doesn't.";
 
+pub(super) async fn supports_sliding_sync(client: &Client) -> bool {
+    client
+        .fetch_server_versions(Some(RequestConfig::new().skip_auth()))
+        .await
+        .is_ok_and(|response| {
+            response
+                .as_supported_versions()
+                .features
+                .contains(&FeatureFlag::Msc4186)
+        })
+}
+
 impl Matrix {
     /// Start syncing forever, and show the rooms: a restored session's from
     /// the store right away, and a new login's once the room list has synced.
@@ -32,7 +46,7 @@ impl Matrix {
         sync_type: SyncType,
         progress: Notice,
     ) -> bool {
-        if client.available_sliding_sync_versions().await.is_empty() {
+        if !supports_sliding_sync(&client).await {
             self.send(Error(NO_SLIDING_SYNC.to_string()));
             return false;
         }
@@ -261,4 +275,34 @@ async fn send_invite_event(matrix: &Matrix, room: Room) {
         room,
         format!("{} invited you to {}. Join?", inviter, name),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use matrix_sdk::test_utils::mocks::MatrixMockServer;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn sliding_sync_support_comes_from_anonymous_versions() {
+        let server = MatrixMockServer::new().await;
+        let client = server.client_builder().build().await;
+
+        server
+            .mock_versions()
+            .expect_any_access_token()
+            .ok()
+            .mount()
+            .await;
+
+        server
+            .mock_versions()
+            .expect_missing_access_token()
+            .with_simplified_sliding_sync()
+            .ok()
+            .mount()
+            .await;
+
+        assert!(supports_sliding_sync(&client).await);
+    }
 }

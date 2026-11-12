@@ -23,7 +23,7 @@ use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
 use tokio::sync::Notify;
 
 use super::session::{build_client, persist_session, restore_session};
-use super::sync::NO_SLIDING_SYNC;
+use super::sync::{NO_SLIDING_SYNC, supports_sliding_sync};
 use super::{Matrix, Notice};
 use crate::handler::MatuiEvent::{Error, QrLoginFailed};
 use crate::handler::{Login, MatuiEvent, SyncType};
@@ -313,7 +313,7 @@ async fn login_kind(homeserver: &str) -> anyhow::Result<LoginKind> {
         .await
         .with_context(|| format!("could not connect to {homeserver}"))?;
 
-    if client.available_sliding_sync_versions().await.is_empty() {
+    if !supports_sliding_sync(&client).await {
         bail!(NO_SLIDING_SYNC);
     }
 
