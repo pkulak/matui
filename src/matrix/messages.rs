@@ -11,8 +11,9 @@ use image::{DynamicImage, ImageReader, Limits};
 use log::error;
 use matrix_sdk::deserialized_responses::{TimelineEvent, TimelineEventKind};
 use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
+use matrix_sdk::room::Room;
 use matrix_sdk::room::edit::EditedContent;
-use matrix_sdk::room::{Receipts, Room};
+use matrix_sdk::ruma::api::client::receipt::create_receipt::v3::ReceiptType;
 use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, File, Image, Video};
@@ -263,16 +264,22 @@ impl Matrix {
         });
     }
 
-    /// Mark the timeline read to this event. The timeline leaves out
-    /// receipts that wouldn't move forward.
+    /// Mark the timeline read to this event, with a receipt in its thread, or
+    /// in the room's main timeline. Only the main timeline moves the room's
+    /// fully-read marker. The timeline leaves out receipts that wouldn't move
+    /// forward.
     pub fn read_to(&self, timeline: Arc<Timeline>, to: OwnedEventId) {
-        let receipts = Receipts::new()
-            .fully_read_marker(Some(to.clone()))
-            .public_read_receipt(Some(to));
+        let mut receipt_types = vec![ReceiptType::Read];
+
+        if !timeline.is_threaded() {
+            receipt_types.push(ReceiptType::FullyRead);
+        }
 
         self.spawn(async move {
-            if let Err(e) = timeline.send_multiple_receipts(receipts).await {
-                error!("could not send read receipt: {}", e);
+            for receipt_type in receipt_types {
+                if let Err(e) = timeline.send_single_receipt(receipt_type, to.clone()).await {
+                    error!("could not send read receipt: {}", e);
+                }
             }
         });
     }

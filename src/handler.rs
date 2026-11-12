@@ -477,9 +477,9 @@ pub fn handle_paste_event(value: String, app: &mut App) {
 pub fn handle_focus_event(app: &mut App) {
     app.matrix.focus_event();
 
-    // the room's chat keeps the read marker, even under a thread
-    if let Some(view) = &mut app.view {
-        view.room.focus_event();
+    // the room counts as read under a thread, as well as the thread
+    for chat in app.chats_mut() {
+        chat.focus_event();
     }
 
     // the room chooser could have been open for a long time

@@ -536,7 +536,7 @@ impl Chat {
     }
 
     pub fn focus_event(&mut self) {
-        self.set_fully_read();
+        self.mark_read();
     }
 
     /// A timeline changed, to these items. The room chat takes the room's
@@ -558,7 +558,7 @@ impl Chat {
         self.check_item_senders();
         self.set_messages(false);
         self.pretty_members = OnceCell::new();
-        self.set_fully_read();
+        self.mark_read();
 
         if reset {
             let mut state = self.list_state.take();
@@ -786,11 +786,11 @@ impl Chat {
         }
     }
 
-    fn set_fully_read(&mut self) {
-        // the thread view leaves the room's read marker alone; the room
-        // chat underneath keeps it current
-        if self.thread_root.is_some()
-            || self.matrix.looking_at().as_deref() != Some(self.room.room_id())
+    /// Mark the room's main timeline read, or the thread's.
+    fn mark_read(&mut self) {
+        if !self
+            .matrix
+            .sees(self.room.room_id(), self.thread_root.as_deref())
         {
             return;
         }
@@ -1561,6 +1561,7 @@ pub(crate) mod tests {
     use crate::widgets::message::Sending;
     use crate::widgets::message::tests::{reaction_event, reply_event, text_event, thread_event};
     use matrix_sdk::Client;
+    use matrix_sdk::ruma::api::client::receipt::create_receipt::v3::ReceiptType as SendReceiptType;
     use matrix_sdk::ruma::events::receipt::{ReceiptThread, ReceiptType};
     use matrix_sdk::ruma::events::room::member::RoomMemberEvent;
     use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
@@ -1899,10 +1900,39 @@ pub(crate) mod tests {
         assert!(!seen_by_bob(&chat, "$2:example.org"));
     }
 
-    /// Open the room with one message, and return whether it's marked read.
-    async fn marks_read(focus: bool) -> bool {
+    /// Answer the receipts the client sends.
+    async fn mock_receipts(server: &MatrixMockServer) {
+        for receipt_type in [SendReceiptType::Read, SendReceiptType::FullyRead] {
+            server.mock_send_receipt(receipt_type).ok().mount().await;
+        }
+    }
+
+    /// The receipts sent so far, each as its type, event and thread, once
+    /// they've had a chance to send.
+    async fn receipts_sent(server: &MatrixMockServer) -> Vec<String> {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let requests = server.server().received_requests().await.unwrap();
+
+        requests
+            .iter()
+            .filter_map(|r| {
+                let mut segments = r.url.path().rsplit('/');
+                let event = segments.next()?;
+                let receipt_type = segments.next()?;
+                (segments.next()? == "receipt").then(|| {
+                    let body: Value = r.body_json().unwrap();
+                    let thread = body["thread_id"].as_str().unwrap_or("unthreaded");
+                    format!("{receipt_type} {event} {thread}")
+                })
+            })
+            .collect()
+    }
+
+    /// Open the room with one message, and return the receipts it sends.
+    async fn marks_read(focus: bool) -> Vec<String> {
         let (server, client, room) = joined().await;
-        server.mock_send_read_markers().ok().mount().await;
+        mock_receipts(&server).await;
 
         let (mut chat, events) = focused_chat(&client, room, focus).await;
 
@@ -1915,35 +1945,26 @@ pub(crate) mod tests {
 
         until(&mut chat, &events, |c| !ids(c).is_empty()).await;
 
-        // give it a chance to send
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        let requests = server.server().received_requests().await.unwrap();
-        let marked: Vec<Value> = requests
-            .iter()
-            .filter(|r| r.url.path().ends_with("/read_markers"))
-            .map(|r| r.body_json().unwrap())
-            .collect();
-
-        match marked.as_slice() {
-            [] => false,
-            [body] => {
-                assert_eq!(body["m.fully_read"], "$1:example.org");
-                assert_eq!(body["m.read"], "$1:example.org");
-                true
-            }
-            _ => panic!("marked read more than once: {:?}", marked),
-        }
+        receipts_sent(&server).await
     }
 
     #[tokio::test]
-    async fn opening_a_room_marks_it_read() {
-        assert!(marks_read(true).await);
+    async fn opening_a_room_marks_its_main_timeline_read() {
+        let mut sent = marks_read(true).await;
+        sent.sort();
+
+        assert_eq!(
+            sent,
+            [
+                "m.fully_read $1:example.org unthreaded",
+                "m.read $1:example.org main"
+            ]
+        );
     }
 
     #[tokio::test]
     async fn opening_a_room_out_of_focus_leaves_it_unread() {
-        assert!(!marks_read(false).await);
+        assert!(marks_read(false).await.is_empty());
     }
 
     /// The thread view of this root, once it's paged back to the root.
@@ -2012,6 +2033,40 @@ pub(crate) mod tests {
                 .unwrap()
                 .thread_replies,
             0
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn opening_a_thread_marks_it_read() {
+        let (server, client, room) = joined().await;
+        let (chat, events) = chat(&client, room).await;
+
+        let t1 = thread_event("$t1:example.org", 2000, "$root:example.org", None);
+
+        sync(
+            &server,
+            &client,
+            vec![text_event("$root:example.org", 1000, "root"), t1.clone()],
+        )
+        .await;
+
+        server
+            .mock_room_relations()
+            .match_target_event(owned_event_id!("$root:example.org"))
+            .ok(RoomRelationsResponseTemplate::default().events(raw(vec![t1])))
+            .mount()
+            .await;
+
+        mock_receipts(&server).await;
+        chat.matrix
+            .thread_opened_event(event_id!("$root:example.org"));
+
+        let thread = thread_view(&chat, &events, "$root:example.org").await;
+        assert_eq!(ids(&thread), ["$t1:example.org", "$root:example.org"]);
+
+        assert_eq!(
+            receipts_sent(&server).await,
+            ["m.read $t1:example.org $root:example.org"]
         );
     }
 
