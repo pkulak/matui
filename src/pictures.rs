@@ -8,7 +8,7 @@ use ratatui::layout::Size;
 use ratatui_image::errors::Errors;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::sliced::SlicedProtocol;
-use ratatui_image::{FontSize, Resize};
+use ratatui_image::{FilterType, FontSize, Resize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -172,7 +172,9 @@ impl Pictures {
         };
 
         if protocol.as_ref().is_none_or(|(s, _)| *s != size) {
-            match SlicedProtocol::new_with_resize(picker, image.clone(), size, Resize::Fit(None)) {
+            let resize = Resize::Fit(Some(FilterType::Lanczos3));
+
+            match SlicedProtocol::new_with_resize(picker, image.clone(), size, resize) {
                 Ok(p) => *protocol = Some((size, p)),
                 Err(err) => {
                     warn!("could not draw picture {}: {}", uri, err);
