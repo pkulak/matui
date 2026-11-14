@@ -111,6 +111,7 @@ then typing the command name (without the colon) into the prompt.
 | Enter  | Open the selected message, or its thread if it has one. |
 | Esc    | Leave the thread view.                                 |
 | s      | Save the selected message (images and videos).         |
+| y      | Copy the selected message's text.                      |
 | c      | Edit the selected message in the external editor.      |
 | r      | React to the selected message.                         |
 | R      | Reply to the selected message.                         |

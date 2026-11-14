@@ -7,7 +7,7 @@ edition = "2024"
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
 chrono = "0.4"
-crossterm = "0.29"
+crossterm = { version = "0.29", features = ["osc52"] }
 config = { version = "0.15", features = ["toml"] }
 dirs = "7.0"
 emojis = "0.9"

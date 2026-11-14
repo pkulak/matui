@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Copy the whole text of the selected message with `y`, including lines cut off by `message_line_limit`. The room's header says "Copied!" for three seconds. Copying uses OSC 52, so tmux needs `set -s set-clipboard on`.
 - Only notify for a reply in a thread if you wrote the message that started the thread, replied in it, or are mentioned, even in a muted room, unless every room is muted with `muted = ["*"]`. Replies notify while the room is open, since its timeline doesn't show them, but not while the thread is. Clicking one opens the thread, however old. `m` in a thread mutes it until restart.
 - Log in by scanning a QR code with a device that's already logged in, such as Element X, when the homeserver supports it. The new session comes verified, with your keys. Esc falls back to logging in with the browser.
 - Fetch each encryption key from the backup when a message first fails to decrypt, as Element X does, instead of downloading every key at once after verifying. Old messages fill in as you open rooms and scroll, and a key that wasn't in the backup yet is tried again later.

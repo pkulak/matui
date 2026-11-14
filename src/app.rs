@@ -251,6 +251,10 @@ impl App {
             render = true;
         }
 
+        for chat in self.chats_mut() {
+            render |= chat.tick_event();
+        }
+
         if self.timestamp.is_multiple_of(240) {
             render = true;
         }

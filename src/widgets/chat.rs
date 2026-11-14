@@ -3,6 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::pictures::{Pictures, picker};
+use crate::selection;
 use crate::settings::{is_muted, is_thread_muted, max_events, toggle_mute, toggle_thread_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
@@ -40,6 +41,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BinaryHeap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::task::AbortHandle;
 
 use ratatui::buffer::Buffer;
@@ -72,6 +74,7 @@ pub struct Chat {
     read_to: Option<OwnedEventId>,
     react: Option<React>,
     typing: Option<String>,
+    copied: Option<Instant>,
     list_state: Cell<ListState>,
     max_events: usize,
     paging: RefCell<Paging>,
@@ -119,6 +122,7 @@ impl Chat {
             read_to: None,
             react: None,
             typing: None,
+            copied: None,
             list_state: Cell::new(ListState::default()),
             max_events: max_events(),
             paging: RefCell::new(Paging::Opening),
@@ -151,6 +155,7 @@ impl Chat {
             read_to: None,
             react: None,
             typing: None,
+            copied: None,
             list_state: Cell::new(ListState::default()),
             max_events: self.max_events,
             paging: RefCell::new(Paging::Idle),
@@ -295,6 +300,13 @@ impl Chat {
             KeyCode::Char('s') => {
                 if let Some(message) = &self.selected_reply() {
                     message.save(self.matrix.clone())
+                }
+                Ok(consumed!())
+            }
+            KeyCode::Char('y') => {
+                if let Some(text) = self.copy_text() {
+                    selection::copy(text)?;
+                    self.copied = Some(Instant::now());
                 }
                 Ok(consumed!())
             }
@@ -533,6 +545,17 @@ impl Chat {
             }
             _ => Ok(EventResult::Ignored),
         }
+    }
+
+    /// Whether the chat needs drawing again, because the copy notice has
+    /// had its time.
+    pub fn tick_event(&mut self) -> bool {
+        if self.copied.is_some_and(|at| at.elapsed() >= COPIED_FOR) {
+            self.copied = None;
+            return true;
+        }
+
+        false
     }
 
     pub fn focus_event(&mut self) {
@@ -1050,6 +1073,12 @@ impl Chat {
             .find_map(|m| m.find_by_id(&bookmark.message_id))
     }
 
+    /// What `y` copies: the whole text of the message under the cursor,
+    /// including lines past `message_line_limit`.
+    fn copy_text(&self) -> Option<&str> {
+        self.selected_reply().map(Message::display)
+    }
+
     // is the given selection in the middle of two messages?
     fn invalid_selection(&self, selected: usize) -> bool {
         matches!(
@@ -1191,7 +1220,9 @@ impl Widget for ChatWidget<'_> {
             .constraints([Constraint::Percentage(100)])
             .split(splits[0])[0];
 
-        let (p_content, p_color) = if let Some(typing) = &self.chat.typing {
+        let (p_content, p_color) = if self.chat.copied.is_some() {
+            ("Copied!".to_string(), Color::Green)
+        } else if let Some(typing) = &self.chat.typing {
             (typing.to_string(), Color::Yellow)
         } else if matches!(
             *self.chat.paging.borrow(),
@@ -1548,6 +1579,9 @@ pub(crate) fn make_message_list(
     items
 }
 
+/// How long the header says a message was copied.
+const COPIED_FOR: Duration = Duration::from_secs(3);
+
 const REPLY_TEMPLATE: &str = "<!--
   Replying to:
 
@@ -1799,6 +1833,73 @@ pub(crate) mod tests {
         assert_eq!(text.reactions[0].body, "👍");
         assert_eq!(event_id(&text.replies[0]), "$reply:example.org");
         assert_eq!(text.replies[0].display(), "hi back");
+    }
+
+    #[tokio::test]
+    async fn y_copies_the_whole_message_under_the_cursor() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        // more paragraphs than message_line_limit shows
+        let long = (1..=30)
+            .map(|i| format!("paragraph {i}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        sync(
+            &server,
+            &client,
+            vec![
+                text_event("$text:example.org", 1000, &long),
+                reply_event("$reply:example.org", 2000, "$text:example.org", "hi back"),
+            ],
+        )
+        .await;
+
+        until(&mut chat, &events, |c| {
+            message(c, "$text:example.org").is_some_and(|m| !m.replies.is_empty())
+        })
+        .await;
+
+        // the cursor starts on the newest line, the reply's
+        assert_eq!(chat.copy_text(), Some("hi back"));
+
+        // up to the original message's own lines
+        for _ in 0..chat.total_list_items() {
+            if chat.selected_reply().map(event_id) == Some("$text:example.org") {
+                break;
+            }
+
+            chat.next(1);
+        }
+
+        assert_eq!(chat.copy_text(), Some(long.as_str()));
+    }
+
+    /// The chat's header, as drawn.
+    fn header(chat: &Chat) -> String {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        chat.render(area, &mut buf);
+
+        (0..3)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_header_says_a_copy_happened_for_a_while() {
+        let (_server, client, room) = joined().await;
+        let (mut chat, _events) = chat(&client, room).await;
+
+        chat.copied = Some(Instant::now());
+        assert!(!chat.tick_event());
+        assert!(header(&chat).contains("Copied!"));
+
+        chat.copied = Some(Instant::now() - COPIED_FOR);
+        assert!(chat.tick_event(), "the chat needs drawing without it");
+        assert!(!header(&chat).contains("Copied"));
     }
 
     #[tokio::test]
