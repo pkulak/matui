@@ -9,7 +9,6 @@ use crossterm::{
     execute,
 };
 use lazy_static::lazy_static;
-use linkify::LinkFinder;
 use log::error;
 use matrix_sdk::media::MediaFileHandle;
 #[cfg(not(target_os = "linux"))]
@@ -332,11 +331,11 @@ fn next_file_name(og: &str) -> String {
 }
 
 pub fn view_text(text: &str) {
-    let finder = LinkFinder::new();
+    for link in crate::selection::links(text) {
+        let url = &text[link];
 
-    for link in finder.links(text) {
-        if let Err(e) = open::that_detached(link.as_str()) {
-            error!("could not open link: {} {}", link.as_str(), e);
+        if let Err(e) = open::that_detached(url) {
+            error!("could not open link: {} {}", url, e);
         }
     }
 }

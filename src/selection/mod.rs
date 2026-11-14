@@ -4,6 +4,7 @@
 use crossterm::clipboard::CopyToClipboard;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use crossterm::execute;
+use linkify::{LinkFinder, LinkKind};
 use ratatui::buffer::{Buffer, CellWidth};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -24,6 +25,21 @@ pub fn copy(text: &str) -> std::io::Result<()> {
 #[derive(Debug, PartialEq)]
 pub enum Action {
     Copy(String),
+    Open(String),
+}
+
+/// Where the text's http and https URLs are.
+pub fn links(text: &str) -> Vec<Range<usize>> {
+    LinkFinder::new()
+        .kinds(&[LinkKind::Url])
+        .links(text)
+        .filter(|link| {
+            link.as_str().split_once("://").is_some_and(|(scheme, _)| {
+                scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+            })
+        })
+        .map(|link| link.start()..link.end())
+        .collect()
 }
 
 /// Where `part` starts in `base`, if it's a slice of it rather than a copy.
@@ -44,6 +60,8 @@ pub struct Run {
 pub struct BodyRow<'a, Id> {
     pub message: Id,
     pub text: &'a str,
+    /// Where the text's links are, from links().
+    pub links: &'a [Range<usize>],
     pub runs: Vec<Run>,
 }
 
@@ -51,7 +69,12 @@ impl<'a, Id> BodyRow<'a, Id> {
     /// The row these spans draw, if any of them are slices of the text.
     /// Every span counts towards the columns, so gutters and bullets push
     /// the text along as they do on screen.
-    pub fn new(message: Id, text: &'a str, spans: &[Span]) -> Option<Self> {
+    pub fn new(
+        message: Id,
+        text: &'a str,
+        links: &'a [Range<usize>],
+        spans: &[Span],
+    ) -> Option<Self> {
         let mut column = 0u16;
         let mut runs = vec![];
 
@@ -71,6 +94,7 @@ impl<'a, Id> BodyRow<'a, Id> {
         (!runs.is_empty()).then_some(Self {
             message,
             text,
+            links,
             runs,
         })
     }
@@ -85,11 +109,12 @@ pub struct TextMap<Id> {
     texts: Vec<Text<Id>>,
 }
 
-/// A visible message's text, and the bytes of it drawn on any of its rows,
-/// on screen or not.
+/// A visible message's text, its links, and the bytes of it drawn on any of
+/// its rows, on screen or not.
 struct Text<Id> {
     message: Id,
     text: String,
+    links: Vec<Range<usize>>,
     drawn: Vec<Range<usize>>,
 }
 
@@ -155,6 +180,7 @@ impl<Id: Clone + PartialEq> TextMap<Id> {
             self.texts.push(Text {
                 message: row.message.clone(),
                 text: row.text.to_string(),
+                links: row.links.to_vec(),
                 drawn: vec![],
             });
         }
@@ -183,6 +209,13 @@ impl<Id: Clone + PartialEq> TextMap<Id> {
             .iter()
             .find(|t| &t.message == message)
             .map(|t| t.text.as_str())
+    }
+
+    /// The link the byte at `at` of the message's text is in, if any.
+    pub fn link(&self, message: &Id, at: usize) -> Option<&str> {
+        let text = self.texts.iter().find(|t| &t.message == message)?;
+        let link = text.links.iter().find(|l| l.contains(&at))?;
+        text.text.get(link.clone())
     }
 
     /// The range, moved out at each end over characters that aren't drawn,
@@ -326,15 +359,22 @@ impl<Id: Clone + PartialEq> Selection<Id> {
     }
 
     // after a drag, select and copy from the earlier end to the later one,
-    // both included; a click selects nothing
+    // both included; a click selects nothing, and opens a link it's on
     fn release(&mut self, map: &TextMap<Id>) -> Option<Action> {
-        let Selection::Dragging { moved, .. } = self else {
+        let Selection::Dragging {
+            message,
+            anchor,
+            moved,
+            ..
+        } = self
+        else {
             return None;
         };
 
         if !*moved {
+            let link = map.link(message, anchor.start).map(str::to_string);
             self.clear();
-            return None;
+            return link.map(Action::Open);
         }
 
         let (message, range) = self.highlighted()?;
@@ -372,12 +412,21 @@ impl<Id: Clone + PartialEq> Selection<Id> {
     }
 }
 
-/// Reverse the colours of the highlighted text, over what the list drew.
+/// Underline links and reverse the colours of the highlighted text, over
+/// what the list drew.
 pub fn paint<Id: Clone + PartialEq>(
     buf: &mut Buffer,
     map: &TextMap<Id>,
     selection: &Selection<Id>,
 ) {
+    for text in &map.texts {
+        for link in &text.links {
+            for cell in map.cells(&text.message, link.clone()) {
+                buf.set_style(cell, Modifier::UNDERLINED);
+            }
+        }
+    }
+
     if let Some((message, range)) = selection.highlighted() {
         for cell in map.cells(message, range) {
             buf.set_style(cell, Modifier::REVERSED);

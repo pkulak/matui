@@ -1,11 +1,12 @@
 use crate::markdown;
-use crate::selection::BodyRow;
+use crate::selection::{self, BodyRow};
 use crate::settings;
 use crate::widgets::message::MessageType::File;
 use chrono::TimeZone;
 use human_bytes::human_bytes;
 use std::borrow::Cow;
 use std::collections::BinaryHeap;
+use std::ops::Range;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use timeago::Formatter;
@@ -72,6 +73,7 @@ pub struct Message {
     body_lower: OnceCell<String>,
     search_term: OnceCell<String>,
     display_cache: OnceCell<String>,
+    links_cache: OnceCell<Vec<Range<usize>>>,
 }
 
 static FORMATTER: OnceLock<Formatter> = OnceLock::new();
@@ -160,6 +162,7 @@ impl Message {
             body_lower: OnceCell::new(),
             search_term: OnceCell::new(),
             display_cache: OnceCell::new(),
+            links_cache: OnceCell::new(),
         }
     }
 
@@ -354,6 +357,12 @@ impl Message {
     pub fn display(&self) -> &str {
         self.display_cache
             .get_or_init(|| Message::display_body(&self.body).trim().to_string())
+    }
+
+    /// Where display()'s links are.
+    pub fn links(&self) -> &[Range<usize>] {
+        self.links_cache
+            .get_or_init(|| selection::links(self.display()))
     }
 
     /// What to edit: the body, with mention pills turned back into user IDs.
@@ -646,7 +655,7 @@ impl Message {
     // Every body is a slice of its message's display(), and nothing else on
     // a row is.
     fn body_row(&self, spans: &[Span]) -> Option<BodyRow<'_, TimelineEventItemId>> {
-        BodyRow::new(self.id.clone(), self.display(), spans)
+        BodyRow::new(self.id.clone(), self.display(), self.links(), spans)
             .or_else(|| self.replies.iter().find_map(|r| r.body_row(spans)))
     }
 

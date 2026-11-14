@@ -457,10 +457,18 @@ pub fn handle_mouse_event(event: MouseEvent, app: &mut App) {
         return;
     }
 
-    if let Some(Action::Copy(text)) = chat.mouse_event(&event)
-        && let Err(err) = selection::copy(&text)
-    {
-        log::warn!("Couldn't copy: {err}");
+    match chat.mouse_event(&event) {
+        Some(Action::Copy(text)) => {
+            if let Err(err) = selection::copy(&text) {
+                log::warn!("Couldn't copy: {err}");
+            }
+        }
+        Some(Action::Open(url)) => {
+            if let Err(err) = open::that_detached(&url) {
+                log::error!("could not open link: {url} {err}");
+            }
+        }
+        None => {}
     }
 }
 

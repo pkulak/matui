@@ -68,17 +68,19 @@ pub(crate) fn copied<Id: Clone + PartialEq>(
     selection.mouse_event(map, &press(from));
     selection.mouse_event(map, &drag_to(to));
 
-    selection
-        .mouse_event(map, &release(to))
-        .map(|Action::Copy(text)| text)
+    match selection.mouse_event(map, &release(to)) {
+        Some(Action::Copy(text)) => Some(text),
+        _ => None,
+    }
 }
 
 const TEXT: &str = "hello world\nsecond line";
+const LINKED: &str = "see https://example.org now";
 
-/// "hello world" at (2, 2), "second line" under it, and another message
-/// further down.
+/// "hello world" at (2, 2), "second line" under it, another message
+/// further down, and one with a link at (2, 8).
 fn map() -> TextMap<&'static str> {
-    let mut map = TextMap::new(Rect::new(0, 0, 20, 10));
+    let mut map = TextMap::new(Rect::new(0, 0, 40, 10));
 
     for (y, range) in [(2, 0..11), (3, 12..23)] {
         let runs = vec![Run { column: 0, range }];
@@ -88,6 +90,7 @@ fn map() -> TextMap<&'static str> {
             &BodyRow {
                 message: "a",
                 text: TEXT,
+                links: &[],
                 runs,
             },
         );
@@ -103,6 +106,23 @@ fn map() -> TextMap<&'static str> {
         &BodyRow {
             message: "b",
             text: "other",
+            links: &[],
+            runs,
+        },
+    );
+
+    let links = links(LINKED);
+    let runs = vec![Run {
+        column: 0,
+        range: 0..LINKED.len(),
+    }];
+    map.add_row(
+        2,
+        8,
+        &BodyRow {
+            message: "c",
+            text: LINKED,
+            links: &links,
             runs,
         },
     );
@@ -161,6 +181,41 @@ fn a_click_clears_the_selection_and_does_nothing() {
 }
 
 #[test]
+fn a_click_on_a_link_opens_it() {
+    let map = map();
+    let mut selection = Selection::default();
+
+    // on the link's last character, "g"
+    selection.mouse_event(&map, &press((24, 8)));
+
+    assert_eq!(
+        selection.mouse_event(&map, &release((24, 8))),
+        Some(Action::Open("https://example.org".to_string()))
+    );
+    assert_eq!(selection, Selection::Idle);
+
+    // but not on the space after it
+    selection.mouse_event(&map, &press((25, 8)));
+    assert_eq!(selection.mouse_event(&map, &release((25, 8))), None);
+}
+
+#[test]
+fn links_are_http_and_https_urls() {
+    let text = "a HTTPS://a.org b http://b.org c ftp://c.org d d@d.org e file:///etc";
+    let found: Vec<_> = links(text).into_iter().map(|l| &text[l]).collect();
+
+    assert_eq!(found, ["HTTPS://a.org", "http://b.org"]);
+}
+
+#[test]
+fn a_drag_that_starts_on_a_link_selects() {
+    assert_eq!(
+        copied(&map(), (14, 8), (28, 8)).as_deref(),
+        Some("example.org now")
+    );
+}
+
+#[test]
 fn a_press_off_body_text_clears_the_selection() {
     let map = map();
     let mut selection = Selection::Selected {
@@ -192,6 +247,7 @@ fn text_past_the_lists_edge_isnt_mapped() {
         &BodyRow {
             message: "a",
             text,
+            links: &[],
             runs,
         },
     );
@@ -211,7 +267,7 @@ fn only_slices_of_the_text_are_runs() {
         Span::raw(&text[5..]),
     ];
 
-    let row = BodyRow::new("a", text, &spans).unwrap();
+    let row = BodyRow::new("a", text, &[], &spans).unwrap();
 
     assert_eq!(row.runs.len(), 1);
     assert_eq!(row.runs[0].column, 7);

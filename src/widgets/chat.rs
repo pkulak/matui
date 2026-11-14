@@ -1950,6 +1950,42 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn links_are_underlined() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![text_event(
+                "$text:example.org",
+                1000,
+                "see https://example.org now",
+            )],
+        )
+        .await;
+
+        until(&mut chat, &events, |c| {
+            message(c, "$text:example.org").is_some()
+        })
+        .await;
+
+        let buf = draw(&chat);
+        let underlined = |text: &str| {
+            let (x, y) = at(&buf, text);
+            (x..x + text.len() as u16).all(|x| {
+                buf[(x, y)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+            })
+        };
+
+        assert!(underlined("https://example.org"));
+        assert!(!underlined("see"));
+        assert!(!underlined("now"));
+    }
+
+    #[tokio::test]
     async fn a_message_arriving_mid_drag_leaves_the_selection_on_its_text() {
         let (server, client, room) = joined().await;
         let (mut chat, events) = chat(&client, room).await;
