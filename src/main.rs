@@ -1,5 +1,8 @@
 use crossterm::{
-    event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange},
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    },
     execute,
 };
 use matui::app::App;
@@ -36,9 +39,20 @@ fn main() -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     execute!(stdout(), EnableFocusChange, EnableBracketedPaste)?;
 
+    // ratatui's hook only restores raw mode and the alternate screen, so the
+    // shell would otherwise get mouse reports after a crash
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = execute!(stdout(), DisableMouseCapture);
+        hook(info);
+    }));
+
     // this reads the terminal's answers from stdin, so it has to finish
     // before the event thread starts reading
     init_picker();
+
+    // after the picker, so a mouse report can't land among its answers
+    execute!(stdout(), EnableMouseCapture)?;
 
     // and the event system.
     let events = EventHandler::new(250);
@@ -81,7 +95,12 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Exit the user interface.
-    let _ = execute!(stdout(), DisableBracketedPaste, DisableFocusChange);
+    let _ = execute!(
+        stdout(),
+        DisableMouseCapture,
+        DisableBracketedPaste,
+        DisableFocusChange
+    );
     ratatui::restore();
 
     Ok(())

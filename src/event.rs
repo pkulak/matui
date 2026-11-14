@@ -1,5 +1,7 @@
 use crate::handler::MatuiEvent;
-use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
+use crossterm::event::{
+    self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers, MouseEventKind,
+};
 use std::ops::Sub;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
@@ -90,13 +92,31 @@ impl EventHandler {
                                 CrosstermEvent::Paste(value) => sender.send(Event::Paste(value)),
                                 CrosstermEvent::FocusGained => sender.send(Event::Focus),
                                 CrosstermEvent::FocusLost => sender.send(Event::Blur),
+                                CrosstermEvent::Mouse(e) => {
+                                    // the wheel moves the cursor, as the
+                                    // arrow keys terminals often send for it
+                                    // without mouse reporting
+                                    let code = match e.kind {
+                                        MouseEventKind::ScrollUp => Some(KeyCode::Up),
+                                        MouseEventKind::ScrollDown => Some(KeyCode::Down),
+                                        _ => None,
+                                    };
+
+                                    for code in std::iter::repeat_n(code, WHEEL_ROWS).flatten() {
+                                        let key = KeyEvent::new(code, KeyModifiers::NONE);
+                                        sender
+                                            .send(Event::Key(key))
+                                            .expect("failed to send terminal event");
+                                    }
+
+                                    Ok(())
+                                }
                                 CrosstermEvent::Resize(_, _) => {
                                     // these can come in batches, so reset the
                                     // timer instead of sending one-to-one
                                     redraw_rate = tick_rate;
                                     Ok(())
                                 }
-                                _ => Ok(()),
                             }
                             .expect("failed to send terminal event")
                         }
@@ -136,3 +156,6 @@ impl EventHandler {
         self.sender.clone()
     }
 }
+
+/// Rows the cursor moves per wheel event.
+const WHEEL_ROWS: usize = 1;

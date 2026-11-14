@@ -5,7 +5,7 @@ use ashpd::{
     desktop::{ResponseError, file_chooser::SelectedFiles},
 };
 use crossterm::{
-    event::{EnableBracketedPaste, EnableFocusChange},
+    event::{DisableMouseCapture, EnableBracketedPaste, EnableFocusChange, EnableMouseCapture},
     execute,
 };
 use lazy_static::lazy_static;
@@ -124,12 +124,21 @@ pub fn spawn_editor(
     }
 
     handler.park();
+
+    // an editor that doesn't use the mouse would read the reports as input
+    let _ = execute!(stdout(), DisableMouseCapture);
+
     let result = get_text(existing, suffix);
 
     // External editors can change terminal modes too. Neovim, for example,
     // enables focus reporting while it runs and disables it again on exit, so
-    // restore our own focus-reporting request before the event handler resumes.
-    let _ = execute!(stdout(), EnableFocusChange, EnableBracketedPaste);
+    // restore our own modes before the event handler resumes.
+    let _ = execute!(
+        stdout(),
+        EnableFocusChange,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    );
 
     handler.unpark();
 
