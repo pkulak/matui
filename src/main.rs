@@ -8,7 +8,8 @@ use crossterm::{
 use matui::app::App;
 use matui::event::{Event, EventHandler};
 use matui::handler::{
-    handle_app_event, handle_blur_event, handle_focus_event, handle_key_event, handle_paste_event,
+    handle_app_event, handle_blur_event, handle_focus_event, handle_key_event, handle_mouse_event,
+    handle_paste_event,
 };
 use matui::pictures::init_picker;
 use matui::settings::watch_settings_forever;
@@ -80,6 +81,7 @@ fn main() -> anyhow::Result<()> {
             }
             Event::Key(key_event) => handle_key_event(key_event, &mut app, &events)?,
             Event::Paste(value) => handle_paste_event(value, &mut app),
+            Event::Mouse(mouse_event) => handle_mouse_event(mouse_event, &mut app),
             Event::Matui(app_event) => handle_app_event(app_event, &mut app),
             Event::Focus => handle_focus_event(&mut app),
             Event::Blur => handle_blur_event(&mut app),

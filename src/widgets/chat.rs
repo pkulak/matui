@@ -3,7 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::pictures::{Pictures, picker};
-use crate::selection;
+use crate::selection::{self, Action, BodyRow, Selection, TextMap};
 use crate::settings::{is_muted, is_thread_muted, max_events, toggle_mute, toggle_thread_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
@@ -19,7 +19,7 @@ use crate::widgets::upload::Upload;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use image::DynamicImage;
 use log::info;
 use matrix_sdk::RoomMemberships;
@@ -79,8 +79,10 @@ pub struct Chat {
     max_events: usize,
     paging: RefCell<Paging>,
     follow: Option<AbortHandle>,
-    height: Cell<usize>,
     line_types: Mutex<Vec<LineType>>,
+    /// The message text on screen as of the last draw, and the list's area.
+    text_map: RefCell<TextMap<TimelineEventItemId>>,
+    selection: Selection<TimelineEventItemId>,
     pictures: RefCell<Pictures>,
     bookmark: Cell<Option<Bookmark>>,
     search_term: String,
@@ -127,8 +129,9 @@ impl Chat {
             max_events: max_events(),
             paging: RefCell::new(Paging::Opening),
             follow: Some(follow),
-            height: Cell::new(20),
             line_types: Mutex::new(vec![]),
+            text_map: RefCell::new(TextMap::new(Rect::default())),
+            selection: Selection::default(),
             pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
             search_term: "".to_string(),
@@ -160,8 +163,9 @@ impl Chat {
             max_events: self.max_events,
             paging: RefCell::new(Paging::Idle),
             follow: Some(follow),
-            height: Cell::new(20),
             line_types: Mutex::new(vec![]),
+            text_map: RefCell::new(TextMap::new(Rect::default())),
+            selection: Selection::default(),
             pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
             search_term: "".to_string(),
@@ -203,6 +207,8 @@ impl Chat {
         input: &KeyEvent,
         handler: &EventHandler,
     ) -> anyhow::Result<EventResult> {
+        self.selection.clear();
+
         // give our reaction window first dibs
         if let Some(react) = &mut self.react {
             match react.key_event(input) {
@@ -257,7 +263,7 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('d') if input.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.previous(self.height.get() / 2);
+                self.previous(self.half_page());
                 Ok(consumed!())
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -266,7 +272,7 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('u') if input.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.next(self.height.get() / 2);
+                self.next(self.half_page());
                 self.try_fetch_previous();
                 Ok(consumed!())
             }
@@ -545,6 +551,23 @@ impl Chat {
             }
             _ => Ok(EventResult::Ignored),
         }
+    }
+
+    /// A press, drag or release of the left button, which can select and
+    /// copy message text.
+    pub fn mouse_event(&mut self, event: &MouseEvent) -> Option<Action> {
+        let action = self.selection.mouse_event(&self.text_map.borrow(), event);
+
+        // the caller copies it, and the header says so, as for y
+        if let Some(Action::Copy(_)) = action {
+            self.copied = Some(Instant::now());
+        }
+
+        action
+    }
+
+    fn half_page(&self) -> usize {
+        (self.text_map.borrow().area.height / 2).into()
     }
 
     /// Whether the chat needs drawing again, because the copy notice has
@@ -1178,9 +1201,6 @@ impl Widget for ChatWidget<'_> {
             picker(),
         );
 
-        // make sure we save our last render dimensions
-        self.chat.height.set((splits[1].height).into());
-
         let mut list_state = self.chat.list_state.take();
 
         // if there's a bookmark, use it to set our selection
@@ -1204,7 +1224,9 @@ impl Widget for ChatWidget<'_> {
             *list_state.selected_mut() = Some(i.min(line_types.len().saturating_sub(1)));
         }
 
-        let fetches = timeline.render(splits[1], buf, &mut list_state);
+        let (fetches, map) = timeline.render(splits[1], buf, &mut list_state);
+        selection::paint(buf, &map, &self.chat.selection);
+        self.chat.text_map.replace(map);
         self.chat.list_state.set(list_state);
         self.chat.fetch_pictures(fetches);
 
@@ -1284,15 +1306,20 @@ impl TimelineItem {
         }
     }
 
-    pub fn to_list_items(
-        &self,
+    pub fn to_list_items<'a>(
+        &'a self,
         width: usize,
         picture_rows: Option<u16>,
         sidecar: &mut Vec<LineType>,
-    ) -> Vec<ListItem<'_>> {
+        bodies: &mut Vec<Option<BodyRow<'a, TimelineEventItemId>>>,
+    ) -> Vec<ListItem<'a>> {
         match self {
-            TimelineItem::Message(m) => m.to_list_items(width, picture_rows, sidecar),
-            TimelineItem::Events(e) => e.to_list_items(sidecar),
+            TimelineItem::Message(m) => m.to_list_items(width, picture_rows, sidecar, bodies),
+            TimelineItem::Events(e) => {
+                let items = e.to_list_items(sidecar);
+                bodies.extend(items.iter().map(|_| None));
+                items
+            }
         }
     }
 }
@@ -1592,6 +1619,7 @@ const REPLY_TEMPLATE: &str = "<!--
 pub(crate) mod tests {
     use super::*;
     use crate::handler::MatuiEvent;
+    use crate::selection::tests::{at, drag_to, end, highlighted, press, release};
     use crate::widgets::message::Sending;
     use crate::widgets::message::tests::{reaction_event, reply_event, text_event, thread_event};
     use matrix_sdk::Client;
@@ -1627,7 +1655,7 @@ pub(crate) mod tests {
     }
 
     /// A client on a mock server, in an empty room.
-    async fn joined() -> (MatrixMockServer, Client, Room) {
+    pub(crate) async fn joined() -> (MatrixMockServer, Client, Room) {
         let server = MatrixMockServer::new().await;
         server.mock_room_state_encryption().plain().mount().await;
 
@@ -1639,7 +1667,7 @@ pub(crate) mod tests {
     }
 
     /// Sync these events into the room, oldest first.
-    async fn sync(server: &MatrixMockServer, client: &Client, events: Vec<Value>) {
+    pub(crate) async fn sync(server: &MatrixMockServer, client: &Client, events: Vec<Value>) {
         let room = JoinedRoomBuilder::new(room_id()).add_timeline_bulk(raw(events));
         server.sync_room(client, room).await;
     }
@@ -1874,6 +1902,94 @@ pub(crate) mod tests {
         }
 
         assert_eq!(chat.copy_text(), Some(long.as_str()));
+    }
+
+    fn draw(chat: &Chat) -> Buffer {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        chat.render(area, &mut buf);
+        buf
+    }
+
+    #[tokio::test]
+    async fn a_drag_copies_and_highlights_until_a_key() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![text_event("$text:example.org", 1000, "hello wide world")],
+        )
+        .await;
+
+        until(&mut chat, &events, |c| {
+            message(c, "$text:example.org").is_some()
+        })
+        .await;
+
+        let buf = draw(&chat);
+        assert_eq!(chat.mouse_event(&press(at(&buf, "wide"))), None);
+        assert_eq!(chat.mouse_event(&drag_to(end(&buf, "world"))), None);
+
+        assert_eq!(
+            chat.mouse_event(&release(end(&buf, "world"))),
+            Some(Action::Copy("wide world".to_string()))
+        );
+
+        let buf = draw(&chat);
+        assert!(highlighted(&buf, "wide world"));
+        assert!(!highlighted(&buf, "hello"));
+        assert!(header(&chat).contains("Copied!"));
+
+        let down = KeyEvent::from(KeyCode::Down);
+        chat.key_event(&down, &EventHandler::without_terminal())
+            .unwrap();
+
+        assert!(!highlighted(&draw(&chat), "wide"));
+    }
+
+    #[tokio::test]
+    async fn a_message_arriving_mid_drag_leaves_the_selection_on_its_text() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![text_event("$text:example.org", 1000, "hello wide world")],
+        )
+        .await;
+
+        until(&mut chat, &events, |c| {
+            message(c, "$text:example.org").is_some()
+        })
+        .await;
+        let before = at(&draw(&chat), "wide");
+        chat.mouse_event(&press(before));
+
+        // the new message pushes the old one up
+        sync(
+            &server,
+            &client,
+            vec![text_event("$newer:example.org", 2000, "newer")],
+        )
+        .await;
+
+        until(&mut chat, &events, |c| {
+            message(c, "$newer:example.org").is_some()
+        })
+        .await;
+        let buf = draw(&chat);
+        assert!(at(&buf, "wide").1 < before.1);
+
+        chat.mouse_event(&drag_to(end(&buf, "world")));
+
+        assert_eq!(
+            chat.mouse_event(&release(end(&buf, "world"))),
+            Some(Action::Copy("wide world".to_string()))
+        );
+        assert!(highlighted(&draw(&chat), "wide world"));
     }
 
     /// The chat's header, as drawn.

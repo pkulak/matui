@@ -1,4 +1,5 @@
 use crate::markdown;
+use crate::selection::BodyRow;
 use crate::settings;
 use crate::widgets::message::MessageType::File;
 use chrono::TimeZone;
@@ -341,14 +342,13 @@ impl Message {
                 .any(|r| r.contains_search_term(search_term))
     }
 
-    // what's shown under a picture
+    // what's shown under a picture: display() after its title line, so the
+    // caption's text can be selected
     fn caption(&self) -> Option<&str> {
         match &self.body {
-            Image(content) => content.caption(),
-            Video(content) => content.caption(),
+            Image(_) | Video(_) => self.display().split_once('\n').map(|(_, c)| c.trim()),
             _ => None,
         }
-        .map(str::trim)
     }
 
     pub fn display(&self) -> &str {
@@ -575,7 +575,7 @@ impl Message {
     fn highlight<'a>(&self, line: Cow<'a, str>) -> Vec<Span<'a>> {
         let term = match self.search_term.get() {
             Some(t) => t,
-            None => return vec![Span::styled(line.to_string(), self.style())],
+            None => return vec![Span::styled(line, self.style())],
         };
 
         let mut result = Vec::new();
@@ -620,20 +620,34 @@ impl Message {
 
     // with picture rows, blank rows for the picture replace the title line,
     // straight under the author
-    pub fn to_list_items(
-        &self,
+    pub fn to_list_items<'a>(
+        &'a self,
         width: usize,
         picture_rows: Option<u16>,
         sidecar: &mut Vec<LineType>,
-    ) -> Vec<ListItem<'_>> {
-        let items: Vec<ratatui::text::Text> = self
-            .to_list_items_internal(self.display(), width, picture_rows, sidecar)
-            .into_iter()
-            .map(|spans| ratatui::text::Text::from(Line::from(spans)))
-            .collect();
+        bodies: &mut Vec<Option<BodyRow<'a, TimelineEventItemId>>>,
+    ) -> Vec<ListItem<'a>> {
+        let lines = self.to_list_items_internal(self.display(), width, picture_rows, sidecar);
+
+        // after the gutters go in, so the columns count them
+        bodies.extend(lines.iter().map(|spans| self.body_row(spans)));
 
         sidecar.reverse();
-        items.into_iter().rev().map(ListItem::new).collect()
+        bodies.reverse();
+
+        lines
+            .into_iter()
+            .rev()
+            .map(|spans| ListItem::new(Line::from(spans)))
+            .collect()
+    }
+
+    // the row of this message's text, or a reply's, that the spans draw.
+    // Every body is a slice of its message's display(), and nothing else on
+    // a row is.
+    fn body_row(&self, spans: &[Span]) -> Option<BodyRow<'_, TimelineEventItemId>> {
+        BodyRow::new(self.id.clone(), self.display(), spans)
+            .or_else(|| self.replies.iter().find_map(|r| r.body_row(spans)))
     }
 
     fn to_list_items_internal<'a>(

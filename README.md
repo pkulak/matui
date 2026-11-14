@@ -5,7 +5,7 @@
 <h1 align="center">Matui</h1>
 
 A very opinionated [Matrix](https://matrix.org/) TUI. The UI is kept as simple
-as possible and there's no mouse support (yet, at least). With the assumption
+as possible, and the mouse is just for copying text. With the assumption
 that usually only the last couple messages actually matter, vertical space
 is not conserved at all.
 
@@ -138,6 +138,23 @@ then typing the command name (without the colon) into the prompt.
 | ?      | Show this helper.                                      |
 
 \* arrow keys are fine too
+
+# Mouse
+
+Drag across a message to select some of its text, and let go to copy it. You
+get the message's own text, as it was sent, without the line breaks Matui
+wraps at or the markers and gutters around it. Markdown that isn't shown, such
+as a list item's `*` or the `**` around bold text, comes along when the
+selection starts or ends next to it. A selection stays inside the message it
+started in, and any key clears it. The wheel moves the cursor, like
+the arrow keys.
+
+Only a message's text can be selected. For anything else, such as an author
+line or the room's header, most terminals still select on Shift+drag.
+
+Copying uses OSC 52, so the terminal has to allow it. In tmux, that's
+`set -s set-clipboard on`, and in iTerm2, "Applications in terminal may access
+clipboard".
 
 # Invites
 

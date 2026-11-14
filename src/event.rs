@@ -1,6 +1,7 @@
 use crate::handler::MatuiEvent;
 use crossterm::event::{
-    self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers, MouseEventKind,
+    self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use std::ops::Sub;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -23,6 +24,8 @@ pub enum Event {
     Key(KeyEvent),
     /// Bracketed text paste.
     Paste(String),
+    /// A press, drag or release of the left button.
+    Mouse(MouseEvent),
     /// App event
     Matui(MatuiEvent),
 }
@@ -92,6 +95,16 @@ impl EventHandler {
                                 CrosstermEvent::Paste(value) => sender.send(Event::Paste(value)),
                                 CrosstermEvent::FocusGained => sender.send(Event::Focus),
                                 CrosstermEvent::FocusLost => sender.send(Event::Blur),
+                                CrosstermEvent::Mouse(e)
+                                    if matches!(
+                                        e.kind,
+                                        MouseEventKind::Down(MouseButton::Left)
+                                            | MouseEventKind::Drag(MouseButton::Left)
+                                            | MouseEventKind::Up(MouseButton::Left)
+                                    ) =>
+                                {
+                                    sender.send(Event::Mouse(e))
+                                }
                                 CrosstermEvent::Mouse(e) => {
                                     // the wheel moves the cursor, as the
                                     // arrow keys terminals often send for it
@@ -154,6 +167,20 @@ impl EventHandler {
 
     pub fn sender(&self) -> Sender<Event> {
         self.sender.clone()
+    }
+
+    /// A handler with no terminal behind it, for tests that press keys.
+    #[cfg(test)]
+    pub(crate) fn without_terminal() -> Self {
+        let (sender, receiver) = channel();
+        let (pk_sender, _) = channel();
+
+        Self {
+            sender,
+            receiver,
+            pk_sender,
+            handler: thread::spawn(|| {}),
+        }
     }
 }
 

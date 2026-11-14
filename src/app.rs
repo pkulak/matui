@@ -389,7 +389,16 @@ pub(crate) mod tests {
     use matrix_sdk_test::{InvitedRoomBuilder, JoinedRoomBuilder};
 
     use super::*;
-    use crate::handler::{MatuiEvent, handle_app_event, handle_blur_event, handle_focus_event};
+    use crate::handler::{
+        MatuiEvent, handle_app_event, handle_blur_event, handle_focus_event, handle_key_event,
+        handle_mouse_event,
+    };
+    use crate::selection::tests::{at, drag_to, end, highlighted, press as mouse_press};
+    use crate::widgets::chat::tests::{joined, sync};
+    use crate::widgets::message::tests::text_event;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use std::time::Duration;
 
     /// An app with nothing showing and no client, sending to the returned
     /// receiver.
@@ -764,6 +773,82 @@ pub(crate) mod tests {
         app.close_popup();
         assert!(matches!(app.popup, Some(Popup::Error(_))));
         assert!(app.waiting.is_empty());
+    }
+
+    /// An app looking at a room with this message, drawn in a terminal.
+    async fn app_showing(body: &str) -> (MatrixMockServer, App, Terminal<TestBackend>) {
+        let (server, client, room) = joined().await;
+        let (mut app, events) = test_app();
+        app.matrix.set_client(client.clone());
+        app.matrix.add_room(room.clone()).await;
+        app.select_room(room);
+
+        sync(
+            &server,
+            &client,
+            vec![text_event("$text:example.org", 1000, body)],
+        )
+        .await;
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                while let Ok(event) = events.try_recv() {
+                    if let Event::Matui(event) = event {
+                        handle_app_event(event, &mut app);
+                    }
+                }
+
+                let frame = terminal.draw(|f| app.render(f)).unwrap();
+                let shown = format!("{:?}", frame.buffer).contains(body);
+
+                if shown {
+                    return;
+                }
+
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the message never showed");
+
+        (server, app, terminal)
+    }
+
+    /// Drag across the text, and whether it's highlighted after a draw.
+    fn drag_across(app: &mut App, terminal: &mut Terminal<TestBackend>, text: &str) -> bool {
+        let buf = terminal.backend().buffer();
+        let (from, to) = (at(buf, text), end(buf, text));
+
+        handle_mouse_event(mouse_press(from), app);
+        handle_mouse_event(drag_to(to), app);
+
+        terminal.draw(|f| app.render(f)).unwrap();
+        highlighted(terminal.backend().buffer(), text)
+    }
+
+    #[tokio::test]
+    async fn the_mouse_reaches_the_chat_under_progress_but_no_other_popup() {
+        let (_server, mut app, mut terminal) = app_showing("hello world").await;
+
+        handle_app_event(MatuiEvent::Error("oops".to_string()), &mut app);
+        assert!(!drag_across(&mut app, &mut terminal, "world"));
+
+        app.close_popup();
+        start_progress(&mut app);
+        assert!(drag_across(&mut app, &mut terminal, "world"));
+    }
+
+    #[tokio::test]
+    async fn the_mouse_doesnt_reach_the_chat_under_the_reaction_picker() {
+        let (_server, mut app, mut terminal) = app_showing("hello world").await;
+        let key = KeyEvent::from(KeyCode::Char('r'));
+
+        handle_key_event(key, &mut app, &EventHandler::without_terminal()).unwrap();
+        assert!(app.focused().unwrap().reacting());
+
+        assert!(!drag_across(&mut app, &mut terminal, "world"));
     }
 
     #[tokio::test]
