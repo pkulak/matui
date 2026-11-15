@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Show shared locations as a pin with the place's name and an OpenStreetMap link, which Enter opens. They used to be left out.
 - Drag across a message to select and copy part of its text. The copy is the message's own text, markdown included, without the line breaks Matui wraps at or the markers and gutters around it, and the selection stays inside the message. Double-click to select a word, or triple-click for a line, and drag from there to select a word or line at a time. The room's header says "Copied!", as it does for `y`. Shift+drag still selects anything else in most terminals. Links are underlined, and clicking one opens just that link.
 - Click in the chat to move the cursor there, and click a picture to open it.
 - Show a play button over video thumbnails in the chat.

@@ -27,9 +27,11 @@ use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
 use matrix_sdk::ruma::events::MessageLikeEvent;
 use matrix_sdk::ruma::events::relation::{InReplyTo, Replacement, Reply};
 use matrix_sdk::ruma::events::room::message::MessageType::{
-    self, Audio, Image, Notice, Text, Video,
+    self, Audio, Image, Location, Notice, Text, Video,
 };
-use matrix_sdk::ruma::events::room::message::{MessageFormat, Relation, TextMessageEventContent};
+use matrix_sdk::ruma::events::room::message::{
+    LocationMessageEventContent, MessageFormat, Relation, TextMessageEventContent,
+};
 use matrix_sdk::ruma::events::room::redaction::{OriginalRoomRedactionEvent, RoomRedactionEvent};
 use matrix_sdk::ruma::{
     EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedUserId,
@@ -71,6 +73,15 @@ fn get_formatter() -> &'static Formatter {
         fmtr.min_unit(timeago::TimeUnit::Minutes);
         fmtr
     })
+}
+
+/// The latitude and longitude in a geo URI, such as `geo:51.5,-0.12;u=35`.
+fn coordinates(uri: &str) -> Option<(&str, &str)> {
+    let point = uri.strip_prefix("geo:")?.split(';').next()?;
+    let mut parts = point.split(',');
+    let (lat, lon) = (parts.next()?, parts.next()?);
+
+    (lat.parse::<f64>().is_ok() && lon.parse::<f64>().is_ok()).then_some((lat, lon))
 }
 
 #[derive(PartialEq, Eq)]
@@ -139,8 +150,27 @@ impl Message {
                     .and_then(|info| info.size)
                     .map(human_bytes),
             ),
+            Location(content) => Self::display_location(content),
             _ => "unknown".to_string(),
         }
+    }
+
+    // a pin and the place's name, then the place on a map
+    fn display_location(content: &LocationMessageEventContent) -> String {
+        let Some((lat, lon)) = coordinates(&content.geo_uri) else {
+            return content.body.clone();
+        };
+
+        // the body is often just the geo URI and a time
+        let name = content
+            .location
+            .as_ref()
+            .and_then(|l| l.description.as_deref())
+            .unwrap_or("Location");
+
+        format!(
+            "📍 {name}\nhttps://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=16/{lat}/{lon}"
+        )
     }
 
     fn display_media(
@@ -276,7 +306,7 @@ impl Message {
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Audio(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
-            Text(_) => view_text(self.display()),
+            Text(_) | Location(_) => view_text(self.display()),
             _ => {}
         }
     }
@@ -307,7 +337,9 @@ impl Message {
             let c = c.clone();
 
             let body = match c.content.msgtype {
-                Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_) => c.content.msgtype,
+                Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_) | Location(_) => {
+                    c.content.msgtype
+                }
                 _ => return None,
             };
 
@@ -1146,6 +1178,52 @@ pub(crate) mod tests {
         let message = Message::try_from(&event, false).unwrap();
 
         assert_eq!(message.display(), "hello");
+    }
+
+    fn location_event(content: serde_json::Value) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.message",
+            "event_id": "$location:example.org",
+            "sender": "@alice:example.org",
+            "origin_server_ts": 1000,
+            "room_id": "!room:example.org",
+            "content": content
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn displays_locations_with_a_map_link() {
+        let message = |content| Message::try_from(&location_event(content), false).unwrap();
+
+        let described = message(json!({
+            "msgtype": "m.location",
+            "body": "Location geo:51.5,-0.12;u=35 at 2026-11-15T12:00:00Z",
+            "geo_uri": "geo:51.5,-0.12;u=35",
+            "org.matrix.msc3488.location": {
+                "uri": "geo:51.5,-0.12;u=35",
+                "description": "Big Ben"
+            }
+        }));
+        assert_eq!(
+            described.display(),
+            "📍 Big Ben\nhttps://www.openstreetmap.org/?mlat=51.5&mlon=-0.12#map=16/51.5/-0.12"
+        );
+        assert_eq!(described.links().len(), 1);
+
+        let pinned = message(json!({
+            "msgtype": "m.location",
+            "body": "Location geo:51.5,-0.12 at 2026-11-15T12:00:00Z",
+            "geo_uri": "geo:51.5,-0.12"
+        }));
+        assert!(pinned.display().starts_with("📍 Location\n"));
+
+        let broken = message(json!({
+            "msgtype": "m.location",
+            "body": "Somewhere",
+            "geo_uri": "geo:nowhere"
+        }));
+        assert_eq!(broken.display(), "Somewhere");
     }
 
     #[test]
