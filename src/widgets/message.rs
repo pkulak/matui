@@ -26,7 +26,7 @@ use matrix_sdk::ruma::events::room::encrypted::Relation::{
     self as EncryptedRelation, Annotation, Replacement, Thread,
 };
 use matrix_sdk::ruma::events::room::message::MessageType::{
-    self, Audio, Image, Notice, Text, Video,
+    self, Audio, Emote, Image, Notice, Text, Video,
 };
 use matrix_sdk::ruma::events::room::message::{
     MessageFormat, NoticeMessageEventContent, Relation, TextMessageEventContent,
@@ -174,9 +174,8 @@ impl Message {
 
         let (body, edited) = match &content.kind {
             MsgLikeKind::Message(m) => match m.msgtype() {
-                body @ (Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)) => {
-                    (body.clone(), m.is_edited())
-                }
+                body @ (Text(_) | Emote(_) | Notice(_) | Image(_) | Video(_) | Audio(_)
+                | File(_)) => (body.clone(), m.is_edited()),
                 _ => return None,
             },
             MsgLikeKind::UnableToDecrypt(_) => {
@@ -234,7 +233,7 @@ impl Message {
         }
 
         match &c.content.msgtype {
-            body @ (Text(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)) => {
+            body @ (Text(_) | Emote(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)) => {
                 Some(Message::new(
                     TimelineEventItemId::EventId(c.event_id.clone()),
                     c.origin_server_ts,
@@ -267,6 +266,7 @@ impl Message {
     fn display_body(body: &MessageType) -> String {
         match body {
             Text(TextMessageEventContent { body, .. }) => body.to_string(),
+            Emote(content) => content.body.to_string(),
             Notice(content) => content.body.to_string(),
             Image(content) => Self::display_media(
                 "Image",
@@ -433,6 +433,7 @@ impl Message {
     pub fn style(&self) -> Style {
         match &self.body {
             Text(_) => Style::default(),
+            Emote(_) => Style::default().add_modifier(Modifier::ITALIC),
             _ => Style::default().fg(Color::Blue),
         }
     }
@@ -443,7 +444,7 @@ impl Message {
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Audio(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
-            Text(_) => view_text(self.display()),
+            Text(_) | Emote(_) => view_text(self.display()),
             _ => {}
         }
     }

@@ -34,7 +34,7 @@ use matrix_sdk::ruma::{
 use matrix_sdk_ui::eyeball_im::Vector;
 use matrix_sdk_ui::timeline::{
     AnyOtherStateEventContentChange, EventTimelineItem, MembershipChange, Timeline as SdkTimeline,
-    TimelineEventItemId, TimelineItem as SdkItem, TimelineItemContent,
+    TimelineEventItemId, TimelineItem as SdkItem, TimelineItemContent, VirtualTimelineItem,
 };
 use once_cell::sync::OnceCell;
 use std::cell::{Cell, RefCell};
@@ -72,6 +72,10 @@ pub struct Chat {
     messages: Vec<TimelineItem>,
     window: Range<usize>,
     read_to: Option<OwnedEventId>,
+    /// Where the new messages start, as the room's read marker stood until
+    /// the chat marked the room read, which moves it to the end, and until
+    /// we send a message.
+    read_marker: Option<MilliSecondsSinceUnixEpoch>,
     react: Option<React>,
     typing: Option<String>,
     copied: Option<Instant>,
@@ -122,6 +126,7 @@ impl Chat {
             messages: vec![],
             window: (0..0),
             read_to: None,
+            read_marker: None,
             react: None,
             typing: None,
             copied: None,
@@ -156,6 +161,7 @@ impl Chat {
             messages: vec![],
             window: (0..0),
             read_to: None,
+            read_marker: None,
             react: None,
             typing: None,
             copied: None,
@@ -623,6 +629,23 @@ impl Chat {
 
         self.timeline = Some(timeline.clone());
         self.items = items.clone();
+
+        if self.read_to.is_none() {
+            self.read_marker = read_marker(items);
+        }
+
+        // sending a message after it is done with what's new
+        let me = self.matrix.me();
+
+        if let Some(read) = self.read_marker
+            && items
+                .iter()
+                .filter_map(|i| i.as_event())
+                .any(|e| e.sender() == me && e.timestamp() > read)
+        {
+            self.read_marker = None;
+        }
+
         self.check_item_senders();
         self.set_messages(false);
         self.pretty_members = OnceCell::new();
@@ -771,6 +794,18 @@ impl Chat {
             &self.search_term,
             self.thread_root.as_deref(),
         );
+
+        // the read marker goes above everything newer than it, newest first
+        if let Some(read) = self.read_marker.filter(|_| self.search_term.is_empty())
+            && let Some(i) = self.messages.iter().position(|item| match item {
+                TimelineItem::Message(m) => *m.sort_order() <= read,
+                TimelineItem::Events(e) => e.ts <= read,
+                TimelineItem::ReadMarker => false,
+            })
+            && i > 0
+        {
+            self.messages.insert(i, TimelineItem::ReadMarker);
+        }
 
         self.adjust_range(force_bookmark);
     }
@@ -1322,13 +1357,15 @@ fn find_bookmark(bookmark: &Bookmark, lines: &[LineType]) -> Option<usize> {
 pub enum TimelineItem {
     Message(Message),
     Events(RoomEvents),
+    /// The line above the new messages.
+    ReadMarker,
 }
 
 impl TimelineItem {
     pub(crate) fn message(&self) -> Option<&Message> {
         match self {
             TimelineItem::Message(m) => Some(m),
-            TimelineItem::Events(_) => None,
+            TimelineItem::Events(_) | TimelineItem::ReadMarker => None,
         }
     }
 
@@ -1345,6 +1382,19 @@ impl TimelineItem {
                 let items = e.to_list_items(sidecar);
                 bodies.extend(items.iter().map(|_| None));
                 items
+            }
+            TimelineItem::ReadMarker => {
+                // bottom up, like the others
+                sidecar.extend([LineType::RoomEvent, LineType::DeadSpace]);
+                bodies.extend([None, None]);
+
+                vec![
+                    ListItem::new(Span::styled(
+                        format!("{:─^width$}", " new messages "),
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                    ListItem::new(" "),
+                ]
             }
         }
     }
@@ -1529,6 +1579,20 @@ fn push_group(items: &mut Vec<TimelineItem>, group: RoomEvents) {
     } else {
         items.push(TimelineItem::Events(group));
     }
+}
+
+/// When the last event before the timeline's read marker was sent.
+fn read_marker(items: &Vector<Arc<SdkItem>>) -> Option<MilliSecondsSinceUnixEpoch> {
+    let marker = items
+        .iter()
+        .position(|i| matches!(i.as_virtual(), Some(VirtualTimelineItem::ReadMarker)))?;
+
+    items
+        .iter()
+        .take(marker)
+        .rev()
+        .find_map(|i| i.as_event())
+        .map(|e| e.timestamp())
 }
 
 /// How far each user has read, from the receipts on the timeline's items.
@@ -2302,6 +2366,117 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn opening_a_room_out_of_focus_leaves_it_unread() {
         assert!(marks_read(false).await.is_empty());
+    }
+
+    /// Sync these events into the room, with its read marker on this one.
+    async fn sync_read_to(
+        server: &MatrixMockServer,
+        client: &Client,
+        events: Vec<Value>,
+        id: &str,
+    ) {
+        let read_to = EventFactory::new().fully_read(&OwnedEventId::try_from(id).unwrap());
+
+        let room = JoinedRoomBuilder::new(room_id())
+            .add_timeline_bulk(raw(events))
+            .add_account_data(read_to);
+
+        server.sync_room(client, room).await;
+    }
+
+    /// The chat's items, newest first: messages by ID, and the read marker.
+    fn with_marker(chat: &Chat) -> Vec<&str> {
+        chat.messages
+            .iter()
+            .map(|item| match item {
+                TimelineItem::Message(m) => event_id(m),
+                TimelineItem::Events(_) => "events",
+                TimelineItem::ReadMarker => "new",
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_read_marker_stays_where_the_room_opened_with_it() {
+        let (server, client, room) = joined().await;
+        mock_receipts(&server).await;
+
+        sync_read_to(
+            &server,
+            &client,
+            vec![
+                text_event("$1:example.org", 1000, "one"),
+                text_event("$2:example.org", 2000, "two"),
+                text_event("$3:example.org", 3000, "three"),
+            ],
+            "$1:example.org",
+        )
+        .await;
+
+        let (mut chat, events) = chat(&client, room).await;
+        let opened = ["$3:example.org", "$2:example.org", "new", "$1:example.org"];
+
+        until(&mut chat, &events, |c| with_marker(c) == opened).await;
+
+        // reading the room moves the marker past what it shows, but the line
+        // stays put while the room's open
+        sync_read_to(
+            &server,
+            &client,
+            vec![text_event("$4:example.org", 4000, "four")],
+            "$3:example.org",
+        )
+        .await;
+
+        until(&mut chat, &events, |c| {
+            read_marker(&c.items) == Some(MilliSecondsSinceUnixEpoch(3000u32.into()))
+        })
+        .await;
+
+        assert_eq!(
+            with_marker(&chat),
+            [
+                "$4:example.org",
+                "$3:example.org",
+                "$2:example.org",
+                "new",
+                "$1:example.org"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn sending_a_message_takes_the_read_marker_away() {
+        let (server, client, room) = joined().await;
+        mock_receipts(&server).await;
+
+        sync_read_to(
+            &server,
+            &client,
+            vec![
+                text_event("$1:example.org", 1000, "one"),
+                text_event("$2:example.org", 2000, "two"),
+            ],
+            "$1:example.org",
+        )
+        .await;
+
+        let (mut chat, events) = chat(&client, room).await;
+        until(&mut chat, &events, |c| with_marker(c).contains(&"new")).await;
+
+        let mut mine = text_event("$3:example.org", 3000, "three");
+        mine["sender"] = json!(client.user_id().unwrap());
+        sync(&server, &client, vec![mine]).await;
+
+        until(&mut chat, &events, |c| {
+            message(c, "$3:example.org").is_some()
+        })
+        .await;
+
+        assert_eq!(
+            with_marker(&chat),
+            ["$3:example.org", "$2:example.org", "$1:example.org"]
+        );
     }
 
     /// The thread view of this root, once it's paged back to the root.

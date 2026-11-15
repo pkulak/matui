@@ -515,6 +515,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn emotes_show_their_action() {
+        let (rows, _) = draw(
+            vec![json!({
+                "type": "m.room.message",
+                "event_id": "$emote:example.org",
+                "sender": "@alice:example.org",
+                "origin_server_ts": 1000,
+                "content": { "msgtype": "m.emote", "body": "waves" }
+            })],
+            0,
+        )
+        .await;
+
+        assert_eq!(bottom(&rows, 2), ["  @alice:example.org <time>", "> waves"]);
+    }
+
+    #[tokio::test]
+    async fn the_read_marker_draws_a_line_above_the_new_messages() {
+        let items = timeline_items(vec![
+            text_event("$older:example.org", 1000, "older"),
+            text_event("$newer:example.org", 2000, "newer"),
+        ])
+        .await;
+
+        let mut messages = make_message_list(&items, &vec![], "", None);
+        messages.insert(1, TimelineItem::ReadMarker);
+
+        let drawn = draw_messages(&messages, 0, HEIGHT, &mut Pictures::default(), None);
+
+        assert_eq!(
+            bottom(&drawn.rows, 6),
+            [
+                "  older",
+                "",
+                "  ──────────── new messages ────────────",
+                "",
+                "  @alice:example.org <time>",
+                "> newer",
+            ]
+        );
+
+        assert!(matches!(drawn.line_types[3], LineType::RoomEvent));
+        assert!(matches!(drawn.line_types[4], LineType::DeadSpace));
+    }
+
+    #[tokio::test]
     async fn selecting_an_older_row_scrolls_it_into_view() {
         let events: Vec<_> = (1..=5)
             .map(|i| {

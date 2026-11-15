@@ -214,7 +214,11 @@ async fn preview(room: &Room, latest: &LatestEventValue) -> Option<(String, Stri
 
     let body = match &og.content.msgtype {
         MessageType::Text(content) => content.body.clone(),
-        _ => "".to_string(),
+        MessageType::Emote(content) => content.body.clone(),
+        MessageType::Notice(content) => content.body.clone(),
+        MessageType::Image(_) => "sent an image".to_string(),
+        MessageType::Video(_) => "sent a video".to_string(),
+        _ => "new activity".to_string(),
     };
 
     let sender = match room.get_member_no_sync(&og.sender).await {
