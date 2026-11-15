@@ -22,6 +22,7 @@ use matrix_sdk::room::RoomMember;
 use matrix_sdk::ruma::events::AnyMessageLikeEvent::RoomMessage;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::events::AnyTimelineEvent::MessageLike;
+use matrix_sdk::ruma::events::poll::start::PollKind;
 use matrix_sdk::ruma::events::room::encrypted::Relation::{
     self as EncryptedRelation, Annotation, Replacement, Thread,
 };
@@ -38,7 +39,7 @@ use matrix_sdk::ruma::events::{
 };
 use matrix_sdk::ruma::{MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedUserId};
 use matrix_sdk_ui::timeline::{
-    EventSendState, EventTimelineItem, MsgLikeKind, TimelineEventItemId,
+    EventSendState, EventTimelineItem, MsgLikeKind, PollResult, TimelineEventItemId,
 };
 use once_cell::unsync::OnceCell;
 use ratatui::style::{Color, Modifier, Style};
@@ -111,6 +112,32 @@ fn sticker_image(sticker: &StickerEventContent) -> MessageType {
         .info(Some(Box::new(sticker.info.clone())));
 
     Image(image)
+}
+
+/// A poll's question, then its answers with their votes, which an
+/// undisclosed poll hides until it ends.
+fn poll_text(poll: &PollResult) -> String {
+    let ended = poll.end_time.is_some();
+    let counted = ended || matches!(poll.kind, PollKind::Disclosed);
+
+    let mut text = format!("📊 {}", poll.question);
+
+    for answer in &poll.answers {
+        text.push('\n');
+        text.push_str(&answer.text);
+
+        if counted {
+            let votes = poll.votes.get(&answer.id).map_or(0, Vec::len);
+            text.push_str(&format!(" · {votes}"));
+        }
+    }
+
+    text.push_str(match ended {
+        true => "\nEnded",
+        false => "\n(open in another client to vote)",
+    });
+
+    text
 }
 
 /// The latitude and longitude in a geo URI, such as `geo:51.5,-0.12;u=35`.
@@ -198,6 +225,10 @@ impl Message {
                 _ => return None,
             },
             MsgLikeKind::Sticker(s) => (sticker_image(s.content()), false),
+            MsgLikeKind::Poll(poll) => (
+                Notice(NoticeMessageEventContent::plain(poll_text(&poll.results()))),
+                poll.is_edit(),
+            ),
             MsgLikeKind::UnableToDecrypt(_) => {
                 // only messages get a placeholder; a thread's stays out of
                 // the room

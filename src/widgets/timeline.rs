@@ -531,6 +531,90 @@ mod tests {
         assert_eq!(bottom(&rows, 2), ["  @alice:example.org <time>", "> waves"]);
     }
 
+    fn poll(kind: &str) -> Value {
+        let answer = |id: &str, text: &str| json!({ "id": id, "org.matrix.msc1767.text": text });
+
+        json!({
+            "type": "org.matrix.msc3381.poll.start",
+            "event_id": "$poll:example.org",
+            "sender": "@alice:example.org",
+            "origin_server_ts": 1000,
+            "content": {
+                "org.matrix.msc3381.poll.start": {
+                    "kind": kind,
+                    "max_selections": 1,
+                    "question": { "org.matrix.msc1767.text": "Where should we eat?" },
+                    "answers": [answer("pizza", "Pizza"), answer("tacos", "Tacos")]
+                },
+                "org.matrix.msc1767.text": "Where should we eat?"
+            }
+        })
+    }
+
+    fn vote(id: &str, sender: &str, answer: &str) -> Value {
+        json!({
+            "type": "org.matrix.msc3381.poll.response",
+            "event_id": id,
+            "sender": sender,
+            "origin_server_ts": 2000,
+            "content": {
+                "org.matrix.msc3381.poll.response": { "answers": [answer] },
+                "m.relates_to": { "rel_type": "m.reference", "event_id": "$poll:example.org" }
+            }
+        })
+    }
+
+    fn poll_end() -> Value {
+        json!({
+            "type": "org.matrix.msc3381.poll.end",
+            "event_id": "$end:example.org",
+            "sender": "@alice:example.org",
+            "origin_server_ts": 3000,
+            "content": {
+                "org.matrix.msc3381.poll.end": {},
+                "org.matrix.msc1767.text": "Ended poll",
+                "m.relates_to": { "rel_type": "m.reference", "event_id": "$poll:example.org" }
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn polls_show_their_votes() {
+        let votes = || {
+            vec![
+                vote("$a:example.org", "@alice:example.org", "pizza"),
+                vote("$b:example.org", "@bob:example.org", "pizza"),
+                vote("$c:example.org", "@carol:example.org", "tacos"),
+            ]
+        };
+
+        let mut events = vec![poll("org.matrix.msc3381.poll.disclosed")];
+        events.extend(votes());
+        let (rows, _) = draw(events, 0).await;
+
+        assert_eq!(
+            bottom(&rows, 4),
+            [
+                "  📊  Where should we eat?",
+                "  Pizza · 2",
+                "  Tacos · 1",
+                "> (open in another client to vote)"
+            ]
+        );
+
+        // undisclosed polls hide the votes until they end
+        let mut events = vec![poll("org.matrix.msc3381.poll.undisclosed")];
+        events.extend(votes());
+        let (rows, _) = draw(events.clone(), 0).await;
+
+        assert_eq!(bottom(&rows, 3)[..2], ["  Pizza", "  Tacos"]);
+
+        events.push(poll_end());
+        let (rows, _) = draw(events, 0).await;
+
+        assert_eq!(bottom(&rows, 3), ["  Pizza · 2", "  Tacos · 1", "> Ended"]);
+    }
+
     #[tokio::test]
     async fn the_read_marker_draws_a_line_above_the_new_messages() {
         let items = timeline_items(vec![

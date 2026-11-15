@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Show polls with their answers and vote counts, which update as votes come in. Polls that hide their results show the counts once they end. Voting still needs another client.
 - Show shared locations as a pin with the place's name and an OpenStreetMap link, which Enter opens. They used to be left out.
 - Show stickers in the chat, as pictures. They used to be left out.
 - Show pictures that come with no thumbnail and no file size when they're no bigger than 800×600, as stickers often are.
