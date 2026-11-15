@@ -60,6 +60,9 @@ impl Matrix {
 
         let sync_service = match SyncService::builder(client.clone())
             .with_offline_mode()
+            // the mention count only covers the events since the last gap, so
+            // a mention survives being away if it's in the last 20
+            .with_room_list_timeline_limit(20)
             .build()
             .await
         {

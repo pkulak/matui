@@ -173,12 +173,13 @@ impl DecoratedRoom {
         self.inner.unread_notification_counts().notification_count
     }
 
+    /// Counted here, since the server can't see mentions in encrypted rooms.
     pub fn highlight_count(&self) -> u64 {
         if self.visited {
             return 0;
         }
 
-        self.inner.unread_notification_counts().highlight_count
+        self.inner.num_unread_mentions()
     }
 
     pub(crate) async fn from_room(room: Room) -> DecoratedRoom {
@@ -540,6 +541,45 @@ mod tests {
         .await;
 
         assert_eq!(rooms[0].unread_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn counts_mentions_the_server_did_not() {
+        let (server, client, cache) = follow().await;
+
+        sync(
+            &server,
+            &client,
+            json!({
+                "!a:localhost": {
+                    "initial": true,
+                    // our own member event, for the push rules
+                    "required_state": [member("@example:localhost", "join", None)],
+                    "timeline": [
+                        message("$1", "@bob:localhost", 1000, "hello"),
+                        {
+                            "type": "m.room.message",
+                            "event_id": "$2",
+                            "sender": "@bob:localhost",
+                            "origin_server_ts": 2000,
+                            "content": {
+                                "msgtype": "m.text",
+                                "body": "hi example",
+                                "m.mentions": { "user_ids": ["@example:localhost"] },
+                            },
+                        },
+                    ],
+                },
+            }),
+        )
+        .await;
+
+        let rooms = rooms_once(&cache, |rooms| {
+            rooms.first().is_some_and(|r| r.highlight_count() > 0)
+        })
+        .await;
+
+        assert_eq!(rooms[0].highlight_count(), 1);
     }
 
     #[tokio::test]

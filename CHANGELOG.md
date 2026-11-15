@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Count mentions in encrypted rooms in the room switcher, where the server can't see them. A mention you missed while away still counts if it's among the room's last 20 messages.
 - Notify by your account's notification settings, as other clients do. `:mute` and `:unmute` replace `m`, and in a room they change its setting on the server, so it holds in every client and across restarts. A room muted with `:mute` still notifies for mentions and keywords, in its threads too. The `muted` and `mentions_override_mute` settings are gone and no longer do anything: mute those rooms with `:mute`, and in place of `muted = ["*"]`, set your account to notify only for mentions in another client, such as Element.
 - Drag across a message to select and copy part of its text. The copy is the message's own text, markdown included, without the line breaks Matui wraps at or the markers and gutters around it, and the selection stays inside the message. Double-click to select a word, or triple-click for a line, and drag from there to select a word or line at a time. The room's header says "Copied!", as it does for `y`. Shift+drag still selects anything else in most terminals. Links are underlined, and clicking one opens just that link.
 - Click in the chat to move the cursor there, and click a picture to open it.
