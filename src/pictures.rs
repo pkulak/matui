@@ -1,5 +1,5 @@
 use crate::settings::images;
-use image::DynamicImage;
+use image::{DynamicImage, ImageFormat, imageops};
 use log::{info, warn};
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Image, Video};
 use matrix_sdk::ruma::events::room::{MediaSource, ThumbnailInfo};
@@ -17,6 +17,8 @@ const MAX_ROWS: u16 = 10;
 
 // originals bigger than this are too much to download just to look at
 const MAX_ORIGINAL_SIZE: u64 = 2 * 1024 * 1024;
+
+const PLAY_BUTTON: &[u8] = include_bytes!("../assets/play-button.png");
 
 static PICKER: OnceLock<Option<Picker>> = OnceLock::new();
 
@@ -53,10 +55,13 @@ pub fn picker() -> Option<&'static Picker> {
 }
 
 /// A picture to show for a message.
+#[derive(Clone)]
 pub struct PictureSource {
     pub media: MediaSource,
     // its width and height in pixels, if the event says
     pub dimensions: Option<(u32, u32)>,
+    // a video's thumbnail, which gets a play button
+    pub video: bool,
 }
 
 /// Which picture, if any, to show for a message.
@@ -72,13 +77,17 @@ pub fn picture_source(body: &MessageType) -> Option<PictureSource> {
             (u64::from(info.size?) <= MAX_ORIGINAL_SIZE).then(|| PictureSource {
                 media: content.source.clone(),
                 dimensions: dimensions(info.width, info.height),
+                video: false,
             })
         }
         Video(content) => {
             let info = content.info.as_deref()?;
             let thumbnail = info.thumbnail_source.clone()?;
 
-            Some(thumbnail_source(thumbnail, info.thumbnail_info.as_deref()))
+            Some(PictureSource {
+                video: true,
+                ..thumbnail_source(thumbnail, info.thumbnail_info.as_deref())
+            })
         }
         _ => None,
     }
@@ -88,7 +97,25 @@ fn thumbnail_source(media: MediaSource, info: Option<&ThumbnailInfo>) -> Picture
     PictureSource {
         media,
         dimensions: info.and_then(|i| dimensions(i.width, i.height)),
+        video: false,
     }
+}
+
+/// Puts a play button in the middle of a video's thumbnail, a third as big
+/// as its shorter side, so it still shows in halfblocks.
+pub fn add_play_button(image: DynamicImage) -> DynamicImage {
+    let button = image::load_from_memory_with_format(PLAY_BUTTON, ImageFormat::Png)
+        .expect("the play button is a PNG");
+
+    let side = (image.width().min(image.height()) / 3).max(1);
+    let button = imageops::resize(&button, side, side, FilterType::Lanczos3);
+
+    let mut canvas = image.into_rgba8();
+    let x = (canvas.width() - side) / 2;
+    let y = (canvas.height() - side) / 2;
+    imageops::overlay(&mut canvas, &button, x.into(), y.into());
+
+    DynamicImage::ImageRgba8(canvas)
 }
 
 fn dimensions(width: Option<UInt>, height: Option<UInt>) -> Option<(u32, u32)> {
@@ -343,6 +370,28 @@ mod tests {
     fn videos_need_a_thumbnail() {
         let body = video(json!({ "size": 1000 }));
         assert_eq!(uri(picture_source(&body)), None);
+    }
+
+    #[test]
+    fn only_videos_get_a_play_button() {
+        let thumbnail = json!({ "size": 1000, "thumbnail_url": "mxc://example.org/thumbnail" });
+
+        assert!(picture_source(&video(thumbnail.clone())).unwrap().video);
+        assert!(!picture_source(&image(thumbnail)).unwrap().video);
+        assert!(
+            !picture_source(&image(json!({ "size": 1000 })))
+                .unwrap()
+                .video
+        );
+    }
+
+    #[test]
+    fn the_play_button_goes_in_the_middle() {
+        let image = add_play_button(DynamicImage::new_rgb8(300, 200)).into_rgba8();
+
+        assert_eq!((image.width(), image.height()), (300, 200));
+        assert_eq!(image.get_pixel(0, 0).0, [0, 0, 0, 255]);
+        assert!(image.get_pixel(150, 100).0[0] > 200);
     }
 
     #[test]

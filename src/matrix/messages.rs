@@ -14,7 +14,6 @@ use matrix_sdk::media::{MediaFormat, MediaRequestParameters};
 use matrix_sdk::room::Room;
 use matrix_sdk::room::edit::EditedContent;
 use matrix_sdk::ruma::api::client::receipt::create_receipt::v3::ReceiptType;
-use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, File, Image, Video};
 use matrix_sdk::ruma::events::room::message::{RoomMessageEventContent, TextMessageEventContent};
@@ -29,7 +28,7 @@ use super::mime::mime_from_path;
 use crate::handler::MatuiEvent;
 use crate::handler::MatuiEvent::Error;
 use crate::media::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH, decode_upright, get_attachment_info};
-use crate::pictures::source_uri;
+use crate::pictures::{PictureSource, add_play_button, source_uri};
 use crate::spawn::{save_file, view_file};
 
 /// The widest or tallest picture we'll decode, in pixels.
@@ -117,14 +116,15 @@ impl Matrix {
     }
 
     /// Download and decode a picture for a room's chat, in the background.
-    pub fn fetch_picture(&self, room_id: OwnedRoomId, source: MediaSource) {
+    pub fn fetch_picture(&self, room_id: OwnedRoomId, source: PictureSource) {
         let matrix = self.clone();
 
         self.spawn(async move {
-            let uri = source_uri(&source).clone();
+            let uri = source_uri(&source.media).clone();
+            let video = source.video;
 
             let request = MediaRequestParameters {
-                source,
+                source: source.media,
                 format: MediaFormat::File,
             };
 
@@ -134,10 +134,13 @@ impl Matrix {
                 .get_media_content(&request, true)
                 .await
             {
-                Ok(bytes) => tokio::task::spawn_blocking(move || decode_picture(&bytes))
-                    .await
-                    .ok()
-                    .flatten(),
+                Ok(bytes) => tokio::task::spawn_blocking(move || {
+                    let image = decode_picture(&bytes)?;
+                    Some(if video { add_play_button(image) } else { image })
+                })
+                .await
+                .ok()
+                .flatten(),
                 Err(err) => {
                     error!("could not download picture {}: {}", uri, err);
                     None

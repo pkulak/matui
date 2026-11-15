@@ -1,8 +1,7 @@
-use crate::pictures::{Pictures, picture_source, source_uri};
+use crate::pictures::{PictureSource, Pictures, picture_source, source_uri};
 use crate::selection::{BodyRow, TextMap};
 use crate::widgets::chat::TimelineItem;
 use crate::widgets::message::LineType;
-use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk_ui::timeline::TimelineEventItemId;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
@@ -26,7 +25,7 @@ pub struct Timeline<'a> {
 
 // where a message with a picture source landed in the list
 struct Placement {
-    source: MediaSource,
+    source: PictureSource,
     message: TimelineEventItemId,
     // the message's list rows
     rows: Range<usize>,
@@ -85,7 +84,7 @@ impl<'a> Timeline<'a> {
                 });
 
                 placements.push(Placement {
-                    source: source.media,
+                    source,
                     message: message.clone(),
                     rows: start..line_types.len(),
                     picture,
@@ -110,7 +109,7 @@ impl<'a> Timeline<'a> {
         area: Rect,
         buf: &mut Buffer,
         state: &mut ListState,
-    ) -> (Vec<MediaSource>, TextMap<TimelineEventItemId>) {
+    ) -> (Vec<PictureSource>, TextMap<TimelineEventItemId>) {
         let list = List::new(self.items)
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .direction(ListDirection::BottomToTop);
@@ -158,7 +157,7 @@ impl<'a> Timeline<'a> {
                 continue;
             }
 
-            let uri = source_uri(&placement.source);
+            let uri = source_uri(&placement.source.media);
 
             if self.pictures.request(uri) {
                 fetches.push(placement.source.clone());
@@ -276,7 +275,11 @@ mod tests {
         Drawn {
             rows,
             line_types,
-            fetches: fetches.iter().map(source_uri).cloned().collect(),
+            fetches: fetches
+                .iter()
+                .map(|s| source_uri(&s.media))
+                .cloned()
+                .collect(),
             buf,
             map,
         }
