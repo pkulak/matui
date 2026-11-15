@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use matrix_sdk::Room;
 use matrix_sdk::ruma::OwnedEventId;
 use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
@@ -63,6 +63,10 @@ impl Compose {
 
     pub fn widget(&self) -> ComposeWidget<'_> {
         ComposeWidget { compose: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.input.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

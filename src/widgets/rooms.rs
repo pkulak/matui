@@ -1,7 +1,7 @@
 use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::{close, consumed};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use matrix_sdk::room::Room;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -56,6 +56,10 @@ impl Rooms {
 
     pub fn widget(&self) -> RoomsWidget<'_> {
         RoomsWidget { rooms: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.textinput.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

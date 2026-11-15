@@ -23,6 +23,8 @@ pub mod settings;
 pub mod markdown;
 pub mod media;
 pub mod pictures;
+/// Copying message text
+pub mod selection;
 /// Using external apps to do our bidding
 pub mod spawn;
 

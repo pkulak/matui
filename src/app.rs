@@ -1,4 +1,4 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, MouseEvent};
 use log::warn;
 use matrix_sdk::encryption::verification::SasVerification;
 use matrix_sdk::room::Room;
@@ -192,6 +192,10 @@ impl App {
             render = true;
         }
 
+        for chat in [&mut self.chat, &mut self.thread].into_iter().flatten() {
+            render |= chat.tick_event();
+        }
+
         if self.timestamp.is_multiple_of(240) {
             render = true;
         }
@@ -256,6 +260,27 @@ impl Popup {
             Popup::Search(w) => w.key_event(event),
             Popup::Help(w) => w.key_event(event),
             Popup::Upload(w) => w.key_event(event),
+        }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        match self {
+            Popup::Command(w) => w.mouse_event(event),
+            Popup::Compose(w) => w.mouse_event(event),
+            Popup::Create(w) => w.mouse_event(event),
+            Popup::Homeserver(w) => w.mouse_event(event),
+            Popup::Members(w) => w.mouse_event(event),
+            Popup::Qr(w) => w.mouse_event(event),
+            Popup::Recover(w) => w.mouse_event(event),
+            Popup::Rooms(w) => w.mouse_event(event),
+            Popup::Signin(w) => w.mouse_event(event),
+            Popup::Search(w) => w.mouse_event(event),
+            Popup::Upload(w) => w.mouse_event(event),
+            Popup::Confirm(_)
+            | Popup::Error(_)
+            | Popup::Progress(_)
+            | Popup::Oauth(_)
+            | Popup::Help(_) => {}
         }
     }
 

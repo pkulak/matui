@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use log::error;
 use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use ratatui::buffer::Buffer;
@@ -42,6 +42,12 @@ impl Qr {
 
     pub fn widget(&self) -> QrWidget<'_> {
         QrWidget { qr: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        if let Qr::Check { input, .. } = self {
+            input.mouse_event(event);
+        }
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

@@ -1,5 +1,6 @@
 use crate::app::{App, Popup};
 use crate::matrix::emoji::format_emojis;
+use crate::selection::{self, Action};
 use crate::spawn::pasted_file_paths;
 use crate::widgets::EventResult;
 use crate::widgets::confirm::{Confirm, ConfirmBehavior};
@@ -12,7 +13,7 @@ use crate::widgets::qr::Qr;
 use crate::widgets::rooms::{Rooms, sort_rooms};
 use crate::widgets::signin::Signin;
 use crate::widgets::upload::Upload;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use image::DynamicImage;
 use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use matrix_sdk::ruma::directory::PublicRoomsChunk;
@@ -342,6 +343,40 @@ pub fn handle_key_event(
 
     // and now pass it on to the chat being looked at
     handle_chat_key_event(&key_event, app, handler)
+}
+
+/// Mouse events go where keys would: a popup, other than progress, takes
+/// them, and so does the reaction picker, which ignores them.
+pub fn handle_mouse_event(event: MouseEvent, app: &mut App) {
+    if let Some(popup) = app.popup.as_mut()
+        && !matches!(popup, Popup::Progress(_))
+    {
+        popup.mouse_event(&event);
+        return;
+    }
+
+    let Some(chat) = app.thread.as_mut().or(app.chat.as_mut()) else {
+        return;
+    };
+
+    if chat.reacting() {
+        return;
+    }
+
+    match chat.mouse_event(&event) {
+        Some(Action::Copy(text)) => {
+            if let Err(err) = selection::copy(&text) {
+                log::warn!("Couldn't copy: {err}");
+            }
+        }
+        Some(Action::Open(url)) => {
+            if let Err(err) = open::that_detached(&url) {
+                log::error!("could not open link: {url} {err}");
+            }
+        }
+        Some(Action::OpenPicture(id)) => chat.open_message(&id),
+        None => {}
+    }
 }
 
 pub fn handle_paste_event(value: String, app: &mut App) {

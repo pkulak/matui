@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -34,6 +34,10 @@ impl Homeserver {
 
     pub fn widget(&self) -> HomeserverWidget<'_> {
         HomeserverWidget { homeserver: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.homeserver.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

@@ -4,6 +4,7 @@ use crate::handler::Batch;
 use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::pictures::{Pictures, picker};
+use crate::selection::{self, Action, BodyRow, Selection, TextMap};
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
@@ -19,7 +20,7 @@ use crate::widgets::upload::Upload;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use image::DynamicImage;
 use log::info;
 use matrix_sdk::RoomMemberships;
@@ -42,10 +43,11 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::{Deref, Range};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tokio::task::AbortHandle;
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders, ListItem, ListState, Paragraph, Widget};
@@ -64,12 +66,15 @@ pub struct Chat {
     read_to: Option<OwnedEventId>,
     react: Option<React>,
     typing: Option<String>,
+    copied: Option<Instant>,
     list_state: Cell<ListState>,
     next_cursor: Option<String>,
     fetching: Cell<bool>,
     fetch: Cell<Option<AbortHandle>>,
-    height: Cell<usize>,
     line_types: Mutex<Vec<LineType>>,
+    /// The message text on screen as of the last draw, and the list's area.
+    text_map: RefCell<TextMap<OwnedEventId>>,
+    selection: Selection<OwnedEventId>,
     pictures: RefCell<Pictures>,
     bookmark: Cell<Option<Bookmark>>,
     focus: bool,
@@ -107,12 +112,14 @@ impl Chat {
             read_to: None,
             react: None,
             typing: None,
+            copied: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: None,
             fetching: Cell::new(true),
             fetch: Cell::new(Some(fetch)),
-            height: Cell::new(20),
             line_types: Mutex::new(vec![]),
+            text_map: RefCell::new(TextMap::new(Rect::default())),
+            selection: Selection::default(),
             pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
             focus,
@@ -138,12 +145,14 @@ impl Chat {
             read_to: None,
             react: None,
             typing: None,
+            copied: None,
             list_state: Cell::new(ListState::default()),
             next_cursor: self.next_cursor.clone(),
             fetching: Cell::new(false),
             fetch: Cell::new(None),
-            height: Cell::new(20),
             line_types: Mutex::new(vec![]),
+            text_map: RefCell::new(TextMap::new(Rect::default())),
+            selection: Selection::default(),
             pictures: RefCell::default(),
             bookmark: Cell::new(Option::None),
             focus: true,
@@ -189,6 +198,8 @@ impl Chat {
         input: &KeyEvent,
         handler: &EventHandler,
     ) -> anyhow::Result<EventResult> {
+        self.selection.clear();
+
         // give our reaction window first dibs
         if let Some(react) = &mut self.react {
             match react.key_event(input) {
@@ -251,7 +262,7 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('d') if input.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.previous(self.height.get() / 2);
+                self.previous(self.half_page());
                 Ok(consumed!())
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -260,7 +271,7 @@ impl Chat {
                 Ok(consumed!())
             }
             KeyCode::Char('u') if input.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.next(self.height.get() / 2);
+                self.next(self.half_page());
                 self.try_fetch_previous();
                 Ok(consumed!())
             }
@@ -291,6 +302,13 @@ impl Chat {
             KeyCode::Char('s') => {
                 if let Some(message) = &self.selected_reply() {
                     message.save(self.matrix.clone())
+                }
+                Ok(consumed!())
+            }
+            KeyCode::Char('y') => {
+                if let Some(text) = self.copy_text() {
+                    selection::copy(text)?;
+                    self.copied = Some(Instant::now());
                 }
                 Ok(consumed!())
             }
@@ -512,6 +530,63 @@ impl Chat {
             }
             _ => Ok(EventResult::Ignored),
         }
+    }
+
+    /// A press, drag or release of the left button. A press moves the cursor
+    /// to it, and the selection does the rest.
+    pub fn mouse_event(&mut self, event: &MouseEvent) -> Option<Action<OwnedEventId>> {
+        if event.kind == MouseEventKind::Down(MouseButton::Left) {
+            self.move_to(event.column, event.row);
+        }
+
+        let action = self
+            .selection
+            .mouse_event(&self.text_map.borrow(), event, Instant::now());
+
+        // the caller copies it, and the header says so, as for y
+        if let Some(Action::Copy(_)) = action {
+            self.copied = Some(Instant::now());
+        }
+
+        action
+    }
+
+    /// Put the cursor on the list row at the pointer, or on the first row
+    /// above it that it can rest on. Above the oldest row, that's the oldest
+    /// row.
+    fn move_to(&mut self, x: u16, y: u16) {
+        let area = self.text_map.borrow().area;
+
+        if !area.contains(Position::new(x, y)) {
+            return;
+        }
+
+        let mut state = self.list_state.take();
+        state.select(Some(state.offset() + usize::from(area.bottom() - 1 - y)));
+        self.list_state.set(state);
+        self.next(0);
+    }
+
+    /// Open a message, as Enter does, without going into its thread.
+    pub fn open_message(&self, id: &OwnedEventId) {
+        if let Some(message) = self.iter_messages().find_map(|m| m.find_by_id(id)) {
+            message.open(self.matrix.clone());
+        }
+    }
+
+    fn half_page(&self) -> usize {
+        (self.text_map.borrow().area.height / 2).into()
+    }
+
+    /// Whether the chat needs drawing again, because the copy notice has
+    /// had its time.
+    pub fn tick_event(&mut self) -> bool {
+        if self.copied.is_some_and(|at| at.elapsed() >= COPIED_FOR) {
+            self.copied = None;
+            return true;
+        }
+
+        false
     }
 
     pub fn focus_event(&mut self) {
@@ -1016,6 +1091,12 @@ impl Chat {
             .find_map(|m| m.find_by_id(&bookmark.message_id))
     }
 
+    /// What `y` copies: the whole text of the message under the cursor,
+    /// including lines past `message_line_limit`.
+    fn copy_text(&self) -> Option<&str> {
+        self.selected_reply().map(Message::display)
+    }
+
     // is the given selection in the middle of two messages?
     fn invalid_selection(&self, selected: usize) -> bool {
         matches!(
@@ -1206,7 +1287,9 @@ impl Widget for ChatWidget<'_> {
             .constraints([Constraint::Percentage(100)])
             .split(splits[0])[0];
 
-        let (p_content, p_color) = if let Some(typing) = &self.chat.typing {
+        let (p_content, p_color) = if self.chat.copied.is_some() {
+            ("Copied!".to_string(), Color::Green)
+        } else if let Some(typing) = &self.chat.typing {
             (typing.to_string(), Color::Yellow)
         } else if self.chat.fetching.get() {
             let term = if self.chat.search_term.is_empty() {
@@ -1241,9 +1324,6 @@ impl Widget for ChatWidget<'_> {
             picker(),
         );
 
-        // make sure we save our last render dimensions
-        self.chat.height.set((splits[1].height).into());
-
         let mut list_state = self.chat.list_state.take();
 
         // if there's a bookmark, use it to set our selection
@@ -1267,7 +1347,9 @@ impl Widget for ChatWidget<'_> {
             *list_state.selected_mut() = Some(i.min(line_types.len().saturating_sub(1)));
         }
 
-        let fetches = timeline.render(splits[1], buf, &mut list_state);
+        let (fetches, map) = timeline.render(splits[1], buf, &mut list_state);
+        selection::paint(buf, &map, &self.chat.selection);
+        self.chat.text_map.replace(map);
         self.chat.list_state.set(list_state);
         self.chat.fetch_pictures(fetches);
 
@@ -1304,15 +1386,20 @@ impl TimelineItem {
         }
     }
 
-    pub fn to_list_items(
-        &self,
+    pub fn to_list_items<'a>(
+        &'a self,
         width: usize,
         picture_rows: Option<u16>,
         sidecar: &mut Vec<LineType>,
-    ) -> Vec<ListItem<'_>> {
+        bodies: &mut Vec<Option<BodyRow<'a, OwnedEventId>>>,
+    ) -> Vec<ListItem<'a>> {
         match self {
-            TimelineItem::Message(m) => m.to_list_items(width, picture_rows, sidecar),
-            TimelineItem::Events(e) => e.to_list_items(sidecar),
+            TimelineItem::Message(m) => m.to_list_items(width, picture_rows, sidecar, bodies),
+            TimelineItem::Events(e) => {
+                let items = e.to_list_items(sidecar);
+                bodies.extend(items.iter().map(|_| None));
+                items
+            }
         }
     }
 }
@@ -1586,6 +1673,9 @@ pub(crate) fn make_message_list(
 
     items
 }
+
+/// How long the header says a message was copied.
+const COPIED_FOR: Duration = Duration::from_secs(3);
 
 const REPLY_TEMPLATE: &str = "<!--
   Replying to:

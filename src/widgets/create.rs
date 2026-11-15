@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -50,6 +50,12 @@ impl Create {
 
     pub fn widget(&self) -> CreateWidget<'_> {
         CreateWidget { create: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.name.mouse_event(event);
+        self.topic.mouse_event(event);
+        self.alias.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

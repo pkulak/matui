@@ -1,6 +1,8 @@
 use crate::pictures::{Pictures, picture_source, source_uri};
+use crate::selection::{BodyRow, TextMap};
 use crate::widgets::chat::TimelineItem;
 use crate::widgets::message::LineType;
+use matrix_sdk::ruma::OwnedEventId;
 use matrix_sdk::ruma::events::room::MediaSource;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
@@ -18,11 +20,14 @@ pub struct Timeline<'a> {
     pictures: &'a mut Pictures,
     picker: Option<&'a Picker>,
     placements: Vec<Placement>,
+    // the message text on each list row
+    bodies: Vec<Option<BodyRow<'a, OwnedEventId>>>,
 }
 
 // where a message with a picture source landed in the list
 struct Placement {
     source: MediaSource,
+    message: OwnedEventId,
     // the message's list rows
     rows: Range<usize>,
     // the list row of the picture's top, and its size, once that's known
@@ -41,25 +46,34 @@ impl<'a> Timeline<'a> {
     ) -> Self {
         let mut items = vec![];
         let mut placements = vec![];
+        let mut bodies = vec![];
 
         // each item reverses its own rows, so collect them one at a time
         let mut buffer = vec![];
+        let mut body_buffer = vec![];
 
         for m in messages {
+            // the message, and where its picture comes from
             let source = picker
                 .and(m.message())
-                .and_then(|m| picture_source(&m.body));
+                .and_then(|m| Some((&m.id, picture_source(&m.body)?)));
 
             let size = picker
                 .zip(source.as_ref())
-                .and_then(|(picker, source)| pictures.size(source, picker, width as u16));
+                .and_then(|(picker, (_, source))| pictures.size(source, picker, width as u16));
 
-            items.append(&mut m.to_list_items(width, size.map(|s| s.height), &mut buffer));
+            items.append(&mut m.to_list_items(
+                width,
+                size.map(|s| s.height),
+                &mut buffer,
+                &mut body_buffer,
+            ));
 
             let start = line_types.len();
             line_types.append(&mut buffer);
+            bodies.append(&mut body_buffer);
 
-            if let Some(source) = source {
+            if let Some((message, source)) = source {
                 // the picture sits right under the author line, which is
                 // the message's topmost start
                 let picture = size.and_then(|size| {
@@ -72,6 +86,7 @@ impl<'a> Timeline<'a> {
 
                 placements.push(Placement {
                     source: source.media,
+                    message: message.clone(),
                     rows: start..line_types.len(),
                     picture,
                 });
@@ -83,21 +98,24 @@ impl<'a> Timeline<'a> {
             pictures,
             picker,
             placements,
+            bodies,
         }
     }
 
     // draws the list and its ready pictures, returning the picture sources
-    // that were drawn for the first time and need fetching
-    pub fn render(self, area: Rect, buf: &mut Buffer, state: &mut ListState) -> Vec<MediaSource> {
+    // that were drawn for the first time and need fetching, and where the
+    // message text landed
+    pub fn render(
+        self,
+        area: Rect,
+        buf: &mut Buffer,
+        state: &mut ListState,
+    ) -> (Vec<MediaSource>, TextMap<OwnedEventId>) {
         let list = List::new(self.items)
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .direction(ListDirection::BottomToTop);
 
         StatefulWidget::render(list, area, buf, state);
-
-        let Some(picker) = self.picker else {
-            return vec![];
-        };
 
         // every row is one line high, so list rows map straight to screen
         // rows, counting up from the bottom
@@ -106,9 +124,31 @@ impl<'a> Timeline<'a> {
 
         // the list only makes room for the marker when something's selected
         let x = if state.selected().is_some() {
-            HIGHLIGHT_SYMBOL.len() as i16
+            HIGHLIGHT_SYMBOL.len() as u16
         } else {
             0
+        };
+
+        let mut map = TextMap::new(area);
+
+        for row in visible.clone() {
+            if let Some(Some(body)) = self.bodies.get(row) {
+                let y = area.bottom() - 1 - (row - offset) as u16;
+                map.add_row(area.x + x, y, body);
+            }
+        }
+
+        // the rows of messages partly scrolled off draw text too
+        for (row, body) in self.bodies.iter().enumerate() {
+            if let Some(body) = body
+                && !visible.contains(&row)
+            {
+                map.add_drawn(body);
+            }
+        }
+
+        let Some(picker) = self.picker else {
+            return (vec![], map);
         };
 
         let mut fetches = vec![];
@@ -134,18 +174,27 @@ impl<'a> Timeline<'a> {
 
             // may be above the area, if the top has scrolled off
             let y = area.height as i64 - 1 - (top as i64 - offset as i64);
-            let position = SignedPosition::from((x, y as i16));
+            let position = SignedPosition::from((x as i16, y as i16));
 
             SlicedImage::new(protocol, position).render(area, buf);
+
+            // the part on screen, for clicking
+            let clamp = |row: i64| row.clamp(area.top().into(), area.bottom().into()) as u16;
+            let top = clamp(i64::from(area.y) + y);
+            let bottom = clamp(i64::from(area.y) + y + i64::from(size.height));
+            let cells = Rect::new(area.x + x, top, size.width, bottom - top).intersection(area);
+
+            map.add_picture(cells, placement.message);
         }
 
-        fetches
+        (fetches, map)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::selection::{self, tests::copied};
     use crate::widgets::chat::{OrderedEvent, make_message_list};
     use crate::widgets::message::tests::{
         image_event, join_event, reaction_event, reply_event, text_event, thread_event,
@@ -153,7 +202,8 @@ mod tests {
     use crate::widgets::receipts::Receipts;
     use image::DynamicImage;
     use matrix_sdk::ruma::events::AnyTimelineEvent;
-    use matrix_sdk::ruma::{OwnedMxcUri, owned_mxc_uri, owned_user_id};
+    use matrix_sdk::ruma::exports::serde_json::{self, json};
+    use matrix_sdk::ruma::{OwnedMxcUri, owned_event_id, owned_mxc_uri, owned_user_id};
     use ratatui_image::FontSize;
     use ratatui_image::picker::ProtocolType;
     use std::collections::BTreeSet;
@@ -169,6 +219,8 @@ mod tests {
         rows: Vec<String>,
         line_types: Vec<LineType>,
         fetches: Vec<OwnedMxcUri>,
+        buf: Buffer,
+        map: TextMap<OwnedEventId>,
     }
 
     // draws the timeline for some events with the given row selected
@@ -183,13 +235,23 @@ mod tests {
         let receipts = Receipts::new(owned_user_id!("@me:example.org"));
         let messages = make_message_list(&timeline, &vec![], &receipts, "", None);
 
+        draw_messages(&messages, selected, height, pictures, picker)
+    }
+
+    fn draw_messages(
+        messages: &[TimelineItem],
+        selected: usize,
+        height: u16,
+        pictures: &mut Pictures,
+        picker: Option<&Picker>,
+    ) -> Drawn {
         let area = Rect::new(0, 0, WIDTH, height);
         let mut buf = Buffer::empty(area);
         let mut line_types = vec![];
         let mut state = ListState::default().with_selected(Some(selected));
 
-        let fetches = Timeline::new(
-            &messages,
+        let (fetches, map) = Timeline::new(
+            messages,
             (WIDTH - 2).into(),
             &mut line_types,
             pictures,
@@ -214,6 +276,8 @@ mod tests {
             rows,
             line_types,
             fetches: fetches.iter().map(source_uri).cloned().collect(),
+            buf,
+            map,
         }
     }
 
@@ -601,6 +665,28 @@ mod tests {
     }
 
     #[test]
+    fn the_cells_a_picture_shows_in_open_its_message() {
+        let events = vec![dog(None), text_event("$text:example.org", 2000, "hello")];
+        let mut pictures = ready(400, 300);
+        let picker = kitty();
+        let dog_id = owned_event_id!("$image:example.org");
+
+        // with its top scrolled off, then its bottom
+        for selected in [0, 13] {
+            let drawn = draw_with(events.clone(), selected, 8, &mut pictures, Some(&picker));
+
+            for (y, row) in drawn.rows.iter().enumerate() {
+                for x in 0..WIDTH {
+                    let shown = row.chars().nth(x.into()) == Some('#');
+                    let picture = drawn.map.picture(x, y as u16);
+
+                    assert_eq!(picture, shown.then(|| dog_id.clone()), "at ({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_cursor_steps_through_picture_rows() {
         let mut pictures = ready(400, 300);
         let picker = kitty();
@@ -638,5 +724,290 @@ mod tests {
         let drawn = draw_with(events, 0, 3, &mut Pictures::default(), Some(&kitty()));
 
         assert!(drawn.fetches.is_empty());
+    }
+
+    fn at(drawn: &Drawn, text: &str) -> (u16, u16) {
+        selection::tests::at(&drawn.buf, text)
+    }
+
+    fn end(drawn: &Drawn, text: &str) -> (u16, u16) {
+        selection::tests::end(&drawn.buf, text)
+    }
+
+    // what a drag from the start of one text to the end of another copies
+    fn drag(drawn: &Drawn, from: &str, to: &str) -> String {
+        copied(&drawn.map, at(drawn, from), end(drawn, to)).unwrap()
+    }
+
+    fn draw_text(body: &str) -> Drawn {
+        let events = vec![text_event("$text:example.org", 1000, body)];
+        draw_with(events, 0, 20, &mut Pictures::default(), None)
+    }
+
+    fn hits(drawn: &Drawn, text: &str) -> bool {
+        let (x, y) = at(drawn, text);
+        drawn.map.hit(x, y).is_some()
+    }
+
+    #[test]
+    fn a_wrapped_paragraph_copies_without_the_wrap() {
+        let drawn =
+            draw_text("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima");
+
+        assert_ne!(at(&drawn, "echo").1, at(&drawn, "india").1);
+        assert_eq!(
+            drag(&drawn, "echo", "india"),
+            "echo foxtrot golf hotel india"
+        );
+    }
+
+    #[test]
+    fn a_selection_across_paragraphs_keeps_the_blank_line() {
+        let drawn = draw_text("first paragraph\n\nsecond paragraph");
+
+        assert_eq!(drag(&drawn, "paragraph", "second"), "paragraph\n\nsecond");
+    }
+
+    #[test]
+    fn lists_copy_their_source_without_their_bullets() {
+        let drawn = draw_text("- one\n- two\n- three");
+
+        assert_eq!(drag(&drawn, "one", "three"), "- one\n- two\n- three");
+        assert!(!hits(&drawn, "•"));
+    }
+
+    #[test]
+    fn quotes_copy_their_source_without_their_marks() {
+        let drawn = draw_text("> quoted\n> lines");
+
+        assert_eq!(drag(&drawn, "quoted", "lines"), "> quoted\n> lines");
+        assert!(!hits(&drawn, "▐"));
+    }
+
+    #[test]
+    fn inline_code_copies_its_source() {
+        let drawn = draw_text("run `ls -l` now");
+
+        assert_eq!(drag(&drawn, "run", "now"), "run `ls -l` now");
+        assert_eq!(drag(&drawn, "ls", "-l"), "`ls -l`");
+    }
+
+    #[test]
+    fn code_blocks_copy_their_source() {
+        let drawn = draw_text("```\nlet x = 1;\nlet y = 2;\n```");
+
+        assert_eq!(drag(&drawn, "x = 1", "2;"), "x = 1;\nlet y = 2;");
+    }
+
+    #[test]
+    fn tables_copy_their_source_without_their_borders() {
+        let drawn = draw_text("| apple | berry |\n|---|---|\n| cherry | damson |");
+
+        assert_eq!(
+            drag(&drawn, "apple", "damson"),
+            "| apple | berry |\n|---|---|\n| cherry | damson |"
+        );
+        assert!(!hits(&drawn, "│"));
+    }
+
+    // a message that came out wrong before copies took hidden markdown
+    const FORECAST: &str = "Good morning, everyone—happy Saturday! ☕️\n\n\
+        It’s **51.6°F** now, with a high of **56°F**; expect cloudy skies and \
+        light rain, with rain most likely around 9:45–10:30am and up to a 95% \
+        chance today.\n\n\
+        * At 7am Chase has PAC.\n\
+        * ☀️ At 7:08am the sun rises.\n\
+        * At 8:15am Gwen has Irvington Doubles.";
+
+    #[test]
+    fn a_copy_takes_the_hidden_markdown_around_it() {
+        let drawn = draw_with(
+            vec![text_event("$text:example.org", 1000, FORECAST)],
+            0,
+            30,
+            &mut Pictures::default(),
+            None,
+        );
+
+        // a list item's bullet, whether or not the drag leaves the item
+        assert_eq!(drag(&drawn, "At 7am", "PAC."), "* At 7am Chase has PAC.");
+        assert_eq!(
+            drag(&drawn, "At 7am", "rises."),
+            "* At 7am Chase has PAC.\n* ☀️ At 7:08am the sun rises."
+        );
+
+        // both ends of bold text
+        let (x, y) = at(&drawn, "51.6°F");
+        assert_eq!(
+            copied(&drawn.map, (x, y), (x + 5, y)).unwrap(),
+            "**51.6°F**"
+        );
+
+        let (to, y) = at(&drawn, "56°F");
+        assert_eq!(
+            copied(&drawn.map, (x, y), (to + 3, y)).unwrap(),
+            "**51.6°F** now, with a high of **56°F**"
+        );
+
+        // nothing hidden, nothing added
+        assert_eq!(
+            drag(&drawn, "now,", "skies"),
+            "now, with a high of **56°F**; expect cloudy skies"
+        );
+    }
+
+    #[test]
+    fn a_copy_doesnt_take_text_scrolled_off_screen() {
+        let long = "one two three four five six seven eight nine ten eleven twelve \
+                    thirteen fourteen fifteen sixteen seventeen eighteen nineteen";
+        let events = vec![
+            text_event("$long:example.org", 1000, long),
+            text_event("$newer:example.org", 2000, "newer"),
+        ];
+
+        // the newer message's three rows, then the long one's last two
+        let drawn = draw_with(events, 0, 5, &mut Pictures::default(), None);
+        let top = drawn.rows[0].trim();
+        let first = top.split(' ').next().unwrap();
+        let last = top.split(' ').next_back().unwrap();
+
+        assert!(!drawn.rows.iter().any(|row| row.contains("one two")));
+        assert_eq!(drag(&drawn, first, last), top);
+    }
+
+    #[test]
+    fn a_copy_doesnt_take_lines_cut_off_by_the_line_limit() {
+        // one source line, wrapped past message_line_limit's 20 rows. A
+        // notice takes the plain path, which trims the space at each wrap,
+        // so nothing drawn stops the copy short of the cut-off rows.
+        let long = (1..=200)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let events = vec![notice_event("$notice:example.org", 1000, &long)];
+        let drawn = draw_with(events, 0, 20, &mut Pictures::default(), None);
+        let overflow = drawn
+            .rows
+            .iter()
+            .position(|r| r.contains("overflow"))
+            .unwrap();
+        let last = drawn.rows[overflow - 1].trim().trim_start_matches("> ");
+        let first = last.split(' ').next().unwrap();
+        let end_word = last.split(' ').next_back().unwrap();
+
+        // with the trimmed spaces on either side, but nothing more
+        assert_eq!(drag(&drawn, first, end_word), format!(" {last} "));
+    }
+
+    #[test]
+    fn a_replys_gutter_cant_be_selected_and_its_text_copies_from_it() {
+        let drawn = draw_with(
+            vec![
+                text_event("$text:example.org", 1000, "hello"),
+                reply_event(
+                    "$reply:example.org",
+                    2000,
+                    "$text:example.org",
+                    "> <@alice:example.org> hello\n\nhi back",
+                ),
+            ],
+            0,
+            HEIGHT,
+            &mut Pictures::default(),
+            None,
+        );
+
+        assert!(!hits(&drawn, "│ hi"));
+        assert_eq!(drag(&drawn, "hi", "back"), "hi back");
+
+        // dragged up into the message it replies to, it stops at its start
+        assert_eq!(
+            copied(&drawn.map, end(&drawn, "back"), at(&drawn, "hello")).unwrap(),
+            "hi back"
+        );
+    }
+
+    fn notice_event(id: &str, ts: u64, body: &str) -> AnyTimelineEvent {
+        serde_json::from_value(json!({
+            "type": "m.room.message",
+            "event_id": id,
+            "sender": "@alice:example.org",
+            "origin_server_ts": ts,
+            "room_id": "!room:example.org",
+            "content": { "msgtype": "m.notice", "body": body }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_plain_path_maps_the_same_way() {
+        let notice = notice_event("$notice:example.org", 1000, "a notice here");
+        let text = text_event("$text:example.org", 2000, "hello world");
+
+        let drawn = draw_with(
+            vec![notice.clone()],
+            0,
+            HEIGHT,
+            &mut Pictures::default(),
+            None,
+        );
+        assert_eq!(drag(&drawn, "notice", "here"), "notice here");
+
+        // during a search, which splits the line around its matches
+        let timeline: BTreeSet<OrderedEvent> =
+            [notice, text].into_iter().map(OrderedEvent::new).collect();
+        let receipts = Receipts::new(owned_user_id!("@me:example.org"));
+        let messages = make_message_list(&timeline, &vec![], &receipts, "wor", None);
+        let drawn = draw_messages(&messages, 0, HEIGHT, &mut Pictures::default(), None);
+
+        assert_eq!(drag(&drawn, "hello", "world"), "hello world");
+    }
+
+    #[test]
+    fn a_pictures_caption_maps_into_its_text() {
+        let drawn = draw_with(
+            vec![dog(Some("Look at this dog"))],
+            0,
+            20,
+            &mut ready(400, 50),
+            Some(&kitty()),
+        );
+
+        assert_eq!(drag(&drawn, "this", "dog"), "this dog");
+    }
+
+    #[test]
+    fn an_emoji_maps_both_its_cells_and_the_text_after_lines_up() {
+        let drawn = draw_text("a 😀 b");
+        let (x, y) = at(&drawn, "😀");
+
+        assert_eq!(x, 4);
+        assert_eq!(drawn.map.hit(x, y), drawn.map.hit(x + 1, y));
+        assert_eq!(
+            copied(&drawn.map, (x + 1, y), at(&drawn, "b")).unwrap(),
+            "😀 b"
+        );
+        assert_eq!(drag(&drawn, "b", "b"), "b");
+    }
+
+    #[test]
+    fn a_scrolled_list_maps_rows_to_their_messages() {
+        let events: Vec<_> = (1..=5)
+            .map(|i| {
+                text_event(
+                    &format!("${i}:example.org"),
+                    i * 1000,
+                    &format!("message {i}"),
+                )
+            })
+            .collect();
+
+        // scrolled up to the oldest, as in selecting_an_older_row_scrolls_it_into_view
+        let drawn = draw_with(events, 13, HEIGHT, &mut Pictures::default(), None);
+
+        for text in ["message 1", "message 2", "message 3"] {
+            assert_eq!(drag(&drawn, text, text), text);
+        }
     }
 }

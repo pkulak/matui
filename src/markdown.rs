@@ -85,7 +85,9 @@ fn styled_char_to_span(sc: &termimad::StyledChar) -> Span<'static> {
     Span::styled(sc.nude_char().to_string(), style)
 }
 
-fn fmt_composite_to_spans(fc: &FmtComposite, skin: &MadSkin) -> Vec<Span<'static>> {
+// the text's spans borrow the body, so selection can find where they came
+// from; what termimad adds, such as bullets, doesn't
+fn fmt_composite_to_spans<'s>(fc: &FmtComposite<'s>, skin: &MadSkin) -> Vec<Span<'s>> {
     let mut spans = Vec::new();
     let ls = skin.line_style(fc.kind);
 
@@ -122,7 +124,7 @@ fn fmt_composite_to_spans(fc: &FmtComposite, skin: &MadSkin) -> Vec<Span<'static
     for compound in &fc.compounds {
         let cs = skin.compound_style(ls, compound);
         let style = compound_style_to_ratatui(&cs);
-        spans.push(Span::styled(compound.as_str().to_string(), style));
+        spans.push(Span::styled(compound.as_str(), style));
     }
 
     if rpi > 0 {
@@ -132,7 +134,7 @@ fn fmt_composite_to_spans(fc: &FmtComposite, skin: &MadSkin) -> Vec<Span<'static
     spans
 }
 
-fn table_row_to_spans(row: &FmtTableRow, skin: &MadSkin) -> Vec<Span<'static>> {
+fn table_row_to_spans<'s>(row: &FmtTableRow<'s>, skin: &MadSkin) -> Vec<Span<'s>> {
     let mut spans = Vec::new();
     let border_style = compound_style_to_ratatui(&skin.table.compound_style);
     let v_char = skin.table_border_chars.vertical;
@@ -187,7 +189,7 @@ fn table_rule_to_spans(rule: &FmtTableRule, skin: &MadSkin) -> Vec<Span<'static>
     vec![Span::styled(line, border_style)]
 }
 
-pub fn md_body_to_spans(body: &str, width: usize) -> Vec<Vec<Span<'static>>> {
+pub fn md_body_to_spans(body: &str, width: usize) -> Vec<Vec<Span<'_>>> {
     let skin = get_skin();
     let text = skin.text(body, Some(width));
     let render_width = text.width.unwrap_or(width);

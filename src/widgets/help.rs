@@ -114,6 +114,7 @@ fn key_rows() -> Vec<Row<'static>> {
             "s",
             "Save the selected message (images, videos and audio).",
         ]),
+        Row::new(vec!["y", "Copy the selected message's text."]),
         Row::new(vec![
             "c",
             "Edit the selected message in the external editor.",

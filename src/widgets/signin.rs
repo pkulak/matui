@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -42,6 +42,11 @@ impl Signin {
 
     pub fn widget(&self) -> SigninWidget<'_> {
         SigninWidget { signin: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.username.mouse_event(event);
+        self.password.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {
