@@ -29,8 +29,10 @@ use matrix_sdk::ruma::events::room::message::MessageType::{
     self, Audio, Emote, Image, Notice, Text, Video,
 };
 use matrix_sdk::ruma::events::room::message::{
-    MessageFormat, NoticeMessageEventContent, Relation, TextMessageEventContent,
+    ImageMessageEventContent, MessageFormat, NoticeMessageEventContent, Relation,
+    TextMessageEventContent,
 };
+use matrix_sdk::ruma::events::sticker::StickerEventContent;
 use matrix_sdk::ruma::events::{
     AnySyncMessageLikeEvent, AnySyncTimelineEvent, MessageLikeEvent, SyncMessageLikeEvent,
 };
@@ -101,6 +103,14 @@ fn encrypted_relation(item: &EventTimelineItem) -> Option<EncryptedRelation> {
     };
 
     event.content.relates_to
+}
+
+/// A sticker, as the image it is.
+fn sticker_image(sticker: &StickerEventContent) -> MessageType {
+    let image = ImageMessageEventContent::new(sticker.body.clone(), sticker.source.clone().into())
+        .info(Some(Box::new(sticker.info.clone())));
+
+    Image(image)
 }
 
 /// A message or edit of ours the server doesn't have yet.
@@ -178,6 +188,7 @@ impl Message {
                 | File(_)) => (body.clone(), m.is_edited()),
                 _ => return None,
             },
+            MsgLikeKind::Sticker(s) => (sticker_image(s.content()), false),
             MsgLikeKind::UnableToDecrypt(_) => {
                 // only messages get a placeholder; a thread's stays out of
                 // the room

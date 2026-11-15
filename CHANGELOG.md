@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Show stickers in the chat, as pictures. They used to be left out.
+- Show pictures that come with no thumbnail and no file size when they're no bigger than 800×600, as stickers often are.
 - Update the room switcher as new messages arrive, including the ones sync catches up on at startup. The cursor stays on the room it's on, unless it's at the top.
 - Show `/me` emotes, in italics. They used to be left out of the chat.
 - Draw a "new messages" line above the messages that arrived since you last read the room. It stays put until you send a message or leave the room.

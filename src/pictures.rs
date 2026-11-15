@@ -1,3 +1,4 @@
+use crate::media::{THUMBNAIL_HEIGHT, THUMBNAIL_WIDTH};
 use crate::settings::images;
 use image::{DynamicImage, ImageFormat, imageops};
 use log::{info, warn};
@@ -74,9 +75,19 @@ pub fn picture_source(body: &MessageType) -> Option<PictureSource> {
                 return Some(thumbnail_source(thumbnail, info.thumbnail_info.as_deref()));
             }
 
-            (u64::from(info.size?) <= MAX_ORIGINAL_SIZE).then(|| PictureSource {
+            let dimensions = dimensions(info.width, info.height);
+
+            let small = match info.size {
+                Some(size) => u64::from(size) <= MAX_ORIGINAL_SIZE,
+                // no bigger than a thumbnail, as stickers often are
+                None => {
+                    dimensions.is_some_and(|(w, h)| w <= THUMBNAIL_WIDTH && h <= THUMBNAIL_HEIGHT)
+                }
+            };
+
+            small.then(|| PictureSource {
                 media: content.source.clone(),
-                dimensions: dimensions(info.width, info.height),
+                dimensions,
                 video: false,
             })
         }
@@ -348,6 +359,10 @@ mod tests {
 
         let body = image(json!({ "size": 2_097_152 }));
         assert_eq!(uri(picture_source(&body)), original);
+
+        // or, without a size, no bigger than a thumbnail
+        let body = image(json!({ "w": 800, "h": 600 }));
+        assert_eq!(uri(picture_source(&body)), original);
     }
 
     #[test]
@@ -356,6 +371,13 @@ mod tests {
         assert_eq!(uri(picture_source(&body)), None);
 
         let body = image(json!({}));
+        assert_eq!(uri(picture_source(&body)), None);
+
+        let body = image(json!({ "w": 801, "h": 600 }));
+        assert_eq!(uri(picture_source(&body)), None);
+
+        // a size over the limit counts, however small it looks
+        let body = image(json!({ "size": 2_097_153, "w": 100, "h": 100 }));
         assert_eq!(uri(picture_source(&body)), None);
 
         let body = content(json!({

@@ -704,6 +704,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stickers_show_as_pictures() {
+        let sticker = json!({
+            "type": "m.sticker",
+            "event_id": "$sticker:example.org",
+            "sender": "@alice:example.org",
+            "origin_server_ts": 1000,
+            "content": {
+                "body": "Thumbs up",
+                "url": "mxc://example.org/image",
+                "info": { "size": 1000, "w": 400, "h": 100 }
+            }
+        });
+
+        let drawn = draw_with(
+            vec![sticker.clone()],
+            0,
+            10,
+            &mut Pictures::default(),
+            Some(&kitty()),
+        )
+        .await;
+
+        assert_eq!(drawn.fetches, [dog_uri()]);
+
+        let titled = draw_with(vec![sticker], 0, 10, &mut Pictures::default(), None).await;
+
+        assert_eq!(
+            bottom(&titled.rows, 2),
+            ["  @alice:example.org <time>", "> Image: Thumbs up (1000 B)"]
+        );
+    }
+
+    #[tokio::test]
     async fn without_a_picker_pictures_stay_titles() {
         let drawn = draw_with(vec![dog(None)], 0, 10, &mut ready(400, 50), None).await;
 
