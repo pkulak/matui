@@ -4,10 +4,7 @@
 
 <h1 align="center">Matui</h1>
 
-A very opinionated [Matrix](https://matrix.org/) TUI. The UI is kept as simple
-as possible, and the mouse is just for moving the cursor, copying text and
-opening links and pictures. With the assumption that usually only the last
-couple messages actually matter, vertical space is not conserved at all.
+A very opinionated [Matrix](https://matrix.org/) TUI.
 
 ![Matui](https://github.com/pkulak/matui/blob/main/screenshot.png?raw=true "The main chat window.")
 
@@ -26,8 +23,7 @@ difficult to merge.
 Anyone who wants a very simple terminal Matrix client. Room administration
 beyond moderation (settings, power levels) is left to other clients.
 
-Your homeserver must support Simplified Sliding Sync (MSC4186), as Synapse and
-matrix.org do. Matui shows an error and won't sync on servers that don't.
+Your homeserver must support Simplified Sliding Sync (MSC4186).
 
 # Installation
 
