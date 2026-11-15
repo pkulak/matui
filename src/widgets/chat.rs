@@ -3,7 +3,7 @@ use crate::event::{Event, EventHandler};
 use crate::handler::Batch;
 use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
-use crate::pictures::{Pictures, picker};
+use crate::pictures::{PictureSource, Pictures, picker};
 use crate::selection::{self, Action, BodyRow, Selection, TextMap};
 use crate::settings::{is_muted, max_events, toggle_mute};
 use crate::spawn::{get_file_paths, spawn_editor};
@@ -26,7 +26,6 @@ use log::info;
 use matrix_sdk::RoomMemberships;
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::receipt::ReceiptEventContent;
-use matrix_sdk::ruma::events::room::MediaSource;
 use matrix_sdk::ruma::events::room::member::{MembershipChange, RoomMemberEvent};
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
 use matrix_sdk::ruma::events::room::message::ReplyWithinThread;
@@ -723,7 +722,7 @@ impl Chat {
         self.adjust_range(false);
     }
 
-    fn fetch_pictures(&self, sources: Vec<MediaSource>) {
+    fn fetch_pictures(&self, sources: Vec<PictureSource>) {
         for source in sources {
             self.matrix
                 .fetch_picture(self.room.room_id().to_owned(), source);
