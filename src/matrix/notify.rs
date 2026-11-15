@@ -18,7 +18,7 @@ use std::{
 use image::imageops::FilterType;
 
 use super::Matrix;
-use crate::settings::{all_muted, is_muted, is_thread_muted, mentions_override_mute};
+use crate::settings::is_thread_muted;
 use crate::widgets::message::Message;
 use matrix_sdk::{
     media::MediaFormat,
@@ -43,10 +43,12 @@ impl Default for Notify {
 }
 
 impl Notify {
+    /// `pushed` is whether the account's push rules notify for the event.
     pub async fn timeline_event(
         &self,
         matrix: &Matrix,
         event: AnyTimelineEvent,
+        pushed: bool,
         sync_started: MilliSecondsSinceUnixEpoch,
     ) -> anyhow::Result<()> {
         let client = matrix.client();
@@ -56,19 +58,16 @@ impl Notify {
             let newer_than = self.raise_mark(&event, sync_started);
             let thread = thread_root(&event);
 
-            // a thread mutes on its own, ignoring its room's mute, unless
-            // every room is muted and this one wasn't unmuted
-            let muted = match thread {
-                Some(root) => is_thread_muted(root) || all_muted() && is_muted(event.room_id()),
-                None => is_muted(event.room_id()),
-            };
+            // the push rules decide, mentions included, and a thread can be
+            // muted on top of its room, except for mentions
+            let muted = !pushed
+                || thread.is_some_and(|root| is_thread_muted(root) && !mentions_user(&event, me));
 
             if !should_notify(
                 &event,
                 me,
                 newer_than,
                 muted,
-                mentions_override_mute(),
                 matrix.sees(event.room_id(), thread),
             ) {
                 return Ok(());
@@ -331,7 +330,6 @@ fn should_notify(
     me: &UserId,
     newer_than: MilliSecondsSinceUnixEpoch,
     muted: bool,
-    mentions_override_mute: bool,
     seen: bool,
 ) -> bool {
     // only messages we haven't seen; the room list and room subscriptions
@@ -345,8 +343,8 @@ fn should_notify(
         return false;
     }
 
-    // not muted rooms or threads, unless the message mentions us
-    if muted && !(mentions_override_mute && mentions_user(event, me)) {
+    // not muted rooms or threads
+    if muted {
         return false;
     }
 
@@ -454,13 +452,13 @@ mod tests {
         let me = user_id!("@alice:example.org");
 
         let event = event_from("@bob:example.org", 999, None);
-        assert!(!should_notify(&event, me, started(), false, true, false));
+        assert!(!should_notify(&event, me, started(), false, false));
 
         let event = event_from("@bob:example.org", 1_000, None);
-        assert!(!should_notify(&event, me, started(), false, true, false));
+        assert!(!should_notify(&event, me, started(), false, false));
 
         let event = event_from("@bob:example.org", 1_001, None);
-        assert!(should_notify(&event, me, started(), false, true, false));
+        assert!(should_notify(&event, me, started(), false, false));
     }
 
     #[test]
@@ -503,24 +501,15 @@ mod tests {
         let me = user_id!("@alice:example.org");
         let event = event_from("@alice:example.org", 2_000, None);
 
-        assert!(!should_notify(&event, me, started(), false, true, false));
+        assert!(!should_notify(&event, me, started(), false, false));
     }
 
     #[test]
-    fn it_skips_muted_rooms_unless_mentioned() {
+    fn it_skips_muted_rooms_and_threads() {
         let me = user_id!("@alice:example.org");
-        let plain = event_from("@bob:example.org", 2_000, None);
-        let mention = event_from(
-            "@bob:example.org",
-            2_000,
-            Some(json!({ "user_ids": ["@alice:example.org"] })),
-        );
+        let event = event_from("@bob:example.org", 2_000, None);
 
-        assert!(!should_notify(&plain, me, started(), true, true, false));
-        assert!(should_notify(&mention, me, started(), true, true, false));
-
-        // the override is off
-        assert!(!should_notify(&mention, me, started(), true, false, false));
+        assert!(!should_notify(&event, me, started(), true, false));
     }
 
     #[test]
@@ -528,8 +517,8 @@ mod tests {
         let me = user_id!("@alice:example.org");
         let event = event_from("@bob:example.org", 2_000, None);
 
-        assert!(!should_notify(&event, me, started(), false, true, true));
-        assert!(should_notify(&event, me, started(), false, true, false));
+        assert!(!should_notify(&event, me, started(), false, true));
+        assert!(should_notify(&event, me, started(), false, false));
     }
 
     #[test]

@@ -67,8 +67,9 @@ pub enum MatuiEvent {
     ThreadSelected(Room, OwnedEventId),
     Search(String),
     SyncComplete,
-    /// An event from sync, for notifications.
-    Timeline(AnyTimelineEvent),
+    /// An event from sync, for notifications, and whether the account's push
+    /// rules notify for it.
+    Timeline(AnyTimelineEvent, bool),
     /// All the items of a room's timeline, after a change.
     TimelineItems(Arc<Timeline>, Vector<Arc<TimelineItem>>),
     Typing(Room, Vec<OwnedUserId>),
@@ -263,7 +264,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 app.open_popup(Popup::Rooms(rooms));
             }
         }
-        MatuiEvent::Timeline(event) => app.matrix.timeline_event(event),
+        MatuiEvent::Timeline(event, pushed) => app.matrix.timeline_event(event, pushed),
         MatuiEvent::TimelineItems(timeline, items) => {
             for c in app.chats_mut() {
                 c.items_event(&timeline, &items);

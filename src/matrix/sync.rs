@@ -12,6 +12,7 @@ use matrix_sdk::ruma::events::room::member::{MembershipState, StrippedRoomMember
 use matrix_sdk::ruma::events::{
     AnySyncEphemeralRoomEvent, AnySyncTimelineEvent, SyncEphemeralRoomEvent,
 };
+use matrix_sdk::ruma::push::Action;
 use matrix_sdk_ui::room_list_service::State as RoomListState;
 use matrix_sdk_ui::sync_service::{State as SyncState, SyncService};
 
@@ -224,11 +225,14 @@ impl Matrix {
 
 fn add_default_handlers(matrix: &Matrix, client: &Client) {
     let handler = matrix.clone();
-    client.add_event_handler(move |event: AnySyncTimelineEvent, room: Room| async move {
-        handler.send(MatuiEvent::Timeline(
-            event.into_full_event(room.room_id().into()),
-        ));
-    });
+    client.add_event_handler(
+        move |event: AnySyncTimelineEvent, room: Room, actions: Vec<Action>| async move {
+            handler.send(MatuiEvent::Timeline(
+                event.into_full_event(room.room_id().into()),
+                actions.iter().any(Action::should_notify),
+            ));
+        },
+    );
 
     let handler = matrix.clone();
     client.add_event_handler(move |ev: StrippedRoomMemberEvent, room: Room| async move {

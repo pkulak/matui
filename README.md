@@ -125,11 +125,12 @@ then typing the command name (without the colon) into the prompt.
 | :kick   | Kick a user from the current room, with an optional reason. |
 | :ignore | Hide a user's messages, everywhere, from now on.       |
 | :unignore | Stop ignoring a user.                                |
+| :mute   | Mute the current room, in every client, or the current thread until restart. |
+| :unmute | Unmute the current room or thread.                     |
 | v      | View the selected message in the external editor.      |
 | V      | View the current room, with its full member list, in the external editor. |
 | u      | Upload a file with an optional caption.                |
 | U      | Open the command prompt with the selected message's sender. |
-| m      | Mute or unmute the current room or thread (until restart). |
 | /      | Search the current room.                               |
 | ?      | Show this helper.                                      |
 
@@ -213,13 +214,6 @@ When another session asks to verify this one, matui asks before accepting.
 ```
 # All the reactions that will show up in the picker.
 reactions = [ "❤️", "👍", "👎", "😂", "‼️", "❓️"]
-
-# Muted rooms. Use "*" to mute every room.
-muted = ["!hMPITSQBLFEleSJeVe:matrix.org"]
-
-# Should messages that mention you notify, even in muted rooms? With
-# muted = ["*"], this means you are only notified for mentions.
-mentions_override_mute = true
 
 # Useful if your custom config is interfering with Enter key bindings
 clear_vim = false

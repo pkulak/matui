@@ -8,6 +8,7 @@ use matrix_sdk::ruma::{IdParseError, OwnedUserId, RoomOrAliasId, UserId};
 
 use crate::app::{App, Popup};
 use crate::matrix::Moderation;
+use crate::settings::set_thread_muted;
 use crate::widgets::EventResult::{Consumed, Ignored};
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
@@ -90,6 +91,20 @@ impl Command {
                         }
                         app.close_popup();
                     })),
+                    (action @ ("mute" | "unmute"), _) => {
+                        let mute = action == "mute";
+
+                        Consumed(Box::new(move |app| {
+                            if let Some(chat) = app.focused() {
+                                match chat.thread_root() {
+                                    Some(root) => set_thread_muted(root, mute),
+                                    None => app.matrix.mute_room(chat.room(), mute),
+                                }
+                            }
+
+                            app.close_popup();
+                        }))
+                    }
                     ("create", _) => Consumed(Box::new(|app| {
                         app.replace_popup(Popup::Create(Create::default()))
                     })),

@@ -138,10 +138,6 @@ fn key_rows() -> Vec<Row<'static>> {
             "View the room and its members in the external editor.",
         ]),
         Row::new(vec!["u", "Upload a file with an optional caption."]),
-        Row::new(vec![
-            "m",
-            "Mute or unmute the current room or thread (until restart).",
-        ]),
         Row::new(vec!["/", "Search the current room"]),
         Row::new(vec![":", "Open the command prompt."]),
         Row::new(vec!["?", "Show this help; press again for commands."]),
@@ -185,6 +181,11 @@ fn command_rows() -> Vec<Row<'static>> {
             "Hide a user's messages, everywhere, from now on.",
         ]),
         Row::new(vec![":unignore", "Stop ignoring a user."]),
+        Row::new(vec![
+            ":mute",
+            "Mute the room everywhere, or a thread until restart.",
+        ]),
+        Row::new(vec![":unmute", "Unmute the current room or thread."]),
         Row::new(vec![":q", "Quit Matui."]),
         Row::new(vec![":logout", "Log out, remove this session, and quit."]),
         Row::new(vec!["?", "Back to key bindings."]),

@@ -4,7 +4,7 @@ use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::pictures::{PictureSource, Pictures, picker};
 use crate::selection::{self, Action, BodyRow, Selection, TextMap};
-use crate::settings::{is_muted, is_thread_muted, max_events, toggle_mute, toggle_thread_mute};
+use crate::settings::{is_thread_muted, max_events};
 use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::command::Command;
@@ -23,6 +23,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use image::DynamicImage;
 use log::info;
 use matrix_sdk::RoomMemberships;
+use matrix_sdk::notification_settings::RoomNotificationMode::{MentionsAndKeywordsOnly, Mute};
 use matrix_sdk::room::{Room, RoomMember};
 use matrix_sdk::ruma::events::StateEventContentChange;
 use matrix_sdk::ruma::events::room::message::MessageType::Text;
@@ -312,13 +313,6 @@ impl Chat {
                 if let Some(text) = self.copy_text() {
                     selection::copy(text)?;
                     self.copied = Some(Instant::now());
-                }
-                Ok(consumed!())
-            }
-            KeyCode::Char('m') => {
-                match &self.thread_root {
-                    Some(root) => toggle_thread_mute(root),
-                    None => toggle_mute(self.room().room_id()),
                 }
                 Ok(consumed!())
             }
@@ -856,7 +850,11 @@ impl Chat {
     fn muted(&self) -> bool {
         match &self.thread_root {
             Some(root) => is_thread_muted(root),
-            None => is_muted(self.room.room_id()),
+            // the room's own setting, which sync keeps up to date
+            None => matches!(
+                self.room.inner.cached_user_defined_notification_mode(),
+                Some(Mute | MentionsAndKeywordsOnly)
+            ),
         }
     }
 

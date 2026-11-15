@@ -1,8 +1,8 @@
 use config::Config;
 use log::{info, warn};
-use matrix_sdk::ruma::{EventId, RoomId};
+use matrix_sdk::ruma::{EventId, OwnedEventId};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::sync::{LazyLock, Mutex, RwLock, RwLockReadGuard};
@@ -13,8 +13,8 @@ const DEFAULT_CONFIG: &str = "reactions = [ \"❤️\", \"👍\", \"👎\", \"�
 
 static SETTINGS: LazyLock<RwLock<Config>> = LazyLock::new(|| RwLock::new(build_settings()));
 
-static OVERRIDES: LazyLock<Mutex<HashMap<String, HashSet<String>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static MUTED_THREADS: LazyLock<Mutex<HashSet<OwnedEventId>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn get_path() -> PathBuf {
     let mut path = dirs::config_dir().expect("no config directory");
@@ -47,77 +47,19 @@ pub fn get_settings() -> RwLockReadGuard<'static, Config> {
     SETTINGS.read().unwrap()
 }
 
-fn with_override_set<F, R>(key: &str, f: F) -> R
-where
-    F: FnOnce(&mut std::collections::HashSet<String>) -> R,
-{
-    let mut overrides = OVERRIDES.lock().unwrap();
-    let set = overrides.entry(key.to_string()).or_default();
-    f(set)
-}
-
-fn overridden(key: &str, value: &str) -> bool {
-    with_override_set(key, |set| set.contains(value))
-}
-
-pub fn is_muted(room: &RoomId) -> bool {
-    if overridden("muted", room.as_ref()) {
-        return true;
-    }
-
-    if overridden("unmuted", room.as_ref()) {
-        return false;
-    }
-
-    let muted: Vec<String> = get_settings().get("muted").unwrap_or_default();
-    muted.iter().any(|m| m == "*" || m == room.as_str())
-}
-
-/// Whether every room is muted, with `muted = ["*"]`.
-pub fn all_muted() -> bool {
-    let muted: Vec<String> = get_settings().get("muted").unwrap_or_default();
-    muted.iter().any(|m| m == "*")
-}
-
-pub fn toggle_mute(room: &RoomId) {
-    if is_muted(room) {
-        unmute(room);
-    } else {
-        mute(room);
-    }
-}
-
-fn mute(room: &RoomId) {
-    with_override_set("muted", |set| {
-        set.insert(room.to_string());
-    });
-
-    with_override_set("unmuted", |set| {
-        set.remove(&room.to_string());
-    });
-}
-
-fn unmute(room: &RoomId) {
-    with_override_set("unmuted", |set| {
-        set.insert(room.to_string());
-    });
-
-    with_override_set("muted", |set| {
-        set.remove(&room.to_string());
-    });
-}
-
-/// Threads are only muted by toggling them, until restart.
+/// Threads are only muted with `:mute`, until restart.
 pub fn is_thread_muted(root: &EventId) -> bool {
-    overridden("muted_threads", root.as_str())
+    MUTED_THREADS.lock().unwrap().contains(root)
 }
 
-pub fn toggle_thread_mute(root: &EventId) {
-    with_override_set("muted_threads", |set| {
-        if !set.remove(root.as_str()) {
-            set.insert(root.to_string());
-        }
-    });
+pub fn set_thread_muted(root: &EventId, muted: bool) {
+    let mut threads = MUTED_THREADS.lock().unwrap();
+
+    if muted {
+        threads.insert(root.to_owned());
+    } else {
+        threads.remove(root);
+    }
 }
 
 pub fn clean_vim() -> bool {
@@ -142,10 +84,6 @@ pub fn respect_notification_close_reason() -> bool {
     get_settings()
         .get("respect_notification_close_reason")
         .unwrap_or_default()
-}
-
-pub fn mentions_override_mute() -> bool {
-    get_settings().get("mentions_override_mute").unwrap_or(true)
 }
 
 pub fn images() -> bool {

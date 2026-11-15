@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 
 use log::error;
 use matrix_sdk::Client;
+use matrix_sdk::notification_settings::NotificationSettings;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::AnyTimelineEvent;
 use matrix_sdk::ruma::{
@@ -88,6 +89,7 @@ pub struct Matrix {
     subscription_lock: Arc<tokio::sync::Mutex<()>>,
     room_cache: Arc<RoomCache>,
     notify: Arc<Notify>,
+    notification_settings: Arc<tokio::sync::OnceCell<NotificationSettings>>,
     attention: Arc<Mutex<Attention>>,
     sync_started: Arc<OnceCell<MilliSecondsSinceUnixEpoch>>,
     sender: Sender<Event>,
@@ -102,6 +104,7 @@ impl Matrix {
             subscription_lock: Arc::new(tokio::sync::Mutex::default()),
             room_cache: Arc::new(RoomCache::default()),
             notify: Arc::new(Notify::default()),
+            notification_settings: Arc::new(tokio::sync::OnceCell::new()),
             attention: Arc::new(Mutex::new(Attention {
                 focused: true,
                 room: None,
@@ -169,6 +172,14 @@ impl Matrix {
             .to_owned()
     }
 
+    /// The account's notification settings. One copy, so our own changes show
+    /// before sync brings them back.
+    async fn notification_settings(&self) -> &NotificationSettings {
+        self.notification_settings
+            .get_or_init(|| async { self.client().notification_settings().await })
+            .await
+    }
+
     pub fn wrap_room(&self, room: &Room) -> Option<DecoratedRoom> {
         self.room_cache.wrap(room)
     }
@@ -197,7 +208,7 @@ impl Matrix {
         self.client().user_id().unwrap().to_owned()
     }
 
-    pub fn timeline_event(&self, event: AnyTimelineEvent) {
+    pub fn timeline_event(&self, event: AnyTimelineEvent, pushed: bool) {
         let matrix = self.clone();
 
         self.spawn(async move {
@@ -207,7 +218,7 @@ impl Matrix {
 
             if let Err(e) = matrix
                 .notify
-                .timeline_event(&matrix, event, sync_started)
+                .timeline_event(&matrix, event, pushed, sync_started)
                 .await
             {
                 error!("could not send notification: {}", e);
