@@ -29,6 +29,7 @@
         source = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
+            ./assets
             ./Cargo.lock
             ./Cargo.toml
             ./src
