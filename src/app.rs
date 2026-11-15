@@ -137,6 +137,15 @@ impl App {
         self.view.as_ref().map(|v| v.room.room())
     }
 
+    /// Show the latest rooms in the room switcher, if it's open.
+    pub fn refresh_rooms(&mut self) {
+        let current = self.current_room();
+
+        if let Some(Popup::Rooms(rooms)) = &mut self.popup {
+            rooms.refresh(self.matrix.clone(), current);
+        }
+    }
+
     /// The chat being looked at: the thread if one is open, or the room.
     pub fn focused(&self) -> Option<&Chat> {
         self.view
@@ -400,7 +409,7 @@ pub(crate) mod tests {
     use crossterm::event::{KeyCode, KeyModifiers};
     use matrix_sdk::Client;
     use matrix_sdk::ruma::exports::serde_json::json;
-    use matrix_sdk::ruma::{event_id, room_id};
+    use matrix_sdk::ruma::{RoomId, event_id, room_id};
     use matrix_sdk::test_utils::mocks::MatrixMockServer;
     use matrix_sdk_test::{InvitedRoomBuilder, JoinedRoomBuilder};
 
@@ -455,6 +464,49 @@ pub(crate) mod tests {
 
         app.close_popup();
         assert!(matches!(app.popup, Some(Popup::Rooms(_))));
+    }
+
+    /// The room under the room switcher's cursor.
+    fn selected(app: &App) -> &str {
+        let Some(Popup::Rooms(rooms)) = &app.popup else {
+            panic!("the room switcher isn't open");
+        };
+
+        rooms.room[rooms.list_state.get().selected().unwrap()]
+            .room_id()
+            .as_str()
+    }
+
+    #[tokio::test]
+    async fn the_switcher_updates_and_keeps_the_cursor_on_its_room() {
+        let (server, client, mut app, _room, _events) = app_with_room().await;
+        let matrix = app.matrix.clone();
+
+        let join = async |id: &str| {
+            let room = server
+                .sync_joined_room(&client, &RoomId::parse(id).unwrap())
+                .await;
+            matrix.add_room(room).await;
+        };
+
+        join("!other:localhost").await;
+        handle_app_event(MatuiEvent::SyncComplete, &mut app);
+
+        // the newest rooms come first
+        press(&mut app, &[KeyCode::Down]);
+        assert_eq!(selected(&app), "!room:localhost");
+
+        join("!new:localhost").await;
+        handle_app_event(MatuiEvent::RoomsChanged, &mut app);
+        assert_eq!(selected(&app), "!room:localhost");
+
+        // but at the top, it stays at the top
+        press(&mut app, &[KeyCode::Up, KeyCode::Up]);
+        assert_eq!(selected(&app), "!new:localhost");
+
+        join("!newer:localhost").await;
+        handle_app_event(MatuiEvent::RoomsChanged, &mut app);
+        assert_eq!(selected(&app), "!newer:localhost");
     }
 
     #[tokio::test]
@@ -613,6 +665,7 @@ pub(crate) mod tests {
             let result = match app.popup.as_mut() {
                 Some(Popup::Command(w)) => w.key_event(&key),
                 Some(Popup::Confirm(w)) => w.key_event(&key),
+                Some(Popup::Rooms(w)) => w.key_event(&key),
                 _ => panic!("no popup to press keys in"),
             };
 

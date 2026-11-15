@@ -39,6 +39,15 @@ impl Rooms {
 
     // reload the rooms; otherwise the list is a snapshot from when it opened
     pub fn refresh(&mut self, matrix: Matrix, current: Option<Room>) {
+        // the cursor stays on its room, unless it's at the top, where the
+        // newest activity shows
+        let selected = self
+            .list_state
+            .get()
+            .selected()
+            .filter(|&i| i > 0)
+            .and_then(|i| self.filtered_rooms().get(i).map(|r| r.inner()));
+
         let mut rooms = matrix.fetch_rooms();
         sort_rooms(&mut rooms);
 
@@ -52,7 +61,17 @@ impl Rooms {
         }
 
         self.room = rooms;
-        self.reset();
+
+        let at = selected.and_then(|room| {
+            self.filtered_rooms()
+                .iter()
+                .position(|r| r.room_id() == room.room_id())
+        });
+
+        match at {
+            Some(i) => self.list_state.get_mut().select(Some(i)),
+            None => self.reset(),
+        }
     }
 
     pub fn widget(&self) -> RoomsWidget<'_> {

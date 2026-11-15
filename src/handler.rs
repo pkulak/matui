@@ -63,6 +63,8 @@ pub enum MatuiEvent {
     Paginated(Arc<Timeline>, Result<bool, String>),
     RoomLeft(Room),
     RoomMember(Room, RoomMember),
+    /// The room list changed, such as when sync brings new messages.
+    RoomsChanged,
     RoomSelected(Room),
     ThreadSelected(Room, OwnedEventId),
     Search(String),
@@ -247,6 +249,7 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 ConfirmBehavior::JoinPublicRoom(target),
             )));
         }
+        MatuiEvent::RoomsChanged => app.refresh_rooms(),
         MatuiEvent::RoomSelected(room) => app.select_room(room),
         MatuiEvent::ThreadSelected(room, root) => app.select_thread(room, root),
         MatuiEvent::Search(search_term) => {
@@ -522,13 +525,6 @@ pub fn handle_focus_event(app: &mut App) {
     // the room counts as read under a thread, as well as the thread
     for chat in app.chats_mut() {
         chat.focus_event();
-    }
-
-    // the room chooser could have been open for a long time
-    let current = app.current_room();
-
-    if let Some(Popup::Rooms(rooms)) = &mut app.popup {
-        rooms.refresh(app.matrix.clone(), current);
     }
 }
 

@@ -113,8 +113,12 @@ impl Matrix {
 
         let (loaded, cache_loaded) = tokio::sync::oneshot::channel();
         let room_cache = self.room_cache.clone();
+        let matrix = self.clone();
 
-        self.spawn(async move { room_cache.follow(&all_rooms, loaded).await });
+        self.spawn(async move {
+            let changed = || matrix.send(MatuiEvent::RoomsChanged);
+            room_cache.follow(&all_rooms, loaded, changed).await
+        });
 
         if cache_loaded.await.is_err() {
             return false;

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Update the room switcher as new messages arrive, including the ones sync catches up on at startup. The cursor stays on the room it's on, unless it's at the top.
 - Show `/me` emotes, in italics. They used to be left out of the chat.
 - Draw a "new messages" line above the messages that arrived since you last read the room. It stays put until you send a message or leave the room.
 - Count mentions in encrypted rooms in the room switcher, where the server can't see them. A mention you missed while away still counts if it's among the room's last 20 messages.
@@ -18,7 +19,7 @@
 - Say so in the room's header when loading earlier messages fails, and try again when you scroll up, instead of showing "Loading..." for good until you switch rooms.
 - Don't mark a room as read when it's opened while the terminal is out of focus, such as by clicking a notification.
 - Don't notify for messages in the open room until the terminal reports losing focus. In a terminal that doesn't report focus, the open room never notifies.
-- Start in the room switcher instead of opening the most recent room, and refresh the switcher when the terminal regains focus. Until a room is open, the switcher comes back whenever nothing else is showing, such as after verifying, instead of leaving a blank screen.
+- Start in the room switcher instead of opening the most recent room. Until a room is open, the switcher comes back whenever nothing else is showing, such as after verifying, instead of leaving a blank screen.
 - Send a small JPEG thumbnail with every uploaded image and video, so other clients can show a preview.
 - Show encrypted messages in the open room as soon as their keys arrive, such as after verifying or recovering, instead of only after switching rooms or restarting.
 - Show "Unable to decrypt this message." in place of an encrypted message whose key hasn't arrived, instead of leaving it out, so a room opened while keys download from the backup no longer looks empty. The message replaces it when its key arrives.

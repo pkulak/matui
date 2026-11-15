@@ -30,8 +30,14 @@ struct Inner {
 
 impl RoomCache {
     /// Follow the joined rooms in the room list forever. `loaded` fires once
-    /// the cache holds every room the list had when this started.
-    pub async fn follow(&self, all_rooms: &RoomList, loaded: oneshot::Sender<()>) {
+    /// the cache holds every room the list had when this started, and
+    /// `changed` after every change since.
+    pub async fn follow(
+        &self,
+        all_rooms: &RoomList,
+        loaded: oneshot::Sender<()>,
+        changed: impl Fn(),
+    ) {
         // the whole list in one page, since the switcher shows it all
         let (entries, controller) = all_rooms.entries_with_dynamic_adapters(usize::MAX);
         controller.set_filter(Box::new(new_filter_joined()));
@@ -47,6 +53,7 @@ impl RoomCache {
 
         while let Some(diffs) = entries.next().await {
             self.apply(diffs).await;
+            changed();
         }
     }
 
@@ -245,6 +252,13 @@ mod tests {
 
     /// A cache that follows the room list of a client on a mock server.
     async fn follow() -> (MatrixMockServer, Client, Arc<RoomCache>) {
+        follow_with(|| {}).await
+    }
+
+    /// A cache that follows the room list, calling `changed` on changes.
+    async fn follow_with(
+        changed: impl Fn() + Send + 'static,
+    ) -> (MatrixMockServer, Client, Arc<RoomCache>) {
         let server = MatrixMockServer::new().await;
         server.mock_room_state_encryption().plain().mount().await;
 
@@ -258,7 +272,7 @@ mod tests {
 
         tokio::spawn(async move {
             let _service = service;
-            follower.follow(&all_rooms, loaded).await;
+            follower.follow(&all_rooms, loaded, changed).await;
         });
 
         cache_loaded.await.unwrap();
@@ -360,6 +374,28 @@ mod tests {
 
         let rooms = rooms_once(&cache, |rooms| rooms.len() == 1).await;
         assert_eq!(ids(&rooms), ["!b:localhost"]);
+    }
+
+    #[tokio::test]
+    async fn says_when_the_rooms_change() {
+        let (sender, mut changes) = tokio::sync::mpsc::unbounded_channel();
+        let (server, client, _cache) = follow_with(move || sender.send(()).unwrap()).await;
+
+        sync(
+            &server,
+            &client,
+            json!({
+                "!a:localhost": {
+                    "initial": true,
+                    "timeline": [message("$1", "@bob:localhost", 1000, "hello")],
+                },
+            }),
+        )
+        .await;
+
+        tokio::time::timeout(Duration::from_secs(5), changes.recv())
+            .await
+            .expect("the cache never said");
     }
 
     #[tokio::test]
