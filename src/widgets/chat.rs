@@ -19,7 +19,7 @@ use crate::widgets::upload::Upload;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use image::DynamicImage;
 use log::info;
 use matrix_sdk::RoomMemberships;
@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 use tokio::task::AbortHandle;
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders, ListItem, ListState, Paragraph, Widget};
@@ -553,9 +553,13 @@ impl Chat {
         }
     }
 
-    /// A press, drag or release of the left button, which can select and
-    /// copy message text.
-    pub fn mouse_event(&mut self, event: &MouseEvent) -> Option<Action> {
+    /// A press, drag or release of the left button. A press moves the cursor
+    /// to it, and the selection does the rest.
+    pub fn mouse_event(&mut self, event: &MouseEvent) -> Option<Action<TimelineEventItemId>> {
+        if event.kind == MouseEventKind::Down(MouseButton::Left) {
+            self.move_to(event.column, event.row);
+        }
+
         let action = self.selection.mouse_event(&self.text_map.borrow(), event);
 
         // the caller copies it, and the header says so, as for y
@@ -564,6 +568,29 @@ impl Chat {
         }
 
         action
+    }
+
+    /// Put the cursor on the list row at the pointer, or on the first row
+    /// above it that it can rest on. Above the oldest row, that's the oldest
+    /// row.
+    fn move_to(&mut self, x: u16, y: u16) {
+        let area = self.text_map.borrow().area;
+
+        if !area.contains(Position::new(x, y)) {
+            return;
+        }
+
+        let mut state = self.list_state.take();
+        state.select(Some(state.offset() + usize::from(area.bottom() - 1 - y)));
+        self.list_state.set(state);
+        self.next(0);
+    }
+
+    /// Open a message, as Enter does, without going into its thread.
+    pub fn open_message(&self, id: &TimelineEventItemId) {
+        if let Some(message) = self.iter_messages().find_map(|m| m.find_by_id(id)) {
+            message.open(self.matrix.clone());
+        }
     }
 
     fn half_page(&self) -> usize {
@@ -1947,6 +1974,64 @@ pub(crate) mod tests {
             .unwrap();
 
         assert!(!highlighted(&draw(&chat), "wide"));
+    }
+
+    #[tokio::test]
+    async fn a_press_moves_the_cursor_to_the_nearest_row_it_can_rest_on() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![
+                text_event("$older:example.org", 1000, "older"),
+                text_event("$newer:example.org", 2000, "newer"),
+            ],
+        )
+        .await;
+
+        until(&mut chat, &events, |c| {
+            message(c, "$newer:example.org").is_some()
+        })
+        .await;
+
+        fn selected(chat: &Chat) -> Option<&str> {
+            chat.selected_reply().map(event_id)
+        }
+
+        let buf = draw(&chat);
+        let area = chat.text_map.borrow().area;
+        assert_eq!(selected(&chat), Some("$newer:example.org"));
+
+        // on a message's text, or anywhere along its row
+        chat.mouse_event(&press(at(&buf, "older")));
+        assert_eq!(selected(&chat), Some("$older:example.org"));
+
+        chat.mouse_event(&press((area.right() - 1, at(&buf, "newer").1)));
+        assert_eq!(selected(&chat), Some("$newer:example.org"));
+
+        // above the oldest message, the oldest message
+        chat.mouse_event(&press((area.x, area.y)));
+        assert_eq!(selected(&chat), Some("$older:example.org"));
+
+        // on the spacer between them, the message above it, wherever the
+        // cursor was
+        let spacer = (0..chat.total_list_items())
+            .find(|&i| chat.invalid_selection(i))
+            .unwrap();
+        let spacer = (area.x, area.bottom() - 1 - spacer as u16);
+
+        for from in ["older", "newer"] {
+            chat.mouse_event(&press(at(&buf, from)));
+            chat.mouse_event(&press(spacer));
+            assert_eq!(selected(&chat), Some("$older:example.org"), "from {from}");
+        }
+
+        // but not off the list
+        chat.mouse_event(&press(at(&buf, "older")));
+        chat.mouse_event(&press((0, 0)));
+        assert_eq!(selected(&chat), Some("$older:example.org"));
     }
 
     #[tokio::test]

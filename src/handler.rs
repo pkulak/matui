@@ -468,6 +468,7 @@ pub fn handle_mouse_event(event: MouseEvent, app: &mut App) {
                 log::error!("could not open link: {url} {err}");
             }
         }
+        Some(Action::OpenPicture(id)) => chat.open_message(&id),
         None => {}
     }
 }

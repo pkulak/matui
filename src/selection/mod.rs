@@ -1,12 +1,13 @@
-//! Selecting and copying message text with the mouse. A message is any ID
-//! with the text its body rows show, so nothing here knows about Matrix.
+//! Selecting and copying message text with the mouse, and clicking links and
+//! pictures. A message is any ID with the text its body rows show, so nothing
+//! here knows about Matrix.
 
 use crossterm::clipboard::CopyToClipboard;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use crossterm::execute;
 use linkify::{LinkFinder, LinkKind};
 use ratatui::buffer::{Buffer, CellWidth};
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use std::io::stdout;
@@ -23,9 +24,11 @@ pub fn copy(text: &str) -> std::io::Result<()> {
 
 /// What a mouse event asks the app to do.
 #[derive(Debug, PartialEq)]
-pub enum Action {
+pub enum Action<Id> {
     Copy(String),
     Open(String),
+    /// Open the message whose picture was clicked.
+    OpenPicture(Id),
 }
 
 /// Where the text's http and https URLs are.
@@ -101,12 +104,13 @@ impl<'a, Id> BodyRow<'a, Id> {
 }
 
 /// The body text on screen as of the last draw: which cells show which
-/// bytes of which message's text.
+/// bytes of which message's text, and where its pictures are.
 pub struct TextMap<Id> {
     /// The list's area.
     pub area: Rect,
     rows: Vec<Row<Id>>,
     texts: Vec<Text<Id>>,
+    pictures: Vec<(Rect, Id)>,
 }
 
 /// A visible message's text, its links, and the bytes of it drawn on any of
@@ -138,7 +142,21 @@ impl<Id: Clone + PartialEq> TextMap<Id> {
             area,
             rows: vec![],
             texts: vec![],
+            pictures: vec![],
         }
+    }
+
+    /// Add the cells a message's picture covers on screen.
+    pub fn add_picture(&mut self, area: Rect, message: Id) {
+        self.pictures.push((area, message));
+    }
+
+    /// The message whose picture is under the pointer, if any.
+    pub fn picture(&self, x: u16, y: u16) -> Option<Id> {
+        self.pictures
+            .iter()
+            .find(|(area, _)| area.contains(Position::new(x, y)))
+            .map(|(_, message)| message.clone())
     }
 
     /// Add a row drawn at screen row `y`, with its first span at column `x`.
@@ -297,11 +315,14 @@ impl<Id: Clone + PartialEq> TextMap<Id> {
     }
 }
 
-/// Selecting text in one message with the left button.
+/// Selecting text in one message with the left button, or clicking a
+/// picture.
 #[derive(Debug, Default, PartialEq)]
 pub enum Selection<Id> {
     #[default]
     Idle,
+    /// Pressed on a message's picture, and not moved since.
+    Picture(Id),
     /// From the grapheme pressed on, the anchor, to the one the drag is at,
     /// the head, and whether the pointer has moved since the press.
     Dragging {
@@ -320,20 +341,25 @@ impl<Id: Clone + PartialEq> Selection<Id> {
     /// A press, drag or release of the left button, against the last draw.
     /// A selection is a message and a range of its text, so it stays on that
     /// text however the screen changes between events.
-    pub fn mouse_event(&mut self, map: &TextMap<Id>, event: &MouseEvent) -> Option<Action> {
+    pub fn mouse_event(&mut self, map: &TextMap<Id>, event: &MouseEvent) -> Option<Action<Id>> {
         let (x, y) = (event.column, event.row);
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                *self = match map.hit(x, y) {
-                    Some((message, range)) => Selection::Dragging {
+                *self = match (map.hit(x, y), map.picture(x, y)) {
+                    (Some((message, range)), _) => Selection::Dragging {
                         message,
                         anchor: range.clone(),
                         head: range,
                         moved: false,
                     },
-                    None => Selection::Idle,
+                    (None, Some(message)) => Selection::Picture(message),
+                    (None, None) => Selection::Idle,
                 };
+            }
+            // a drag off a picture isn't a click on it
+            MouseEventKind::Drag(MouseButton::Left) if matches!(self, Selection::Picture(_)) => {
+                self.clear();
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if let Selection::Dragging {
@@ -359,8 +385,15 @@ impl<Id: Clone + PartialEq> Selection<Id> {
     }
 
     // after a drag, select and copy from the earlier end to the later one,
-    // both included; a click selects nothing, and opens a link it's on
-    fn release(&mut self, map: &TextMap<Id>) -> Option<Action> {
+    // both included; a click selects nothing, and opens a link or picture
+    // it's on
+    fn release(&mut self, map: &TextMap<Id>) -> Option<Action<Id>> {
+        if let Selection::Picture(message) = self {
+            let message = message.clone();
+            self.clear();
+            return Some(Action::OpenPicture(message));
+        }
+
         let Selection::Dragging {
             message,
             anchor,
@@ -397,7 +430,7 @@ impl<Id: Clone + PartialEq> Selection<Id> {
     /// The message and the bytes of its text to highlight.
     pub fn highlighted(&self) -> Option<(&Id, Range<usize>)> {
         match self {
-            Selection::Idle => None,
+            Selection::Idle | Selection::Picture(_) => None,
             Selection::Dragging {
                 message,
                 anchor,

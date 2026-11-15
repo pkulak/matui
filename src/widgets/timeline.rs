@@ -27,6 +27,7 @@ pub struct Timeline<'a> {
 // where a message with a picture source landed in the list
 struct Placement {
     source: MediaSource,
+    message: TimelineEventItemId,
     // the message's list rows
     rows: Range<usize>,
     // the list row of the picture's top, and its size, once that's known
@@ -52,13 +53,14 @@ impl<'a> Timeline<'a> {
         let mut body_buffer = vec![];
 
         for m in messages {
+            // the message, and where its picture comes from
             let source = picker
                 .and(m.message())
-                .and_then(|m| picture_source(&m.body));
+                .and_then(|m| Some((&m.id, picture_source(&m.body)?)));
 
             let size = picker
                 .zip(source.as_ref())
-                .and_then(|(picker, source)| pictures.size(source, picker, width as u16));
+                .and_then(|(picker, (_, source))| pictures.size(source, picker, width as u16));
 
             items.append(&mut m.to_list_items(
                 width,
@@ -71,7 +73,7 @@ impl<'a> Timeline<'a> {
             line_types.append(&mut buffer);
             bodies.append(&mut body_buffer);
 
-            if let Some(source) = source {
+            if let Some((message, source)) = source {
                 // the picture sits right under the author line, which is
                 // the message's topmost start
                 let picture = size.and_then(|size| {
@@ -84,6 +86,7 @@ impl<'a> Timeline<'a> {
 
                 placements.push(Placement {
                     source: source.media,
+                    message: message.clone(),
                     rows: start..line_types.len(),
                     picture,
                 });
@@ -174,6 +177,14 @@ impl<'a> Timeline<'a> {
             let position = SignedPosition::from((x as i16, y as i16));
 
             SlicedImage::new(protocol, position).render(area, buf);
+
+            // the part on screen, for clicking
+            let clamp = |row: i64| row.clamp(area.top().into(), area.bottom().into()) as u16;
+            let top = clamp(i64::from(area.y) + y);
+            let bottom = clamp(i64::from(area.y) + y + i64::from(size.height));
+            let cells = Rect::new(area.x + x, top, size.width, bottom - top).intersection(area);
+
+            map.add_picture(cells, placement.message);
         }
 
         (fetches, map)
@@ -675,6 +686,28 @@ mod tests {
 
         assert_eq!(drawn.rows[0], "> @alice:example.org <time>");
         assert_eq!(picture_rows(&drawn.rows), [1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[tokio::test]
+    async fn the_cells_a_picture_shows_in_open_its_message() {
+        let events = vec![dog(None), text_event("$text:example.org", 2000, "hello")];
+        let mut pictures = ready(400, 300);
+        let picker = kitty();
+        let dog_id = TimelineEventItemId::EventId("$image:example.org".try_into().unwrap());
+
+        // with its top scrolled off, then its bottom
+        for selected in [0, 13] {
+            let drawn = draw_with(events.clone(), selected, 8, &mut pictures, Some(&picker)).await;
+
+            for (y, row) in drawn.rows.iter().enumerate() {
+                for x in 0..WIDTH {
+                    let shown = row.chars().nth(x.into()) == Some('#');
+                    let picture = drawn.map.picture(x, y as u16);
+
+                    assert_eq!(picture, shown.then(|| dog_id.clone()), "at ({x}, {y})");
+                }
+            }
+        }
     }
 
     #[tokio::test]

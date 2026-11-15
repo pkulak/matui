@@ -200,6 +200,30 @@ fn a_click_on_a_link_opens_it() {
 }
 
 #[test]
+fn a_click_on_a_picture_opens_its_message() {
+    let mut map = map();
+    map.add_picture(Rect::new(2, 4, 10, 2), "p");
+    let mut selection = Selection::default();
+
+    selection.mouse_event(&map, &press((11, 5)));
+
+    assert_eq!(
+        selection.mouse_event(&map, &release((11, 5))),
+        Some(Action::OpenPicture("p"))
+    );
+    assert_eq!(selection, Selection::Idle);
+
+    // but not after a drag
+    selection.mouse_event(&map, &press((2, 4)));
+    selection.mouse_event(&map, &drag_to((3, 4)));
+    assert_eq!(selection.mouse_event(&map, &release((3, 4))), None);
+
+    // or off it
+    selection.mouse_event(&map, &press((12, 5)));
+    assert_eq!(selection.mouse_event(&map, &release((12, 5))), None);
+}
+
+#[test]
 fn links_are_http_and_https_urls() {
     let text = "a HTTPS://a.org b http://b.org c ftp://c.org d d@d.org e file:///etc";
     let found: Vec<_> = links(text).into_iter().map(|l| &text[l]).collect();
