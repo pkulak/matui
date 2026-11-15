@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Show shared locations as a pin with the place's name and an OpenStreetMap link, which Enter opens. They used to be left out.
 - Show stickers in the chat, as pictures. They used to be left out.
 - Show pictures that come with no thumbnail and no file size when they're no bigger than 800×600, as stickers often are.
 - Update the room switcher as new messages arrive, including the ones sync catches up on at startup. The cursor stays on the room it's on, unless it's at the top.

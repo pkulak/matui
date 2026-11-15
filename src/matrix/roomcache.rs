@@ -225,6 +225,7 @@ async fn preview(room: &Room, latest: &LatestEventValue) -> Option<(String, Stri
         MessageType::Notice(content) => content.body.clone(),
         MessageType::Image(_) => "sent an image".to_string(),
         MessageType::Video(_) => "sent a video".to_string(),
+        MessageType::Location(_) => "shared a location".to_string(),
         _ => "new activity".to_string(),
     };
 

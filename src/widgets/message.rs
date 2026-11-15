@@ -26,11 +26,11 @@ use matrix_sdk::ruma::events::room::encrypted::Relation::{
     self as EncryptedRelation, Annotation, Replacement, Thread,
 };
 use matrix_sdk::ruma::events::room::message::MessageType::{
-    self, Audio, Emote, Image, Notice, Text, Video,
+    self, Audio, Emote, Image, Location, Notice, Text, Video,
 };
 use matrix_sdk::ruma::events::room::message::{
-    ImageMessageEventContent, MessageFormat, NoticeMessageEventContent, Relation,
-    TextMessageEventContent,
+    ImageMessageEventContent, LocationMessageEventContent, MessageFormat,
+    NoticeMessageEventContent, Relation, TextMessageEventContent,
 };
 use matrix_sdk::ruma::events::sticker::StickerEventContent;
 use matrix_sdk::ruma::events::{
@@ -113,6 +113,15 @@ fn sticker_image(sticker: &StickerEventContent) -> MessageType {
     Image(image)
 }
 
+/// The latitude and longitude in a geo URI, such as `geo:51.5,-0.12;u=35`.
+fn coordinates(uri: &str) -> Option<(&str, &str)> {
+    let point = uri.strip_prefix("geo:")?.split(';').next()?;
+    let mut parts = point.split(',');
+    let (lat, lon) = (parts.next()?, parts.next()?);
+
+    (lat.parse::<f64>().is_ok() && lon.parse::<f64>().is_ok()).then_some((lat, lon))
+}
+
 /// A message or edit of ours the server doesn't have yet.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Sending {
@@ -185,7 +194,7 @@ impl Message {
         let (body, edited) = match &content.kind {
             MsgLikeKind::Message(m) => match m.msgtype() {
                 body @ (Text(_) | Emote(_) | Notice(_) | Image(_) | Video(_) | Audio(_)
-                | File(_)) => (body.clone(), m.is_edited()),
+                | File(_) | Location(_)) => (body.clone(), m.is_edited()),
                 _ => return None,
             },
             MsgLikeKind::Sticker(s) => (sticker_image(s.content()), false),
@@ -244,14 +253,13 @@ impl Message {
         }
 
         match &c.content.msgtype {
-            body @ (Text(_) | Emote(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)) => {
-                Some(Message::new(
-                    TimelineEventItemId::EventId(c.event_id.clone()),
-                    c.origin_server_ts,
-                    body.clone(),
-                    c.sender.clone(),
-                ))
-            }
+            body @ (Text(_) | Emote(_) | Notice(_) | Image(_) | Video(_) | Audio(_) | File(_)
+            | Location(_)) => Some(Message::new(
+                TimelineEventItemId::EventId(c.event_id.clone()),
+                c.origin_server_ts,
+                body.clone(),
+                c.sender.clone(),
+            )),
             _ => None,
         }
     }
@@ -319,8 +327,27 @@ impl Message {
                     .and_then(|info| info.size)
                     .map(human_bytes),
             ),
+            Location(content) => Self::display_location(content),
             _ => "unknown".to_string(),
         }
+    }
+
+    // a pin and the place's name, then the place on a map
+    fn display_location(content: &LocationMessageEventContent) -> String {
+        let Some((lat, lon)) = coordinates(&content.geo_uri) else {
+            return content.body.clone();
+        };
+
+        // the body is often just the geo URI and a time
+        let name = content
+            .location
+            .as_ref()
+            .and_then(|l| l.description.as_deref())
+            .unwrap_or("Location");
+
+        format!(
+            "📍 {name}\nhttps://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=16/{lat}/{lon}"
+        )
     }
 
     fn display_media(
@@ -455,7 +482,7 @@ impl Message {
             Video(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             Audio(_) => matrix.download_content(self.body.clone(), AfterDownload::View),
             File(_) => matrix.download_content(self.body.clone(), AfterDownload::Save),
-            Text(_) | Emote(_) => view_text(self.display()),
+            Text(_) | Emote(_) | Location(_) => view_text(self.display()),
             _ => {}
         }
     }
@@ -1037,6 +1064,48 @@ pub(crate) mod tests {
         }));
 
         assert_eq!(notice.display(), "hello");
+    }
+
+    fn location_event(content: Value) -> Value {
+        json!({
+            "type": "m.room.message",
+            "event_id": "$location:example.org",
+            "sender": "@alice:example.org",
+            "origin_server_ts": 1000,
+            "content": content
+        })
+    }
+
+    #[test]
+    fn displays_locations_with_a_map_link() {
+        let described = message(location_event(json!({
+            "msgtype": "m.location",
+            "body": "Location geo:51.5,-0.12;u=35 at 2026-11-15T12:00:00Z",
+            "geo_uri": "geo:51.5,-0.12;u=35",
+            "org.matrix.msc3488.location": {
+                "uri": "geo:51.5,-0.12;u=35",
+                "description": "Big Ben"
+            }
+        })));
+        assert_eq!(
+            described.display(),
+            "📍 Big Ben\nhttps://www.openstreetmap.org/?mlat=51.5&mlon=-0.12#map=16/51.5/-0.12"
+        );
+        assert_eq!(described.links().len(), 1);
+
+        let pinned = message(location_event(json!({
+            "msgtype": "m.location",
+            "body": "Location geo:51.5,-0.12 at 2026-11-15T12:00:00Z",
+            "geo_uri": "geo:51.5,-0.12"
+        })));
+        assert!(pinned.display().starts_with("📍 Location\n"));
+
+        let broken = message(location_event(json!({
+            "msgtype": "m.location",
+            "body": "Somewhere",
+            "geo_uri": "geo:nowhere"
+        })));
+        assert_eq!(broken.display(), "Somewhere");
     }
 
     #[test]
