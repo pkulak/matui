@@ -437,15 +437,18 @@ pub fn handle_key_event(
 }
 
 /// Mouse events go where keys would: a popup, other than progress, or the
-/// sign-in screen takes them, and so does the reaction picker. They do
-/// nothing there.
+/// sign-in screen takes them, and so does the reaction picker, which
+/// ignores them.
 pub fn handle_mouse_event(event: MouseEvent, app: &mut App) {
-    let popup = app
-        .popup
-        .as_ref()
-        .is_some_and(|p| !matches!(p, Popup::Progress(_)));
+    if let Some(popup) = app.popup.as_mut()
+        && !matches!(popup, Popup::Progress(_))
+    {
+        popup.mouse_event(&event);
+        return;
+    }
 
-    if popup || matches!(app.session, Session::SignedOut(_)) {
+    if let Session::SignedOut(signin) = &mut app.session {
+        signin.mouse_event(&event);
         return;
     }
 

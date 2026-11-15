@@ -139,25 +139,6 @@ then typing the command name (without the colon) into the prompt.
 
 \* arrow keys are fine too
 
-# Mouse
-
-Drag across a message to select some of its text, and let go to copy it. You
-get the message's own text, as it was sent, without the line breaks Matui
-wraps at or the markers and gutters around it. Markdown that isn't shown, such
-as a list item's `*` or the `**` around bold text, comes along when the
-selection starts or ends next to it. A selection stays inside the message it
-started in, and any key clears it. Links are underlined, and clicking one
-opens just that link. Clicking a picture opens it, like Enter. Any click in
-the chat also moves the cursor there, and the wheel moves it like the arrow
-keys.
-
-Only a message's text can be selected. For anything else, such as an author
-line or the room's header, most terminals still select on Shift+drag.
-
-Copying uses OSC 52, so the terminal has to allow it. In tmux, that's
-`set -s set-clipboard on`, and in iTerm2, "Applications in terminal may access
-clipboard".
-
 # Invites
 
 When you're invited to a room, Matui pops up a prompt: as soon as the invite

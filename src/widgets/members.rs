@@ -3,7 +3,7 @@ use crate::matrix::Matrix;
 use crate::matrix::roomcache::DecoratedRoom;
 use crate::widgets::compose::Compose;
 use crate::{close, consumed};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use matrix_sdk::room::RoomMember;
 use matrix_sdk::ruma::{OwnedUserId, UserId};
 use matrix_sdk_ui::Timeline;
@@ -65,6 +65,10 @@ impl Members {
 
     pub fn widget(&self) -> MembersWidget<'_> {
         MembersWidget { members: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.textinput.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

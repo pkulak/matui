@@ -1,4 +1,4 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, MouseEvent};
 use log::warn;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId};
@@ -40,6 +40,7 @@ impl NoticeId {
 }
 
 /// What's underneath the popups.
+#[allow(clippy::large_enum_variant)]
 pub enum Session {
     /// Signed in, or restoring a saved session: the chat.
     SignedIn,
@@ -329,6 +330,21 @@ impl Popup {
             Popup::Search(w) => w.key_event(event),
             Popup::Help(w) => w.key_event(event),
             Popup::Upload(w) => w.key_event(event),
+        }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        match self {
+            Popup::Command(w) => w.mouse_event(event),
+            Popup::Compose(w) => w.mouse_event(event),
+            Popup::Create(w) => w.mouse_event(event),
+            Popup::Members(w) => w.mouse_event(event),
+            Popup::Qr(w) => w.mouse_event(event),
+            Popup::Recover(w) => w.mouse_event(event),
+            Popup::Rooms(w) => w.mouse_event(event),
+            Popup::Search(w) => w.mouse_event(event),
+            Popup::Upload(w) => w.mouse_event(event),
+            Popup::Confirm(_) | Popup::Error(_) | Popup::Progress(_) | Popup::Help(_) => {}
         }
     }
 

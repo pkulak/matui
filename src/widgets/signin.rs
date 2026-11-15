@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use matrix_sdk::authentication::oauth::qrcode::CheckCodeSender;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -68,6 +68,15 @@ impl Signin {
     pub fn tick_event(&mut self, timestamp: usize) {
         if let Signin::Waiting(progress) = self {
             progress.tick_event(timestamp);
+        }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        match self {
+            Signin::Homeserver(w) => w.mouse_event(event),
+            Signin::Password(w) => w.mouse_event(event),
+            Signin::QrCheck { input, .. } => input.mouse_event(event),
+            Signin::Browser(_) | Signin::QrCode { .. } | Signin::Waiting(_) => {}
         }
     }
 

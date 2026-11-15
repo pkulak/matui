@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -39,6 +39,10 @@ impl Command {
 
     pub fn widget(&self) -> CommandWidget<'_> {
         CommandWidget { command: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.input.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

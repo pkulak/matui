@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -39,6 +39,10 @@ impl Upload {
 
     pub fn widget(&self) -> UploadWidget<'_> {
         UploadWidget { upload: self }
+    }
+
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        self.input.mouse_event(event);
     }
 
     pub fn paste_event(&mut self, value: &str) -> EventResult {

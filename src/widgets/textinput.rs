@@ -1,9 +1,9 @@
 use crate::consumed;
 use crate::widgets::EventResult::Ignored;
 use crate::widgets::{EventResult, Focusable};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use std::cell::Cell;
@@ -17,6 +17,8 @@ pub struct TextInput {
 
     // state that needs to be modified by the widget and the struct
     left: Cell<usize>,
+    /// Where the text was drawn last, for clicks.
+    area: Cell<Rect>,
 }
 
 impl Focusable for &mut TextInput {
@@ -51,6 +53,7 @@ impl TextInput {
             password,
             cursor: 0,
             left: Cell::new(0),
+            area: Cell::new(Rect::default()),
         }
     }
 
@@ -104,6 +107,21 @@ impl TextInput {
         self.cursor += value.chars().count();
 
         consumed!()
+    }
+
+    /// A click on the text moves the cursor there.
+    pub fn mouse_event(&mut self, event: &MouseEvent) {
+        let area = self.area.get();
+
+        if !self.focused
+            || event.kind != MouseEventKind::Down(MouseButton::Left)
+            || !area.contains(Position::new(event.column, event.row))
+        {
+            return;
+        }
+
+        let clicked = self.left.get() + usize::from(event.column - area.x);
+        self.cursor = clicked.min(self.value.chars().count());
     }
 
     pub fn value(&self) -> String {
@@ -237,6 +255,7 @@ impl Widget for TextInputWidget<'_> {
             .constraints([Constraint::Percentage(100)])
             .split(area)[0];
 
+        self.textinput.area.set(area);
         self.adjust_window(area.width as usize);
 
         Paragraph::new(self.adjusted_value())
@@ -252,6 +271,7 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::widgets::Widget;
 
+    use crate::selection::tests::press;
     use crate::widgets::textinput::TextInput;
 
     #[test]
@@ -296,6 +316,40 @@ mod tests {
         input.paste_event(" brave\r\nnew ");
 
         assert_eq!(input.value(), "Hello brave new World");
+    }
+
+    #[test]
+    fn it_moves_the_cursor_to_a_click() {
+        let area = Rect::new(0, 0, 10, 3);
+        let mut buf = Buffer::empty(area);
+        let mut input = TextInput::new("Test".to_string(), true, false);
+
+        for c in "Hello".chars() {
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        input.widget().render(area, &mut buf);
+
+        // on the second letter
+        input.mouse_event(&press((2, 1)));
+        input.key_event(&KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE));
+        assert_eq!(input.value(), "HXello");
+
+        // past the end, and on the border, which does nothing
+        input.mouse_event(&press((8, 1)));
+        input.mouse_event(&press((1, 0)));
+        input.key_event(&KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE));
+        assert_eq!(input.value(), "HXello!");
+
+        // scrolled, so the first column shows "things."
+        for c in " this is me typing some things.".chars() {
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        input.widget().render(area, &mut buf);
+        input.mouse_event(&press((1, 1)));
+        input.key_event(&KeyEvent::new(KeyCode::Char('_'), KeyModifiers::NONE));
+        assert!(input.value().ends_with("some _things."));
     }
 
     #[test]
