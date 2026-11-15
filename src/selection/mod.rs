@@ -12,6 +12,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 use std::io::stdout;
 use std::ops::Range;
+use std::time::{Duration, Instant};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[cfg(test)]
 pub(crate) mod tests;
@@ -43,6 +45,61 @@ pub fn links(text: &str) -> Vec<Range<usize>> {
         })
         .map(|link| link.start()..link.end())
         .collect()
+}
+
+/// Characters that join the words on either side into one for a double
+/// click, as in iTerm2 and Pi, so a path or `kebab-case` is one word.
+const JOINERS: [&str; 7] = ["/", "-", "+", "\\", "~", "_", "."];
+
+/// The word around the byte at `at`. Words are Unicode's, joined by
+/// JOINERS. Off a word, it's the run of spaces or the punctuation there.
+fn word(text: &str, at: usize) -> Range<usize> {
+    struct Segment {
+        range: Range<usize>,
+        joiner: bool,
+        wordlike: bool,
+    }
+
+    let segments: Vec<_> = text
+        .split_word_bound_indices()
+        .map(|(start, s)| {
+            let joiner = JOINERS.contains(&s);
+
+            Segment {
+                range: start..start + s.len(),
+                joiner,
+                wordlike: joiner || s.chars().any(char::is_alphanumeric),
+            }
+        })
+        .collect();
+
+    let joins = |left: &Segment, right: &Segment| {
+        left.wordlike && right.wordlike && (left.joiner || right.joiner)
+    };
+
+    let Some(clicked) = segments.iter().position(|s| s.range.contains(&at)) else {
+        return at..at;
+    };
+
+    let mut first = clicked;
+    while first > 0 && joins(&segments[first - 1], &segments[first]) {
+        first -= 1;
+    }
+
+    let mut last = clicked;
+    while last + 1 < segments.len() && joins(&segments[last], &segments[last + 1]) {
+        last += 1;
+    }
+
+    segments[first].range.start..segments[last].range.end
+}
+
+/// The line around the byte at `at`, without its line break.
+fn line(text: &str, at: usize) -> Range<usize> {
+    let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[at..].find('\n').map_or(text.len(), |i| at + i);
+
+    start..end
 }
 
 /// Where `part` starts in `base`, if it's a slice of it rather than a copy.
@@ -267,6 +324,15 @@ impl<Id: Clone + PartialEq> TextMap<Id> {
         start..end
     }
 
+    /// The unit of the message's text around a grapheme of it.
+    fn around(&self, message: &Id, grapheme: Range<usize>, unit: Unit) -> Range<usize> {
+        match (unit, self.text(message)) {
+            (Unit::Word, Some(text)) => word(text, grapheme.start),
+            (Unit::Line, Some(text)) => line(text, grapheme.start),
+            _ => grapheme,
+        }
+    }
+
     /// The message and grapheme under the pointer, if it's on body text.
     pub fn hit(&self, x: u16, y: u16) -> Option<(Id, Range<usize>)> {
         self.rows.iter().filter(|r| r.y == y).find_map(|row| {
@@ -315,21 +381,61 @@ impl<Id: Clone + PartialEq> TextMap<Id> {
     }
 }
 
+/// How soon a press on the same word has to follow the last to be another
+/// click of it.
+const MULTI_CLICK: Duration = Duration::from_millis(500);
+
+/// What a press and drag select: graphemes after one click, words after a
+/// double click and lines after a triple click.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Unit {
+    Grapheme,
+    Word,
+    Line,
+}
+
 /// Selecting text in one message with the left button, or clicking a
 /// picture.
+#[derive(Debug, PartialEq)]
+pub struct Selection<Id> {
+    state: State<Id>,
+    /// The last press on body text, to count clicks.
+    last_press: Option<Press<Id>>,
+}
+
+impl<Id> Default for Selection<Id> {
+    fn default() -> Self {
+        Self {
+            state: State::Idle,
+            last_press: None,
+        }
+    }
+}
+
+/// When a press on body text was, the word it was on, and how many clicks
+/// it made.
+#[derive(Debug, PartialEq)]
+struct Press<Id> {
+    at: Instant,
+    message: Id,
+    word: Range<usize>,
+    clicks: u8,
+}
+
 #[derive(Debug, Default, PartialEq)]
-pub enum Selection<Id> {
+enum State<Id> {
     #[default]
     Idle,
     /// Pressed on a message's picture, and not moved since.
     Picture(Id),
-    /// From the grapheme pressed on, the anchor, to the one the drag is at,
-    /// the head, and whether the pointer has moved since the press.
+    /// From the unit pressed on, the anchor, to the one the drag is at, the
+    /// head, and whether the pointer has moved since the press.
     Dragging {
         message: Id,
         anchor: Range<usize>,
         head: Range<usize>,
         moved: bool,
+        unit: Unit,
     },
     Selected {
         message: Id,
@@ -340,38 +446,37 @@ pub enum Selection<Id> {
 impl<Id: Clone + PartialEq> Selection<Id> {
     /// A press, drag or release of the left button, against the last draw.
     /// A selection is a message and a range of its text, so it stays on that
-    /// text however the screen changes between events.
-    pub fn mouse_event(&mut self, map: &TextMap<Id>, event: &MouseEvent) -> Option<Action<Id>> {
+    /// text however the screen changes between events. `now` is when the
+    /// event came, to tell a double click from two clicks.
+    pub fn mouse_event(
+        &mut self,
+        map: &TextMap<Id>,
+        event: &MouseEvent,
+        now: Instant,
+    ) -> Option<Action<Id>> {
         let (x, y) = (event.column, event.row);
 
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                *self = match (map.hit(x, y), map.picture(x, y)) {
-                    (Some((message, range)), _) => Selection::Dragging {
-                        message,
-                        anchor: range.clone(),
-                        head: range,
-                        moved: false,
-                    },
-                    (None, Some(message)) => Selection::Picture(message),
-                    (None, None) => Selection::Idle,
-                };
-            }
+            MouseEventKind::Down(MouseButton::Left) => self.press(map, x, y, now),
             // a drag off a picture isn't a click on it
-            MouseEventKind::Drag(MouseButton::Left) if matches!(self, Selection::Picture(_)) => {
+            MouseEventKind::Drag(MouseButton::Left) if matches!(self.state, State::Picture(_)) => {
                 self.clear();
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if let Selection::Dragging {
+                // a drag isn't a click, so the next press is a first click
+                self.last_press = None;
+
+                if let State::Dragging {
                     message,
                     head,
                     moved,
+                    unit,
                     ..
-                } = self
+                } = &mut self.state
                 {
                     // stays in the message, however far the pointer goes
-                    if let Some(range) = map.nearest(message, x, y) {
-                        *head = range;
+                    if let Some(grapheme) = map.nearest(message, x, y) {
+                        *head = map.around(message, grapheme, *unit);
                     }
 
                     *moved = true;
@@ -384,29 +489,76 @@ impl<Id: Clone + PartialEq> Selection<Id> {
         None
     }
 
-    // after a drag, select and copy from the earlier end to the later one,
-    // both included; a click selects nothing, and opens a link or picture
-    // it's on
+    // a press on the same word as the last, soon after it, is another click
+    // of it: the second selects the word, the third its line, and the
+    // fourth is a first click again; a drag from there goes a word or line
+    // at a time, always keeping the one pressed on
+    fn press(&mut self, map: &TextMap<Id>, x: u16, y: u16, now: Instant) {
+        let Some((message, grapheme)) = map.hit(x, y) else {
+            self.last_press = None;
+            self.state = map.picture(x, y).map_or(State::Idle, State::Picture);
+            return;
+        };
+
+        let word = map.around(&message, grapheme.clone(), Unit::Word);
+
+        let clicks = match &self.last_press {
+            Some(last)
+                if last.message == message
+                    && last.word == word
+                    && now.duration_since(last.at) <= MULTI_CLICK =>
+            {
+                last.clicks % 3 + 1
+            }
+            _ => 1,
+        };
+
+        let unit = match clicks {
+            2 => Unit::Word,
+            3 => Unit::Line,
+            _ => Unit::Grapheme,
+        };
+        let anchor = map.around(&message, grapheme, unit);
+
+        self.last_press = Some(Press {
+            at: now,
+            message: message.clone(),
+            word,
+            clicks,
+        });
+        self.state = State::Dragging {
+            message,
+            head: anchor.clone(),
+            anchor,
+            moved: false,
+            unit,
+        };
+    }
+
+    // after a drag, a double click or a triple click, select and copy from
+    // the earlier end to the later one, both included; a single click
+    // selects nothing, and opens a link or picture it's on
     fn release(&mut self, map: &TextMap<Id>) -> Option<Action<Id>> {
-        if let Selection::Picture(message) = self {
+        if let State::Picture(message) = &self.state {
             let message = message.clone();
-            self.clear();
+            self.state = State::Idle;
             return Some(Action::OpenPicture(message));
         }
 
-        let Selection::Dragging {
+        let State::Dragging {
             message,
             anchor,
             moved,
+            unit,
             ..
-        } = self
+        } = &self.state
         else {
             return None;
         };
 
-        if !*moved {
+        if !*moved && *unit == Unit::Grapheme {
             let link = map.link(message, anchor.start).map(str::to_string);
-            self.clear();
+            self.state = State::Idle;
             return link.map(Action::Open);
         }
 
@@ -419,19 +571,19 @@ impl<Id: Clone + PartialEq> Selection<Id> {
             .and_then(|text| text.get(range.clone()))
             .map(str::to_string);
 
-        *self = Selection::Selected { message, range };
+        self.state = State::Selected { message, range };
         text.map(Action::Copy)
     }
 
     pub fn clear(&mut self) {
-        *self = Selection::Idle;
+        *self = Self::default();
     }
 
     /// The message and the bytes of its text to highlight.
     pub fn highlighted(&self) -> Option<(&Id, Range<usize>)> {
-        match self {
-            Selection::Idle | Selection::Picture(_) => None,
-            Selection::Dragging {
+        match &self.state {
+            State::Idle | State::Picture(_) => None,
+            State::Dragging {
                 message,
                 anchor,
                 head,
@@ -440,7 +592,7 @@ impl<Id: Clone + PartialEq> Selection<Id> {
                 message,
                 anchor.start.min(head.start)..anchor.end.max(head.end),
             )),
-            Selection::Selected { message, range } => Some((message, range.clone())),
+            State::Selected { message, range } => Some((message, range.clone())),
         }
     }
 }

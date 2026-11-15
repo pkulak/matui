@@ -64,11 +64,12 @@ pub(crate) fn copied<Id: Clone + PartialEq>(
     to: (u16, u16),
 ) -> Option<String> {
     let mut selection = Selection::default();
+    let now = Instant::now();
 
-    selection.mouse_event(map, &press(from));
-    selection.mouse_event(map, &drag_to(to));
+    selection.mouse_event(map, &press(from), now);
+    selection.mouse_event(map, &drag_to(to), now);
 
-    match selection.mouse_event(map, &release(to)) {
+    match selection.mouse_event(map, &release(to), now) {
         Some(Action::Copy(text)) => Some(text),
         _ => None,
     }
@@ -168,35 +169,37 @@ fn a_drag_that_leaves_the_message_clamps_to_it() {
 fn a_click_clears_the_selection_and_does_nothing() {
     let map = map();
     let mut selection = Selection::default();
+    let now = Instant::now();
 
-    selection.mouse_event(&map, &press((2, 2)));
-    selection.mouse_event(&map, &drag_to((5, 2)));
-    selection.mouse_event(&map, &release((5, 2)));
+    selection.mouse_event(&map, &press((2, 2)), now);
+    selection.mouse_event(&map, &drag_to((5, 2)), now);
+    selection.mouse_event(&map, &release((5, 2)), now);
     assert_eq!(selection.highlighted(), Some((&"a", 0..4)));
 
     // on text
-    assert_eq!(selection.mouse_event(&map, &press((3, 3))), None);
-    assert_eq!(selection.mouse_event(&map, &release((3, 3))), None);
-    assert_eq!(selection, Selection::Idle);
+    assert_eq!(selection.mouse_event(&map, &press((3, 3)), now), None);
+    assert_eq!(selection.mouse_event(&map, &release((3, 3)), now), None);
+    assert_eq!(selection.state, State::Idle);
 }
 
 #[test]
 fn a_click_on_a_link_opens_it() {
     let map = map();
     let mut selection = Selection::default();
+    let now = Instant::now();
 
     // on the link's last character, "g"
-    selection.mouse_event(&map, &press((24, 8)));
+    selection.mouse_event(&map, &press((24, 8)), now);
 
     assert_eq!(
-        selection.mouse_event(&map, &release((24, 8))),
+        selection.mouse_event(&map, &release((24, 8)), now),
         Some(Action::Open("https://example.org".to_string()))
     );
-    assert_eq!(selection, Selection::Idle);
+    assert_eq!(selection.state, State::Idle);
 
     // but not on the space after it
-    selection.mouse_event(&map, &press((25, 8)));
-    assert_eq!(selection.mouse_event(&map, &release((25, 8))), None);
+    selection.mouse_event(&map, &press((25, 8)), now);
+    assert_eq!(selection.mouse_event(&map, &release((25, 8)), now), None);
 }
 
 #[test]
@@ -204,23 +207,133 @@ fn a_click_on_a_picture_opens_its_message() {
     let mut map = map();
     map.add_picture(Rect::new(2, 4, 10, 2), "p");
     let mut selection = Selection::default();
+    let now = Instant::now();
 
-    selection.mouse_event(&map, &press((11, 5)));
+    selection.mouse_event(&map, &press((11, 5)), now);
 
     assert_eq!(
-        selection.mouse_event(&map, &release((11, 5))),
+        selection.mouse_event(&map, &release((11, 5)), now),
         Some(Action::OpenPicture("p"))
     );
-    assert_eq!(selection, Selection::Idle);
+    assert_eq!(selection.state, State::Idle);
 
     // but not after a drag
-    selection.mouse_event(&map, &press((2, 4)));
-    selection.mouse_event(&map, &drag_to((3, 4)));
-    assert_eq!(selection.mouse_event(&map, &release((3, 4))), None);
+    selection.mouse_event(&map, &press((2, 4)), now);
+    selection.mouse_event(&map, &drag_to((3, 4)), now);
+    assert_eq!(selection.mouse_event(&map, &release((3, 4)), now), None);
 
     // or off it
-    selection.mouse_event(&map, &press((12, 5)));
-    assert_eq!(selection.mouse_event(&map, &release((12, 5))), None);
+    selection.mouse_event(&map, &press((12, 5)), now);
+    assert_eq!(selection.mouse_event(&map, &release((12, 5)), now), None);
+}
+
+/// What a press and release at a cell does.
+fn click(
+    selection: &mut Selection<&'static str>,
+    map: &TextMap<&'static str>,
+    at: (u16, u16),
+    now: Instant,
+) -> Option<Action<&'static str>> {
+    selection.mouse_event(map, &press(at), now);
+    selection.mouse_event(map, &release(at), now)
+}
+
+fn copy(text: &str) -> Option<Action<&'static str>> {
+    Some(Action::Copy(text.to_string()))
+}
+
+#[test]
+fn a_double_click_selects_and_copies_a_word() {
+    let map = map();
+    let mut selection = Selection::default();
+    let now = Instant::now();
+
+    // the "o" of "world", then its "d"
+    assert_eq!(click(&mut selection, &map, (9, 2), now), None);
+    assert_eq!(
+        click(&mut selection, &map, (12, 2), now + MULTI_CLICK),
+        copy("world")
+    );
+    assert_eq!(selection.highlighted(), Some((&"a", 6..11)));
+}
+
+#[test]
+fn a_double_click_is_soon_after_on_the_same_word() {
+    let map = map();
+    let mut selection = Selection::default();
+    let now = Instant::now();
+    let late = now + MULTI_CLICK + Duration::from_millis(1);
+
+    click(&mut selection, &map, (8, 2), now);
+    assert_eq!(click(&mut selection, &map, (8, 2), late), None);
+    assert_eq!(click(&mut selection, &map, (2, 2), late), None);
+
+    // or after a drag
+    selection.mouse_event(&map, &press((2, 2)), late);
+    selection.mouse_event(&map, &drag_to((3, 2)), late);
+    selection.mouse_event(&map, &release((3, 2)), late);
+    assert_eq!(click(&mut selection, &map, (2, 2), late), None);
+}
+
+#[test]
+fn a_drag_after_a_double_click_goes_a_word_at_a_time() {
+    let map = map();
+    let mut selection = Selection::default();
+    let now = Instant::now();
+
+    click(&mut selection, &map, (8, 2), now);
+    selection.mouse_event(&map, &press((8, 2)), now);
+
+    // into "second"
+    selection.mouse_event(&map, &drag_to((4, 3)), now);
+    assert_eq!(selection.highlighted(), Some((&"a", 6..18)));
+
+    // then back past the word pressed on, which stays selected
+    selection.mouse_event(&map, &drag_to((3, 2)), now);
+    assert_eq!(
+        selection.mouse_event(&map, &release((3, 2)), now),
+        copy("hello world")
+    );
+}
+
+#[test]
+fn a_triple_click_selects_a_line_and_a_drag_goes_a_line_at_a_time() {
+    let map = map();
+    let mut selection = Selection::default();
+    let now = Instant::now();
+
+    click(&mut selection, &map, (4, 3), now);
+    click(&mut selection, &map, (4, 3), now);
+    assert_eq!(
+        click(&mut selection, &map, (4, 3), now),
+        copy("second line")
+    );
+
+    // a fourth is a first click again
+    assert_eq!(click(&mut selection, &map, (4, 3), now), None);
+    assert_eq!(selection.state, State::Idle);
+
+    // so this is the second and third
+    click(&mut selection, &map, (4, 3), now);
+    selection.mouse_event(&map, &press((4, 3)), now);
+    selection.mouse_event(&map, &drag_to((5, 2)), now);
+    assert_eq!(
+        selection.mouse_event(&map, &release((5, 2)), now),
+        copy(TEXT)
+    );
+}
+
+#[test]
+fn words_join_across_paths_and_stop_at_spaces_and_punctuation() {
+    let word_at = |text: &'static str, at: &str| &text[word(text, text.find(at).unwrap())];
+
+    assert_eq!(
+        word_at("open ~/src/pi+x\\y.rs, now", "pi"),
+        "~/src/pi+x\\y.rs"
+    );
+    assert_eq!(word_at("a kebab-case_word here", "case"), "kebab-case_word");
+    assert_eq!(word_at("hi,   there", " "), "   ");
+    assert_eq!(word_at("hi,   there", ","), ",");
 }
 
 #[test]
@@ -242,18 +355,22 @@ fn a_drag_that_starts_on_a_link_selects() {
 #[test]
 fn a_press_off_body_text_clears_the_selection() {
     let map = map();
-    let mut selection = Selection::Selected {
-        message: "a",
-        range: 0..4,
+    let mut selection = Selection {
+        state: State::Selected {
+            message: "a",
+            range: 0..4,
+        },
+        last_press: None,
     };
+    let now = Instant::now();
 
-    assert_eq!(selection.mouse_event(&map, &press((15, 2))), None);
-    assert_eq!(selection, Selection::Idle);
+    assert_eq!(selection.mouse_event(&map, &press((15, 2)), now), None);
+    assert_eq!(selection.state, State::Idle);
 
     // and a drag from there selects nothing
-    assert_eq!(selection.mouse_event(&map, &drag_to((4, 2))), None);
-    assert_eq!(selection.mouse_event(&map, &release((4, 2))), None);
-    assert_eq!(selection, Selection::Idle);
+    assert_eq!(selection.mouse_event(&map, &drag_to((4, 2)), now), None);
+    assert_eq!(selection.mouse_event(&map, &release((4, 2)), now), None);
+    assert_eq!(selection.state, State::Idle);
 }
 
 #[test]

@@ -560,7 +560,9 @@ impl Chat {
             self.move_to(event.column, event.row);
         }
 
-        let action = self.selection.mouse_event(&self.text_map.borrow(), event);
+        let action = self
+            .selection
+            .mouse_event(&self.text_map.borrow(), event, Instant::now());
 
         // the caller copies it, and the header says so, as for y
         if let Some(Action::Copy(_)) = action {

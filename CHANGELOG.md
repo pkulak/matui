@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Drag across a message to select and copy part of its text. The copy is the message's own text, markdown included, without the line breaks Matui wraps at or the markers and gutters around it, and the selection stays inside the message. The room's header says "Copied!", as it does for `y`. Shift+drag still selects anything else in most terminals. Links are underlined, and clicking one opens just that link.
+- Drag across a message to select and copy part of its text. The copy is the message's own text, markdown included, without the line breaks Matui wraps at or the markers and gutters around it, and the selection stays inside the message. Double-click to select a word, or triple-click for a line, and drag from there to select a word or line at a time. The room's header says "Copied!", as it does for `y`. Shift+drag still selects anything else in most terminals. Links are underlined, and clicking one opens just that link.
 - Click in the chat to move the cursor there, and click a picture to open it.
 - Copy the whole text of the selected message with `y`, including lines cut off by `message_line_limit`. The room's header says "Copied!" for three seconds. Copying uses OSC 52, so tmux needs `set -s set-clipboard on`.
 - Only notify for a reply in a thread if you wrote the message that started the thread, replied in it, or are mentioned, even in a muted room, unless every room is muted with `muted = ["*"]`. Replies notify while the room is open, since its timeline doesn't show them, but not while the thread is. Clicking one opens the thread, however old. `m` in a thread mutes it until restart.
