@@ -19,6 +19,7 @@ use crate::widgets::upload::Upload;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
+use chrono::{DateTime, Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use image::DynamicImage;
 use log::info;
@@ -788,22 +789,27 @@ impl Chat {
     }
 
     fn set_messages(&mut self, force_bookmark: bool) {
-        self.messages = make_message_list(
+        self.messages = mark_days(make_message_list(
             &self.items,
             &self.members,
             &self.search_term,
             self.thread_root.as_deref(),
-        );
+        ));
 
-        // the read marker goes above everything newer than it, newest first
+        // the read marker goes above everything newer than it, newest first,
+        // and under their day's marker
         if let Some(read) = self.read_marker.filter(|_| self.search_term.is_empty())
-            && let Some(i) = self.messages.iter().position(|item| match item {
+            && let Some(mut i) = self.messages.iter().position(|item| match item {
                 TimelineItem::Message(m) => *m.sort_order() <= read,
                 TimelineItem::Events(e) => e.ts <= read,
-                TimelineItem::ReadMarker => false,
+                TimelineItem::ReadMarker | TimelineItem::DayMarker(_) => false,
             })
             && i > 0
         {
+            if matches!(self.messages[i - 1], TimelineItem::DayMarker(_)) {
+                i -= 1;
+            }
+
             self.messages.insert(i, TimelineItem::ReadMarker);
         }
 
@@ -1359,14 +1365,29 @@ pub enum TimelineItem {
     Events(RoomEvents),
     /// The line above the new messages.
     ReadMarker,
+    /// The line above a day's first item.
+    DayMarker(NaiveDate),
 }
 
 impl TimelineItem {
     pub(crate) fn message(&self) -> Option<&Message> {
         match self {
             TimelineItem::Message(m) => Some(m),
-            TimelineItem::Events(_) | TimelineItem::ReadMarker => None,
+            TimelineItem::Events(_) | TimelineItem::ReadMarker | TimelineItem::DayMarker(_) => None,
         }
+    }
+
+    // a reply chain's is the day of its latest reply
+    fn day(&self) -> Option<NaiveDate> {
+        let ts = match self {
+            TimelineItem::Message(m) => *m.sort_order(),
+            TimelineItem::Events(e) => e.ts,
+            TimelineItem::ReadMarker | TimelineItem::DayMarker(_) => return None,
+        };
+
+        let time = DateTime::from_timestamp(ts.as_secs().into(), 0).unwrap_or_default();
+
+        Some(time.with_timezone(&Local).date_naive())
     }
 
     pub fn to_list_items<'a>(
@@ -1383,21 +1404,65 @@ impl TimelineItem {
                 bodies.extend(items.iter().map(|_| None));
                 items
             }
-            TimelineItem::ReadMarker => {
-                // bottom up, like the others
-                sidecar.extend([LineType::RoomEvent, LineType::DeadSpace]);
-                bodies.extend([None, None]);
-
-                vec![
-                    ListItem::new(Span::styled(
-                        format!("{:─^width$}", " new messages "),
-                        Style::default().fg(Color::DarkGray),
-                    )),
-                    ListItem::new(" "),
-                ]
+            TimelineItem::ReadMarker => divider("new messages", width, sidecar, bodies),
+            TimelineItem::DayMarker(day) => {
+                let label = day_label(*day, Local::now().date_naive());
+                divider(&label, width, sidecar, bodies)
             }
         }
     }
+}
+
+/// A gray line across the chat, with a label in the middle.
+fn divider<'a>(
+    label: &str,
+    width: usize,
+    sidecar: &mut Vec<LineType>,
+    bodies: &mut Vec<Option<BodyRow<'a, TimelineEventItemId>>>,
+) -> Vec<ListItem<'a>> {
+    // bottom up, like the others
+    sidecar.extend([LineType::RoomEvent, LineType::DeadSpace]);
+    bodies.extend([None, None]);
+
+    vec![
+        ListItem::new(Span::styled(
+            format!("{:─^width$}", format!(" {label} ")),
+            Style::default().fg(Color::DarkGray),
+        )),
+        ListItem::new(" "),
+    ]
+}
+
+/// What a day's marker says, as in Element: Today, Yesterday, the weekday
+/// for the rest of the week, then the full date.
+fn day_label(day: NaiveDate, today: NaiveDate) -> String {
+    match (today - day).num_days() {
+        0 => "Today".to_string(),
+        1 => "Yesterday".to_string(),
+        2..=6 => day.format("%A").to_string(),
+        _ => day.format("%a, %b %-d, %Y").to_string(),
+    }
+}
+
+/// Puts a marker above each day's first item. The items are newest first.
+fn mark_days(items: Vec<TimelineItem>) -> Vec<TimelineItem> {
+    let mut marked = Vec::with_capacity(items.len());
+    let mut newer: Option<NaiveDate> = None;
+
+    for item in items {
+        if let Some(day) = item.day() {
+            if let Some(newer) = newer.filter(|&newer| newer != day) {
+                marked.push(TimelineItem::DayMarker(newer));
+            }
+
+            newer = Some(day);
+        }
+
+        marked.push(item);
+    }
+
+    marked.extend(newer.map(TimelineItem::DayMarker));
+    marked
 }
 
 // a group of consecutive room state events, rendered as single gray lines
@@ -2384,16 +2449,96 @@ pub(crate) mod tests {
         server.sync_room(client, room).await;
     }
 
-    /// The chat's items, newest first: messages by ID, and the read marker.
-    fn with_marker(chat: &Chat) -> Vec<&str> {
-        chat.messages
+    /// The chat's items, newest first: messages by ID, and the markers.
+    fn names(items: &[TimelineItem]) -> Vec<&str> {
+        items
             .iter()
             .map(|item| match item {
                 TimelineItem::Message(m) => event_id(m),
                 TimelineItem::Events(_) => "events",
                 TimelineItem::ReadMarker => "new",
+                TimelineItem::DayMarker(_) => "day",
             })
             .collect()
+    }
+
+    // 2001-09-09 01:46:40 UTC, far from midnight in most time zones
+    const SOME_DAY: u64 = 1_000_000_000_000;
+    const DAY: u64 = 24 * 60 * 60 * 1000;
+
+    #[test]
+    fn day_labels_count_back_a_week() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+        let label = |days| day_label(today - chrono::Days::new(days), today);
+
+        assert_eq!(label(0), "Today");
+        assert_eq!(label(1), "Yesterday");
+        assert_eq!(label(2), "Friday");
+        assert_eq!(label(6), "Monday");
+        assert_eq!(label(7), "Sun, Nov 8, 2026");
+        assert_eq!(label(400), "Sat, Oct 11, 2025");
+    }
+
+    #[tokio::test]
+    async fn days_are_marked_above_their_first_item() {
+        let items = timeline_items(vec![
+            text_event("$old:example.org", SOME_DAY, "old"),
+            text_event("$same-day:example.org", SOME_DAY + 1000, "same day"),
+            text_event("$later:example.org", SOME_DAY + 2 * DAY, "later"),
+        ])
+        .await;
+
+        let marked = mark_days(make_message_list(&items, &vec![], "", None));
+
+        assert_eq!(
+            names(&marked),
+            [
+                "$later:example.org",
+                "day",
+                "$same-day:example.org",
+                "$old:example.org",
+                "day"
+            ]
+        );
+
+        // a reply takes its message to the reply's day, leaving no marker
+        // over a day with nothing left in it
+        let items = timeline_items(vec![
+            text_event("$old:example.org", SOME_DAY, "old"),
+            reply_event(
+                "$reply:example.org",
+                SOME_DAY + 2 * DAY,
+                "$old:example.org",
+                "hi",
+            ),
+        ])
+        .await;
+
+        let marked = mark_days(make_message_list(&items, &vec![], "", None));
+
+        assert_eq!(names(&marked), ["$old:example.org", "day"]);
+    }
+
+    #[tokio::test]
+    async fn the_read_marker_goes_under_its_days_marker() {
+        let (server, client, room) = joined().await;
+        mock_receipts(&server).await;
+
+        sync_read_to(
+            &server,
+            &client,
+            vec![
+                text_event("$1:example.org", SOME_DAY, "one"),
+                text_event("$2:example.org", SOME_DAY + 2 * DAY, "two"),
+            ],
+            "$1:example.org",
+        )
+        .await;
+
+        let (mut chat, events) = chat(&client, room).await;
+        let opened = ["$2:example.org", "new", "day", "$1:example.org", "day"];
+
+        until(&mut chat, &events, |c| names(&c.messages) == opened).await;
     }
 
     #[tokio::test]
@@ -2414,9 +2559,15 @@ pub(crate) mod tests {
         .await;
 
         let (mut chat, events) = chat(&client, room).await;
-        let opened = ["$3:example.org", "$2:example.org", "new", "$1:example.org"];
+        let opened = [
+            "$3:example.org",
+            "$2:example.org",
+            "new",
+            "$1:example.org",
+            "day",
+        ];
 
-        until(&mut chat, &events, |c| with_marker(c) == opened).await;
+        until(&mut chat, &events, |c| names(&c.messages) == opened).await;
 
         // reading the room moves the marker past what it shows, but the line
         // stays put while the room's open
@@ -2434,13 +2585,14 @@ pub(crate) mod tests {
         .await;
 
         assert_eq!(
-            with_marker(&chat),
+            names(&chat.messages),
             [
                 "$4:example.org",
                 "$3:example.org",
                 "$2:example.org",
                 "new",
-                "$1:example.org"
+                "$1:example.org",
+                "day"
             ]
         );
     }
@@ -2462,7 +2614,7 @@ pub(crate) mod tests {
         .await;
 
         let (mut chat, events) = chat(&client, room).await;
-        until(&mut chat, &events, |c| with_marker(c).contains(&"new")).await;
+        until(&mut chat, &events, |c| names(&c.messages).contains(&"new")).await;
 
         let mut mine = text_event("$3:example.org", 3000, "three");
         mine["sender"] = json!(client.user_id().unwrap());
@@ -2474,8 +2626,8 @@ pub(crate) mod tests {
         .await;
 
         assert_eq!(
-            with_marker(&chat),
-            ["$3:example.org", "$2:example.org", "$1:example.org"]
+            names(&chat.messages),
+            ["$3:example.org", "$2:example.org", "$1:example.org", "day"]
         );
     }
 

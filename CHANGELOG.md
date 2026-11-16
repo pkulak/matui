@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Draw a line above each day's messages that says which day it is: Today, Yesterday, the weekday for the rest of the week, then the full date. A message someone replies to sits under the day of its latest reply.
 - Show polls with their answers and vote counts, which update as votes come in. Polls that hide their results show the counts once they end. Voting still needs another client.
 - Show shared locations as a pin with the place's name and an OpenStreetMap link, which Enter opens. They used to be left out.
 - Show stickers in the chat, as pictures. They used to be left out.
