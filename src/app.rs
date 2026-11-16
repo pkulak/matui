@@ -184,6 +184,13 @@ impl App {
         }
     }
 
+    /// Close the open room and go back to the room switcher, as at startup.
+    pub fn close_room(&mut self) {
+        self.view = None;
+        self.matrix.room_closed_event();
+        self.open_popup(Popup::Rooms(Rooms::new(self.matrix.clone(), None)));
+    }
+
     /// Show a popup over whatever is showing, which comes back when it
     /// closes.
     pub fn open_popup(&mut self, popup: Popup) {
@@ -559,6 +566,19 @@ pub(crate) mod tests {
         app.close_popup();
         app.close_popup();
         assert!(app.popup.is_none());
+    }
+
+    #[tokio::test]
+    async fn esc_closes_the_room_and_shows_the_switcher() {
+        let (_server, _client, mut app, room, _events) = app_with_room().await;
+        app.select_room(room.clone());
+
+        let key = KeyEvent::from(KeyCode::Esc);
+        handle_key_event(key, &mut app, &EventHandler::without_terminal()).unwrap();
+
+        assert!(app.view.is_none());
+        assert!(matches!(app.popup, Some(Popup::Rooms(_))));
+        assert!(!app.matrix.sees(room.room_id(), None));
     }
 
     #[tokio::test]

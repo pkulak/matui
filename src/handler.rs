@@ -429,6 +429,10 @@ pub fn handle_key_event(
 
             return Ok(());
         }
+        KeyCode::Esc if app.view.as_ref().is_some_and(|v| v.thread.is_none()) => {
+            app.close_room();
+            return Ok(());
+        }
         KeyCode::Char('?') => {
             app.open_popup(Popup::Help(Help::default()));
             return Ok(());

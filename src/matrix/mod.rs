@@ -269,6 +269,13 @@ impl Matrix {
             .close_notification(self, room.room_id().as_str());
     }
 
+    /// The app closed the open room, leaving none open.
+    pub fn room_closed_event(&self) {
+        let mut attention = self.attention.lock().unwrap();
+        attention.room = None;
+        attention.thread = None;
+    }
+
     /// The app opened this thread over the open room.
     pub fn thread_opened_event(&self, root: &EventId) {
         self.attention.lock().unwrap().thread = Some(root.to_owned());
