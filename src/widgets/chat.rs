@@ -1260,9 +1260,11 @@ impl Widget for ChatWidget<'_> {
         let window = &self.chat.messages[self.chat.window.clone()];
         let mut pictures = self.chat.pictures.borrow_mut();
 
+        // the cursor's two columns on the left, and two to match on the
+        // right, so the chat sits centred under the header
         let timeline = Timeline::new(
             window,
-            (area.width - 2) as usize,
+            (area.width - 4) as usize,
             &mut line_types,
             &mut pictures,
             picker(),
@@ -2079,6 +2081,38 @@ pub(crate) mod tests {
         let mut buf = Buffer::empty(area);
         chat.render(area, &mut buf);
         buf
+    }
+
+    #[tokio::test]
+    async fn the_chat_is_centred_under_its_header() {
+        let (server, client, room) = joined().await;
+        let (mut chat, events) = chat(&client, room).await;
+
+        sync(
+            &server,
+            &client,
+            vec![text_event("$1:example.org", 1000, "one")],
+        )
+        .await;
+        until(&mut chat, &events, |c| {
+            message(c, "$1:example.org").is_some()
+        })
+        .await;
+
+        let buf = draw(&chat);
+        let row = |y: u16| -> Vec<&str> { (0..80).map(|x| buf[(x, y)].symbol()).collect() };
+
+        // the header's borders, and the day's line, as far in from each side
+        let header = row(1);
+        let header = header.iter().position(|c| *c != " ").unwrap()
+            ..header.iter().rposition(|c| *c != " ").unwrap();
+
+        // below the header's three rows
+        let day = (4..24).map(row).find(|r| r.contains(&"─")).unwrap();
+        let line = day.iter().position(|c| *c == "─").unwrap()
+            ..day.iter().rposition(|c| *c == "─").unwrap();
+
+        assert_eq!(line.start - header.start, header.end - line.end);
     }
 
     #[tokio::test]
