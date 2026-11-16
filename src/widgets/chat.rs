@@ -48,7 +48,7 @@ use tokio::task::AbortHandle;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Position, Rect};
 use ratatui::style::{Color, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, ListItem, ListState, Paragraph, Widget};
 
 use super::confirm::{Confirm, ConfirmBehavior};
@@ -1404,19 +1404,18 @@ impl TimelineItem {
                 bodies.extend(items.iter().map(|_| None));
                 items
             }
-            TimelineItem::ReadMarker => divider("new messages", width, sidecar, bodies),
-            TimelineItem::DayMarker(day) => {
-                let label = day_label(*day, Local::now().date_naive());
-                divider(&label, width, sidecar, bodies)
+            TimelineItem::ReadMarker => {
+                let line = divider_line("new messages", width, Color::DarkGray);
+                divider(line, sidecar, bodies)
             }
+            TimelineItem::DayMarker(day) => divider(day_line(*day, width), sidecar, bodies),
         }
     }
 }
 
-/// A gray line across the chat, with a label in the middle.
+/// A divider's rows: its line, with a blank row above.
 fn divider<'a>(
-    label: &str,
-    width: usize,
+    line: Line<'a>,
     sidecar: &mut Vec<LineType>,
     bodies: &mut Vec<Option<BodyRow<'a, TimelineEventItemId>>>,
 ) -> Vec<ListItem<'a>> {
@@ -1424,18 +1423,34 @@ fn divider<'a>(
     sidecar.extend([LineType::RoomEvent, LineType::DeadSpace]);
     bodies.extend([None, None]);
 
-    vec![
-        ListItem::new(Span::styled(
-            format!("{:─^width$}", format!(" {label} ")),
-            Style::default().fg(Color::DarkGray),
-        )),
-        ListItem::new(" "),
-    ]
+    vec![ListItem::new(line), ListItem::new(" ")]
+}
+
+/// A gray line across the chat, with a label in the middle.
+fn divider_line(label: &str, width: usize, label_color: Color) -> Line<'static> {
+    let label = format!(" {label} ");
+    let dashes = width.saturating_sub(label.chars().count());
+    let gray = Style::default().fg(Color::DarkGray);
+
+    Line::from(vec![
+        Span::styled("─".repeat(dashes / 2), gray),
+        Span::styled(label, Style::default().fg(label_color)),
+        Span::styled("─".repeat(dashes - dashes / 2), gray),
+    ])
+}
+
+/// A day marker's line, with the day lighter than the line.
+pub(crate) fn day_line(day: NaiveDate, width: usize) -> Line<'static> {
+    divider_line(
+        &label_day(day, Local::now().date_naive()),
+        width,
+        Color::Gray,
+    )
 }
 
 /// What a day's marker says, as in Element: Today, Yesterday, the weekday
 /// for the rest of the week, then the full date.
-fn day_label(day: NaiveDate, today: NaiveDate) -> String {
+fn label_day(day: NaiveDate, today: NaiveDate) -> String {
     match (today - day).num_days() {
         0 => "Today".to_string(),
         1 => "Yesterday".to_string(),
@@ -2469,7 +2484,7 @@ pub(crate) mod tests {
     #[test]
     fn day_labels_count_back_a_week() {
         let today = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
-        let label = |days| day_label(today - chrono::Days::new(days), today);
+        let label = |days| label_day(today - chrono::Days::new(days), today);
 
         assert_eq!(label(0), "Today");
         assert_eq!(label(1), "Yesterday");

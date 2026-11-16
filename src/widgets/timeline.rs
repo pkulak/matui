@@ -1,11 +1,12 @@
 use crate::pictures::{PictureSource, Pictures, picture_source, source_uri};
 use crate::selection::{BodyRow, TextMap};
-use crate::widgets::chat::TimelineItem;
+use crate::widgets::chat::{TimelineItem, day_line};
 use crate::widgets::message::LineType;
+use chrono::NaiveDate;
 use matrix_sdk_ui::timeline::TimelineEventItemId;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Rect, Size};
-use ratatui::widgets::{List, ListDirection, ListItem, ListState, StatefulWidget, Widget};
+use ratatui::widgets::{Clear, List, ListDirection, ListItem, ListState, StatefulWidget, Widget};
 use ratatui_image::picker::Picker;
 use ratatui_image::sliced::{SignedPosition, SlicedImage};
 use std::ops::Range;
@@ -21,6 +22,9 @@ pub struct Timeline<'a> {
     placements: Vec<Placement>,
     // the message text on each list row
     bodies: Vec<Option<BodyRow<'a, TimelineEventItemId>>>,
+    // the list row of each day marker's line, bottom up
+    days: Vec<(usize, NaiveDate)>,
+    width: usize,
 }
 
 // where a message with a picture source landed in the list
@@ -46,6 +50,7 @@ impl<'a> Timeline<'a> {
         let mut items = vec![];
         let mut placements = vec![];
         let mut bodies = vec![];
+        let mut days = vec![];
 
         // each item reverses its own rows, so collect them one at a time
         let mut buffer = vec![];
@@ -71,6 +76,10 @@ impl<'a> Timeline<'a> {
             let start = line_types.len();
             line_types.append(&mut buffer);
             bodies.append(&mut body_buffer);
+
+            if let TimelineItem::DayMarker(day) = m {
+                days.push((start, *day));
+            }
 
             if let Some((message, source)) = source {
                 // the picture sits right under the author line, which is
@@ -98,28 +107,43 @@ impl<'a> Timeline<'a> {
             picker,
             placements,
             bodies,
+            days,
+            width,
         }
+    }
+
+    // the nearest day marker at or above a row
+    fn marker_over(&self, row: usize) -> Option<&(usize, NaiveDate)> {
+        self.days.iter().find(|(marker, _)| *marker >= row)
+    }
+
+    // the day to pin over a list this high, if any. The pin takes the top
+    // row, so it's for the row under that, once that's a message whose
+    // day's marker is off screen.
+    fn pinned_day(&self, offset: usize, height: u16) -> Option<NaiveDate> {
+        let top = offset + usize::from(height) - 1;
+        let under = top.checked_sub(1)?;
+
+        let (marker, day) = self.marker_over(under)?;
+        let on_blank = self.days.iter().any(|(marker, _)| marker + 1 == under);
+
+        (*marker > top && !on_blank).then_some(*day)
     }
 
     // draws the list and its ready pictures, returning the picture sources
     // that were drawn for the first time and need fetching, and where the
     // message text landed
     pub fn render(
-        self,
+        mut self,
         area: Rect,
         buf: &mut Buffer,
         state: &mut ListState,
     ) -> (Vec<PictureSource>, TextMap<TimelineEventItemId>) {
-        let list = List::new(self.items)
+        let list = List::new(std::mem::take(&mut self.items))
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .direction(ListDirection::BottomToTop);
 
-        StatefulWidget::render(list, area, buf, state);
-
-        // every row is one line high, so list rows map straight to screen
-        // rows, counting up from the bottom
-        let offset = state.offset();
-        let visible = offset..offset + area.height as usize;
+        StatefulWidget::render(&list, area, buf, state);
 
         // the list only makes room for the marker when something's selected
         let x = if state.selected().is_some() {
@@ -127,6 +151,33 @@ impl<'a> Timeline<'a> {
         } else {
             0
         };
+
+        // once the top day's marker scrolls off, its day stays pinned above
+        // a list one row shorter, so it can't hide the cursor
+        let mut area = area;
+
+        if area.height > 1
+            && let Some(day) = self.pinned_day(state.offset(), area.height)
+        {
+            let pin = Rect::new(area.x, area.y, area.width, 1);
+            area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+
+            Clear.render(pin.union(area), buf);
+            StatefulWidget::render(&list, area, buf, state);
+
+            // the day of the list's top row, as the list may have scrolled
+            // to keep the cursor showing
+            let top = state.offset() + usize::from(area.height) - 1;
+            let day = self.marker_over(top).map_or(day, |(_, day)| *day);
+
+            let line = Rect::new(pin.x + x, pin.y, self.width as u16, 1);
+            day_line(day, self.width).render(line.intersection(pin), buf);
+        }
+
+        // every row is one line high, so list rows map straight to screen
+        // rows, counting up from the bottom
+        let offset = state.offset();
+        let visible = offset..offset + area.height as usize;
 
         let mut map = TextMap::new(area);
 
@@ -199,6 +250,7 @@ mod tests {
     use crate::widgets::message::tests::{
         image_event, join_event, reaction_event, reply_event, text_event, thread_event,
     };
+    use chrono::NaiveDate;
     use image::DynamicImage;
     use matrix_sdk::ruma::exports::serde_json::{Value, json};
     use matrix_sdk::ruma::{OwnedMxcUri, owned_mxc_uri};
@@ -642,6 +694,99 @@ mod tests {
 
         assert!(matches!(drawn.line_types[3], LineType::RoomEvent));
         assert!(matches!(drawn.line_types[4], LineType::DeadSpace));
+    }
+
+    // five messages from one day, under its marker, newest first
+    async fn busy_day() -> Vec<TimelineItem> {
+        let events = (1..=5)
+            .map(|i| {
+                text_event(
+                    &format!("${i}:example.org"),
+                    i * 1000,
+                    &format!("message {i}"),
+                )
+            })
+            .collect();
+
+        let mut messages = make_message_list(&timeline_items(events).await, &vec![], "", None);
+        messages.push(TimelineItem::DayMarker(some_day()));
+        messages
+    }
+
+    fn some_day() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2001, 9, 8).unwrap()
+    }
+
+    fn pinned() -> String {
+        format!("  {:─^38}", " Sat, Sep 8, 2001 ")
+    }
+
+    #[tokio::test]
+    async fn the_day_stays_pinned_once_its_marker_scrolls_off() {
+        let messages = busy_day().await;
+
+        // fifteen rows of messages, then the marker, in ten
+        let drawn = draw_messages(&messages, 0, HEIGHT, &mut Pictures::default(), None);
+
+        assert_eq!(drawn.rows[0], pinned());
+        assert_eq!(drawn.rows[1], "");
+        assert_eq!(drawn.rows[3], "  message 3");
+        assert_eq!(drawn.rows[9], "> message 5");
+
+        // the day is lighter than its line
+        assert_eq!(drawn.buf[(2, 0)].fg, Color::DarkGray);
+        assert_eq!(drawn.buf[(13, 0)].fg, Color::Gray);
+
+        // with the marker showing, nothing's pinned
+        let drawn = draw_messages(&messages, 0, 17, &mut Pictures::default(), None);
+
+        assert_eq!(drawn.rows[0], "");
+        assert_eq!(drawn.rows[1], pinned());
+        assert_eq!(drawn.rows[3], "  @alice:example.org <time>");
+    }
+
+    #[tokio::test]
+    async fn the_pinned_day_never_hides_the_cursor() {
+        let messages = busy_day().await;
+
+        // message 2 is on the tenth row up, which the pin would cover
+        let drawn = draw_messages(&messages, 9, HEIGHT, &mut Pictures::default(), None);
+
+        assert_eq!(drawn.rows[0], pinned());
+        assert_eq!(drawn.rows[1], "> message 2");
+    }
+
+    #[tokio::test]
+    async fn the_next_days_marker_replaces_the_pin() {
+        let items = timeline_items(vec![
+            text_event("$1:example.org", 1000, "one"),
+            text_event("$2:example.org", 2000, "two"),
+        ])
+        .await;
+
+        let mut messages = make_message_list(&items, &vec![], "", None);
+        messages.insert(1, TimelineItem::DayMarker(some_day().succ_opt().unwrap()));
+        messages.push(TimelineItem::DayMarker(some_day()));
+
+        // the newer marker on the top row
+        let drawn = draw_messages(&messages, 0, 4, &mut Pictures::default(), None);
+
+        assert!(drawn.rows[0].contains(" Sun, Sep 9, 2001 "));
+        assert!(!drawn.rows.iter().any(|row| row.contains("Sep 8")));
+
+        // nothing's pinned until there's a row of the older day to go under
+        // it: not over the marker's blank row, nor that and one more
+        for height in [5, 6] {
+            let drawn = draw_messages(&messages, 0, height, &mut Pictures::default(), None);
+
+            assert!(!drawn.rows.iter().any(|row| row.contains("Sep 8")));
+        }
+
+        let drawn = draw_messages(&messages, 0, 7, &mut Pictures::default(), None);
+
+        assert_eq!(drawn.rows[0], pinned());
+        assert_eq!(drawn.rows[1], "  one");
+        assert!(drawn.rows[3].contains(" Sun, Sep 9, 2001 "));
     }
 
     #[tokio::test]
