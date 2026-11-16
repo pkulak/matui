@@ -1315,9 +1315,11 @@ impl Widget for ChatWidget<'_> {
         let window = &self.chat.messages[self.chat.window.clone()];
         let mut pictures = self.chat.pictures.borrow_mut();
 
+        // the cursor's two columns on the left, and two to match on the
+        // right, so the chat sits centred under the header
         let timeline = Timeline::new(
             window,
-            (area.width - 2) as usize,
+            (area.width - 4) as usize,
             &mut line_types,
             &mut pictures,
             picker(),
