@@ -140,13 +140,14 @@ fn poll_text(poll: &PollResult) -> String {
     text
 }
 
-/// The latitude and longitude in a geo URI, such as `geo:51.5,-0.12;u=35`.
-fn coordinates(uri: &str) -> Option<(&str, &str)> {
+/// The latitude and longitude in a geo URI, such as `geo:51.5,-0.12;u=35`,
+/// to five places, about a metre.
+fn coordinates(uri: &str) -> Option<(f64, f64)> {
     let point = uri.strip_prefix("geo:")?.split(';').next()?;
     let mut parts = point.split(',');
-    let (lat, lon) = (parts.next()?, parts.next()?);
+    let round = |c: &str| c.parse::<f64>().ok().map(|c| (c * 1e5).round() / 1e5);
 
-    (lat.parse::<f64>().is_ok() && lon.parse::<f64>().is_ok()).then_some((lat, lon))
+    Some((round(parts.next()?)?, round(parts.next()?)?))
 }
 
 /// A message or edit of ours the server doesn't have yet.
@@ -1126,10 +1127,13 @@ pub(crate) mod tests {
 
         let pinned = message(location_event(json!({
             "msgtype": "m.location",
-            "body": "Location geo:51.5,-0.12 at 2026-11-15T12:00:00Z",
-            "geo_uri": "geo:51.5,-0.12"
+            "body": "Location geo:45.5689773824598,-122.631459536459 at 2026-11-15T12:00:00Z",
+            "geo_uri": "geo:45.5689773824598,-122.631459536459"
         })));
-        assert!(pinned.display().starts_with("📍 Location\n"));
+        assert_eq!(
+            pinned.display(),
+            "📍 Location\nhttps://www.openstreetmap.org/?mlat=45.56898&mlon=-122.63146#map=16/45.56898/-122.63146"
+        );
 
         let broken = message(location_event(json!({
             "msgtype": "m.location",
