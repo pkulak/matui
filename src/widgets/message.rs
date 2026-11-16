@@ -74,6 +74,7 @@ pub struct Message {
     search_term: OnceCell<String>,
     display_cache: OnceCell<String>,
     links_cache: OnceCell<Vec<Range<usize>>>,
+    reaction_lines: OnceCell<Vec<String>>,
 }
 
 /// A timestamp in local time.
@@ -220,6 +221,7 @@ impl Message {
             search_term: OnceCell::new(),
             display_cache: OnceCell::new(),
             links_cache: OnceCell::new(),
+            reaction_lines: OnceCell::new(),
         }
     }
 
@@ -277,7 +279,6 @@ impl Message {
             .map(|(key, senders)| Reaction {
                 body: key.clone(),
                 senders: senders.keys().cloned().map(Username::new).collect(),
-                list_view: OnceCell::new(),
             })
             .collect();
 
@@ -478,7 +479,8 @@ impl Message {
             for r in &self.reactions {
                 for sender in &r.senders {
                     ret.push_str(
-                        format!("* {} by {} ({})\n", r.display(), sender, sender.id).as_str(),
+                        format!("* {} by {} ({})\n", pad_emoji(&r.body), sender, sender.id)
+                            .as_str(),
                     );
                 }
             }
@@ -497,6 +499,32 @@ impl Message {
         }
 
         ret
+    }
+
+    /// The reactions under the message, a line for each set of people with
+    /// every emoji they reacted with, in the order they first came. Cached to
+    /// keep allocations out of the render loop.
+    fn reaction_lines(&self) -> &[String] {
+        self.reaction_lines.get_or_init(|| {
+            let mut groups: Vec<(Vec<String>, &[Username])> = Vec::new();
+
+            for r in &self.reactions {
+                let same = |senders: &[Username]| {
+                    senders.len() == r.senders.len()
+                        && r.senders.iter().all(|s| senders.contains(s))
+                };
+
+                match groups.iter_mut().find(|(_, senders)| same(senders)) {
+                    Some((emojis, _)) => emojis.push(pad_emoji(&r.body)),
+                    None => groups.push((vec![pad_emoji(&r.body)], &r.senders)),
+                }
+            }
+
+            groups
+                .into_iter()
+                .map(|(emojis, senders)| format!("{} {}", emojis.join(" "), first_names(senders)))
+                .collect()
+        })
     }
 
     pub fn style(&self) -> Style {
@@ -798,7 +826,7 @@ impl Message {
                 sidecar.push(LineType::MessageContent);
             }
 
-            if message_overlap || self.reactions.len() > 5 {
+            if message_overlap || self.reaction_lines().len() > 5 {
                 lines.push(vec![Span::styled(
                     "* overflow: type \"v\" to view entire message",
                     Style::default().fg(Color::Red),
@@ -821,7 +849,7 @@ impl Message {
                 sidecar.push(LineType::MessageContent);
             }
 
-            if message_overlap || self.reactions.len() > 5 {
+            if message_overlap || self.reaction_lines().len() > 5 {
                 lines.push(vec![Span::styled(
                     "* overflow: type \"v\" to view entire message",
                     Style::default().fg(Color::Red),
@@ -862,9 +890,9 @@ impl Message {
         }
 
         // reactions
-        for r in self.reactions.iter().take(5) {
+        for r in self.reaction_lines().iter().take(5) {
             lines.push(vec![Span::styled(
-                r.list_view(),
+                r.as_str(),
                 Style::default().fg(Color::DarkGray),
             )]);
 
@@ -911,44 +939,25 @@ pub enum LineType {
 pub struct Reaction {
     pub body: String,
     pub senders: Vec<Username>,
-    pub list_view: OnceCell<String>,
 }
 
-impl Reaction {
-    pub fn display(&self) -> String {
-        if let Some(emoji) = emojis::get(&self.body) {
-            if let Some(shortcode) = emoji.shortcode() {
-                format!("{} ({})", pad_emoji(&self.body), shortcode)
-            } else {
-                pad_emoji(&self.body)
-            }
-        } else {
-            pad_emoji(&self.body)
-        }
-    }
+// up to 5 first names, then how many others
+fn first_names(senders: &[Username]) -> String {
+    let iter = senders.iter().map(|s| {
+        s.as_str()
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    });
 
-    pub fn pretty_senders(&self) -> String {
-        let iter = self.senders.iter().map(|s| {
-            s.as_str()
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .to_string()
-        });
-
-        pretty_list(limit_list(iter, 5, self.senders.len(), None))
-    }
-
-    // cached to keep allocations out of the render loop
-    pub fn list_view(&self) -> &str {
-        self.list_view
-            .get_or_init(|| format!("{} {}", self.display(), self.pretty_senders()))
-    }
+    pretty_list(limit_list(iter, 5, senders.len(), None))
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::widgets::message::{Message, sent_label};
+    use crate::matrix::username::Username;
+    use crate::widgets::message::{Message, Reaction, sent_label};
     use chrono::NaiveDate;
     use matrix_sdk::ruma::events::room::message::{MessageType::Text, TextMessageEventContent};
     use matrix_sdk::ruma::exports::serde_json::{self, Value, json};
@@ -1188,6 +1197,35 @@ pub(crate) mod tests {
             Some(&reply_id)
         );
         assert!(message.contains_id(&reply_id));
+    }
+
+    #[test]
+    fn groups_emojis_with_the_same_people() {
+        let mut message = test_message(owned_event_id!("$root:example.org"));
+        let reaction = |body: &str, senders: &[&str]| Reaction {
+            body: body.to_string(),
+            senders: senders
+                .iter()
+                .map(|&s| Username::new(s.try_into().unwrap()))
+                .collect(),
+        };
+
+        message.reactions = vec![
+            reaction("👍", &["@alice:example.org", "@bob:example.org"]),
+            reaction("👀", &["@carol:example.org"]),
+            reaction("❤️", &["@bob:example.org", "@alice:example.org"]),
+            reaction("✅", &["@carol:example.org"]),
+            reaction("😆", &["@bob:example.org"]),
+        ];
+
+        assert_eq!(
+            message.reaction_lines(),
+            [
+                "👍 ❤️  @alice:example.org and @bob:example.org",
+                "👀 ✅ @carol:example.org",
+                "😆 @bob:example.org",
+            ]
+        );
     }
 
     #[test]

@@ -477,7 +477,7 @@ mod tests {
             [
                 "  @alice:example.org <time>",
                 "  hello",
-                "> 👍  (+1) @alice:example.org",
+                "> 👍  @alice:example.org",
             ]
         );
     }
