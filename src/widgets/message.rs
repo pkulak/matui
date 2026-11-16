@@ -2,14 +2,11 @@ use crate::markdown;
 use crate::selection::{self, BodyRow};
 use crate::settings;
 use crate::widgets::message::MessageType::File;
-use chrono::TimeZone;
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
 use human_bytes::human_bytes;
 use std::borrow::Cow;
 use std::collections::BinaryHeap;
 use std::ops::Range;
-use std::sync::OnceLock;
-use std::time::{Duration, SystemTime};
-use timeago::Formatter;
 
 use crate::matrix::emoji::pad_emoji;
 use crate::matrix::mentions::restore_user_ids;
@@ -79,14 +76,27 @@ pub struct Message {
     links_cache: OnceCell<Vec<Range<usize>>>,
 }
 
-static FORMATTER: OnceLock<Formatter> = OnceLock::new();
+/// A timestamp in local time.
+pub(crate) fn local_time(ts: MilliSecondsSinceUnixEpoch) -> DateTime<Local> {
+    let time = DateTime::from_timestamp(ts.as_secs().into(), 0).unwrap_or_default();
+    time.with_timezone(&Local)
+}
 
-fn get_formatter() -> &'static Formatter {
-    FORMATTER.get_or_init(|| {
-        let mut fmtr = timeago::Formatter::new();
-        fmtr.min_unit(timeago::TimeUnit::Minutes);
-        fmtr
-    })
+/// When a message was sent, under the marker for `day`: the time, with the
+/// date too when it's another day, as for a message someone replied to later.
+fn sent_label(sent: NaiveDateTime, day: NaiveDate, today: NaiveDate) -> String {
+    let time = sent.format("%-I:%M %p");
+    let date = sent.date();
+
+    if date == day {
+        time.to_string()
+    } else if (today - date).num_days() < 7 {
+        format!("{} {time}", sent.format("%a"))
+    } else if date.year() == today.year() {
+        format!("{}, {time}", sent.format("%b %-d"))
+    } else {
+        format!("{}, {time}", sent.format("%b %-d, %Y"))
+    }
 }
 
 const UNABLE_TO_DECRYPT: &str = "Unable to decrypt this message.";
@@ -450,7 +460,7 @@ impl Message {
 
     /// Everything about the message, with its earlier bodies, oldest first.
     pub fn display_full(&self, history: &[MessageType]) -> String {
-        let date = Local.timestamp_opt(self.sent.as_secs().into(), 0).unwrap();
+        let date = local_time(self.sent);
 
         let mut ret = format!(
             "Sent {} by {} ({})\n\n",
@@ -487,17 +497,6 @@ impl Message {
         }
 
         ret
-    }
-
-    pub fn pretty_elapsed(&self) -> String {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let then: u64 = self.sent.as_secs().into();
-
-        get_formatter().convert(Duration::from_secs(now.saturating_sub(then)))
     }
 
     pub fn style(&self) -> Style {
@@ -707,7 +706,9 @@ impl Message {
         sidecar: &mut Vec<LineType>,
         bodies: &mut Vec<Option<BodyRow<'a, TimelineEventItemId>>>,
     ) -> Vec<ListItem<'a>> {
-        let lines = self.to_list_items_internal(self.display(), width, picture_rows, sidecar);
+        // the day of its marker, which is its latest reply's
+        let day = local_time(*self.sort_order()).date_naive();
+        let lines = self.to_list_items_internal(self.display(), width, picture_rows, day, sidecar);
 
         // after the gutters go in, so the columns count them
         bodies.extend(lines.iter().map(|spans| self.body_row(spans)));
@@ -735,6 +736,7 @@ impl Message {
         body: &'a str,
         width: usize,
         picture_rows: Option<u16>,
+        day: NaiveDate,
         sidecar: &mut Vec<LineType>,
     ) -> Vec<Vec<Span<'a>>> {
         let mut lines = vec![];
@@ -747,7 +749,14 @@ impl Message {
         let mut author = vec![
             Span::styled(self.sender.as_str(), Style::default().fg(Color::Green)),
             Span::from(" "),
-            Span::styled(self.pretty_elapsed(), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                sent_label(
+                    local_time(self.sent).naive_local(),
+                    day,
+                    Local::now().date_naive(),
+                ),
+                Style::default().fg(Color::DarkGray),
+            ),
         ];
 
         if self.edited {
@@ -879,7 +888,7 @@ impl Message {
         for (i, r) in self.replies.iter().enumerate() {
             let reply = r.display();
             let body = Message::remove_reply_header(reply);
-            let mut reply_lines = r.to_list_items_internal(body, width - 2, None, sidecar);
+            let mut reply_lines = r.to_list_items_internal(body, width - 2, None, day, sidecar);
             Message::indent(&mut reply_lines, i == 0);
             lines.append(&mut reply_lines);
         }
@@ -939,7 +948,8 @@ impl Reaction {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::widgets::message::Message;
+    use crate::widgets::message::{Message, sent_label};
+    use chrono::NaiveDate;
     use matrix_sdk::ruma::events::room::message::{MessageType::Text, TextMessageEventContent};
     use matrix_sdk::ruma::exports::serde_json::{self, Value, json};
     use matrix_sdk::ruma::{
@@ -1083,6 +1093,28 @@ pub(crate) mod tests {
 
         let plain = message(image_event("dog.jpg", None, None, None, None));
         assert_eq!(plain.display(), "dog.jpg");
+    }
+
+    #[test]
+    fn sent_labels_add_the_day_when_its_not_the_markers() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+        let at = |date: NaiveDate| date.and_hms_opt(14, 41, 0).unwrap();
+        let ago = |days| today - chrono::Days::new(days);
+
+        assert_eq!(sent_label(at(today), today, today), "2:41 PM");
+        assert_eq!(sent_label(at(ago(3)), ago(3), today), "2:41 PM");
+
+        // replied to on a later day
+        assert_eq!(sent_label(at(ago(1)), today, today), "Sat 2:41 PM");
+        assert_eq!(sent_label(at(ago(6)), today, today), "Mon 2:41 PM");
+        assert_eq!(sent_label(at(ago(7)), today, today), "Nov 8, 2:41 PM");
+        assert_eq!(
+            sent_label(at(ago(400)), today, today),
+            "Oct 11, 2025, 2:41 PM"
+        );
+
+        let morning = today.and_hms_opt(9, 5, 0).unwrap();
+        assert_eq!(sent_label(morning, today, today), "9:05 AM");
     }
 
     #[test]

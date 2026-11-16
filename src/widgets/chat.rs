@@ -10,7 +10,7 @@ use crate::widgets::EventResult::Consumed;
 use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
 use crate::widgets::members::Members;
-use crate::widgets::message::{LineType, Message, Reaction, Receipt};
+use crate::widgets::message::{LineType, Message, Reaction, Receipt, local_time};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
 use crate::widgets::search::Search;
@@ -19,7 +19,7 @@ use crate::widgets::upload::Upload;
 use crate::widgets::{EventResult, get_margin};
 use crate::{KeyCombo, consumed, limit_list, pretty_list, truncate};
 use anyhow::bail;
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{Local, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use image::DynamicImage;
 use log::info;
@@ -1387,9 +1387,7 @@ impl TimelineItem {
             TimelineItem::ReadMarker | TimelineItem::DayMarker(_) => return None,
         };
 
-        let time = DateTime::from_timestamp(ts.as_secs().into(), 0).unwrap_or_default();
-
-        Some(time.with_timezone(&Local).date_naive())
+        Some(local_time(ts).date_naive())
     }
 
     pub fn to_list_items<'a>(

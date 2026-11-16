@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Show the time each message was sent, such as 2:41 PM, instead of how long ago, now that the day lines give the date. A message that sits under a later day, because someone replied to it then, shows its own date too.
 - Draw a line above each day's messages that says which day it is: Today, Yesterday, the weekday for the rest of the week, then the full date. A message someone replies to sits under the day of its latest reply. Once a day's line scrolls off, it stays pinned at the top of the chat until the next day's line takes its place.
 - Show polls with their answers and vote counts, which update as votes come in. Polls that hide their results show the counts once they end. Voting still needs another client.
 - Show shared locations as a pin with the place's name and an OpenStreetMap link, which Enter opens. They used to be left out.

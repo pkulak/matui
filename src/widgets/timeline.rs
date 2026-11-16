@@ -320,7 +320,7 @@ mod tests {
                     })
                     .collect();
 
-                without_elapsed(row.trim_end())
+                without_time(row.trim_end())
             })
             .collect();
 
@@ -372,13 +372,14 @@ mod tests {
         (0..rows.len()).filter(|&i| rows[i].contains('#')).collect()
     }
 
-    // swap an author line's "56 years ago" for a stable placeholder
-    fn without_elapsed(row: &str) -> String {
-        if !row.ends_with(" ago") {
+    // swap an author line's "4:00 PM", which depends on the time zone, for
+    // a stable placeholder
+    fn without_time(row: &str) -> String {
+        if !row.ends_with(" AM") && !row.ends_with(" PM") {
             return row.to_string();
         }
 
-        let author = row.rsplitn(4, ' ').last().unwrap();
+        let author = row.rsplitn(3, ' ').last().unwrap();
         format!("{} <time>", author)
     }
 
@@ -719,6 +720,32 @@ mod tests {
 
     fn pinned() -> String {
         format!("  {:─^38}", " Sat, Sep 8, 2001 ")
+    }
+
+    #[tokio::test]
+    async fn a_message_replied_to_on_a_later_day_shows_its_date() {
+        // 2001-09-09, and two days later
+        let rows = draw(
+            vec![
+                text_event("$old:example.org", 1_000_000_000_000, "old"),
+                reply_event(
+                    "$reply:example.org",
+                    1_000_172_800_000,
+                    "$old:example.org",
+                    "hi",
+                ),
+            ],
+            0,
+        )
+        .await
+        .0;
+
+        // the time's cut off at this width
+        let dated: Vec<_> = rows.iter().filter(|r| r.contains(", 2001, ")).collect();
+
+        assert_eq!(dated.len(), 1);
+        assert!(dated[0].starts_with("  @alice:example.org Sep "));
+        assert!(rows.iter().any(|r| r.ends_with("@bob:example.org <time>")));
     }
 
     #[tokio::test]

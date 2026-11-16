@@ -2836,15 +2836,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "isolang"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe50d48c77760c55188549098b9a7f6e37ae980c586a24693d6b01c3b2010c3c"
-dependencies = [
- "phf 0.11.3",
-]
-
-[[package]]
 name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3778,7 +3769,6 @@ dependencies = [
  "tempfile",
  "termimad",
  "textwrap",
- "timeago",
  "tokio",
  "tracing-subscriber",
  "unicode-segmentation",
@@ -6409,16 +6399,6 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
-]
-
-[[package]]
-name = "timeago"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c29b13d230e9cd58513d38701a661fc06e1215398937532a2d938ecca6f219"
-dependencies = [
- "chrono",
- "isolang",
 ]
 
 [[package]]
