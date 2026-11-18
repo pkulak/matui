@@ -35,7 +35,7 @@ pub enum MatuiEvent {
     Confirm(String, String),
     Error(String),
     Invited(Room, String),
-    LoggedOut,
+    LoggedOut(Option<&'static str>),
     /// Signing in reached this step.
     Login(Login),
     LoginComplete,
@@ -163,7 +163,8 @@ pub fn handle_app_event(event: MatuiEvent, app: &mut App) {
                 )));
             }
         }
-        MatuiEvent::LoggedOut => {
+        MatuiEvent::LoggedOut(notice) => {
+            app.exit_notice = notice;
             app.running = false;
         }
         MatuiEvent::Login(step) => {

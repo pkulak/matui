@@ -1,4 +1,3 @@
-use std::fs;
 use std::future::IntoFuture;
 use std::path::Path;
 use std::sync::Arc;
@@ -22,7 +21,7 @@ use matrix_sdk::ruma::serde::Raw;
 use matrix_sdk::utils::local_server::{LocalServerBuilder, LocalServerResponse};
 use tokio::sync::Notify;
 
-use super::session::{build_client, persist_session, restore_session};
+use super::session::{build_client, finish_logout, persist_session, restore_session};
 use super::sync::{NO_SLIDING_SYNC, supports_sliding_sync};
 use super::{Matrix, Notice};
 use crate::handler::MatuiEvent::{Error, QrLoginFailed};
@@ -249,14 +248,8 @@ impl Matrix {
                 return;
             }
 
-            let (data_dir, _) = Matrix::dirs();
-
             drop(progress);
-
-            match fs::remove_dir_all(&data_dir) {
-                Ok(_) => matrix.send(MatuiEvent::LoggedOut),
-                Err(err) => matrix.send(Error(err.to_string())),
-            }
+            matrix.send(finish_logout(&Matrix::dirs().0, None));
         });
     }
 }

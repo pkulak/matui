@@ -52,6 +52,7 @@ pub enum Session {
 pub struct App {
     /// Is the application running?
     pub running: bool,
+    pub exit_notice: Option<&'static str>,
 
     /// How many ticks have passed?
     pub timestamp: usize,
@@ -77,6 +78,7 @@ impl App {
     pub fn new(send: Sender<Event>, handle: Handle) -> Self {
         Self {
             running: true,
+            exit_notice: None,
             timestamp: 0,
             session: Session::SignedIn,
             popup: None,

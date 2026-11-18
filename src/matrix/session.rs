@@ -16,7 +16,8 @@ use rand::{RngExt, distr::Alphanumeric};
 use serde::{Deserialize, Serialize};
 
 use super::Matrix;
-use crate::handler::MatuiEvent::Error;
+use crate::handler::MatuiEvent;
+use matrix_sdk::ruma::api::error::UnknownTokenErrorData;
 
 /// The data needed to re-build a client.
 #[derive(Debug, Serialize, Deserialize)]
@@ -52,9 +53,9 @@ impl Matrix {
     pub(super) fn watch_session(&self, client: Client) {
         let matrix = self.clone();
 
-        self.spawn(async move {
-            let mut changes = client.subscribe_to_session_changes();
+        let mut changes = client.subscribe_to_session_changes();
 
+        self.spawn(async move {
             while let Ok(change) = changes.recv().await {
                 match change {
                     SessionChange::TokensRefreshed => {
@@ -64,14 +65,36 @@ impl Matrix {
                             error!("could not persist refreshed tokens: {}", err);
                         }
                     }
-                    // future improvement: wipe local data and return to
-                    // the signin form
-                    SessionChange::UnknownToken(_) => matrix.send(Error(
-                        "Your session has expired. Please sign in again.".to_string(),
-                    )),
+                    SessionChange::UnknownToken(data) => {
+                        let event = unknown_token(&Matrix::dirs().0, data);
+                        let logged_out = matches!(event, MatuiEvent::LoggedOut(_));
+                        matrix.send(event);
+                        if logged_out {
+                            break;
+                        }
+                    }
                 }
             }
         });
+    }
+}
+
+fn unknown_token(data_dir: &Path, data: UnknownTokenErrorData) -> MatuiEvent {
+    if data.soft_logout {
+        // Reauthentication can recover this device and its encryption keys.
+        MatuiEvent::Error("Your session has expired. Please sign in again.".to_string())
+    } else {
+        finish_logout(
+            data_dir,
+            Some("Your session has ended. Restart matui to sign in again."),
+        )
+    }
+}
+
+pub(super) fn finish_logout(data_dir: &Path, notice: Option<&'static str>) -> MatuiEvent {
+    match fs::remove_dir_all(data_dir) {
+        Ok(()) => MatuiEvent::LoggedOut(notice),
+        Err(err) => MatuiEvent::Error(format!("Could not remove local session data: {err}")),
     }
 }
 
@@ -239,6 +262,29 @@ mod tests {
     use matrix_sdk::{SqliteStateStore, StateStore};
 
     use super::*;
+
+    #[test]
+    fn unknown_token_wipes_local_data_only_on_hard_logout() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("matui");
+        fs::create_dir(&data_dir).unwrap();
+        let session = data_dir.join("session");
+        fs::write(&session, "saved session").unwrap();
+
+        let mut soft = UnknownTokenErrorData::new();
+        soft.soft_logout = true;
+        assert!(matches!(
+            unknown_token(&data_dir, soft),
+            MatuiEvent::Error(_)
+        ));
+        assert_eq!(fs::read_to_string(session).unwrap(), "saved session");
+
+        assert!(matches!(
+            unknown_token(&data_dir, UnknownTokenErrorData::new()),
+            MatuiEvent::LoggedOut(Some(_))
+        ));
+        assert!(!data_dir.exists());
+    }
 
     #[tokio::test]
     async fn store_set_up_with_the_passphrase_switches_to_the_key() {

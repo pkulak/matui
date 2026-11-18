@@ -104,6 +104,9 @@ fn main() -> anyhow::Result<()> {
         DisableFocusChange
     );
     ratatui::restore();
+    if let Some(notice) = app.exit_notice {
+        eprintln!("{notice}");
+    }
 
     Ok(())
 }
