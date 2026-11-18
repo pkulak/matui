@@ -119,9 +119,13 @@ impl Chat {
 
         let follow = matrix.follow_timeline(room);
 
-        Some(Self {
-            matrix: matrix.clone(),
-            room: decorated_room,
+        Some(Self::new(matrix, decorated_room, follow, max_events()))
+    }
+
+    fn new(matrix: Matrix, room: DecoratedRoom, follow: AbortHandle, max_events: usize) -> Self {
+        Self {
+            matrix,
+            room,
             timeline: None,
             items: Vector::new(),
             messages: vec![],
@@ -132,7 +136,7 @@ impl Chat {
             typing: None,
             copied: None,
             list_state: Cell::new(ListState::default()),
-            max_events: max_events(),
+            max_events,
             paging: RefCell::new(Paging::Opening),
             follow: Some(follow),
             line_types: Mutex::new(vec![]),
@@ -146,7 +150,7 @@ impl Chat {
             members: vec![],
             pretty_members: OnceCell::new(),
             checked: HashSet::new(),
-        })
+        }
     }
 
     /// A new chat viewing a single thread in this room, on its own timeline.
@@ -154,34 +158,17 @@ impl Chat {
         let timeline = self.matrix.thread_timeline(&self.room(), root.clone())?;
         let follow = self.matrix.follow(timeline.clone());
 
-        let chat = Self {
-            matrix: self.matrix.clone(),
-            room: self.room.clone(),
-            timeline: Some(timeline),
-            items: Vector::new(),
-            messages: vec![],
-            window: (0..0),
-            read_to: None,
-            read_marker: None,
-            react: None,
-            typing: None,
-            copied: None,
-            list_state: Cell::new(ListState::default()),
-            max_events: self.max_events,
-            paging: RefCell::new(Paging::Idle),
-            follow: Some(follow),
-            line_types: Mutex::new(vec![]),
-            text_map: RefCell::new(TextMap::new(Rect::default())),
-            selection: Selection::default(),
-            pictures: RefCell::default(),
-            bookmark: Cell::new(Option::None),
-            search_term: "".to_string(),
-            thread_root: Some(root),
-            delete_combo: KeyCombo::new(vec!['d', 'd']),
-            members: self.members.clone(),
-            pretty_members: OnceCell::new(),
-            checked: self.checked.clone(),
-        };
+        let mut chat = Self::new(
+            self.matrix.clone(),
+            self.room.clone(),
+            follow,
+            self.max_events,
+        );
+        chat.timeline = Some(timeline);
+        chat.thread_root = Some(root);
+        chat.paging = RefCell::new(Paging::Idle);
+        chat.members = self.members.clone();
+        chat.checked = self.checked.clone();
 
         // the root comes once paging reaches the start of the thread
         chat.try_fetch_previous();
