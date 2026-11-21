@@ -99,6 +99,11 @@ impl TextInput {
             return Ignored;
         }
 
+        if input.modifiers == KeyModifiers::CONTROL && input.code == KeyCode::Char('u') {
+            self.clear();
+            return consumed!();
+        }
+
         if input.modifiers != KeyModifiers::SHIFT && input.modifiers != KeyModifiers::NONE {
             return Ignored;
         }
@@ -186,6 +191,13 @@ impl TextInput {
 
     pub fn value(&self) -> String {
         self.value.clone()
+    }
+
+    pub fn clear(&mut self) {
+        self.value.clear();
+        self.cursor = 0;
+        self.left.replace(0);
+        self.reset_autocomplete();
     }
 
     fn append_char(&mut self, ch: char) {
@@ -778,6 +790,38 @@ mod tests {
             input.key_event(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
             EventResult::Ignored
         ));
+    }
+
+    #[test]
+    fn ctrl_u_clears_input_and_resets_scroll_and_autocomplete() {
+        let area = Rect::new(0, 0, 14, 3);
+        let mut input = TextInput::new("Test".to_string(), true, false).with_autocomplete(
+            '@',
+            vec![
+                ("Greg".to_string(), "@greg:kulak.us".to_string()),
+                ("Gwen".to_string(), "@gwen:kulak.us".to_string()),
+            ],
+        );
+
+        // Scroll past the left edge and cycle autocomplete away from entry 0
+        type_str(&mut input, "a long message @");
+        input.key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let _ = render(&input, area);
+
+        // Ctrl+U clears everything, even from the middle of the line
+        input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        let result = input.key_event(&KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert!(matches!(result, EventResult::Consumed(_)));
+        assert_eq!(input.value(), "");
+
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│            │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(1, " ")]);
+
+        // Typing afterward starts at index 0 with autocomplete reset to Greg
+        type_str(&mut input, "@");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│@Greg       │");
     }
 
     fn type_str(input: &mut TextInput, s: &str) {

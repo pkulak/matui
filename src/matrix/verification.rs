@@ -699,6 +699,7 @@ mod tests {
         app.open_popup(Popup::Compose(Compose::new(
             room,
             timeline,
+            None,
             app.matrix.clone(),
             vec![],
             "half-written",

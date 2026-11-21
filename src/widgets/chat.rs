@@ -95,6 +95,7 @@ pub struct Chat {
     bookmark: Cell<Option<Bookmark>>,
     search_term: String,
     thread_root: Option<OwnedEventId>,
+    has_draft: bool,
     delete_combo: KeyCombo,
 
     members: Vec<RoomMember>,
@@ -119,10 +120,13 @@ impl Drop for Chat {
 impl Chat {
     pub fn try_new(matrix: Matrix, room: Room) -> Option<Self> {
         let decorated_room = matrix.wrap_room(&room)?;
+        let has_draft = matrix.load_draft(&room, None).is_some();
 
         let follow = matrix.follow_timeline(room);
 
-        Some(Self::new(matrix, decorated_room, follow, max_events()))
+        let mut chat = Self::new(matrix, decorated_room, follow, max_events());
+        chat.has_draft = has_draft;
+        Some(chat)
     }
 
     fn new(matrix: Matrix, room: DecoratedRoom, follow: AbortHandle, max_events: usize) -> Self {
@@ -149,6 +153,7 @@ impl Chat {
             bookmark: Cell::new(Option::None),
             search_term: "".to_string(),
             thread_root: None,
+            has_draft: false,
             delete_combo: KeyCombo::new(vec!['d', 'd']),
             members: vec![],
             pretty_members: OnceCell::new(),
@@ -160,6 +165,7 @@ impl Chat {
     pub fn thread(&self, root: OwnedEventId) -> anyhow::Result<Self> {
         let timeline = self.matrix.thread_timeline(&self.room(), root.clone())?;
         let follow = self.matrix.follow(timeline.clone());
+        let has_draft = self.matrix.load_draft(&self.room(), Some(&root)).is_some();
 
         let mut chat = Self::new(
             self.matrix.clone(),
@@ -169,6 +175,7 @@ impl Chat {
         );
         chat.timeline = Some(timeline);
         chat.thread_root = Some(root);
+        chat.has_draft = has_draft;
         chat.paging = RefCell::new(Paging::Idle);
         chat.members = self.members.clone();
         chat.checked = self.checked.clone();
@@ -927,6 +934,17 @@ impl Chat {
         self.timeline.clone()
     }
 
+    pub fn draft_event(
+        &mut self,
+        room_id: &RoomId,
+        thread_root: Option<&EventId>,
+        has_draft: bool,
+    ) {
+        if self.room.room_id() == room_id && self.thread_root.as_deref() == thread_root {
+            self.has_draft = has_draft;
+        }
+    }
+
     fn open_compose(&self, text: &str) -> EventResult {
         let Some(timeline) = self.timeline.clone() else {
             return EventResult::Ignored;
@@ -939,12 +957,17 @@ impl Chat {
             .block_on(async { self.room().members(RoomMemberships::JOIN).await })
             .unwrap_or_default();
 
+        let draft = self
+            .matrix
+            .load_draft(&self.room(), self.thread_root.as_deref());
+
         let compose = Compose::new(
             self.room.clone(),
             timeline,
+            self.thread_root.clone(),
             self.matrix.clone(),
             members,
-            text,
+            draft.as_deref().unwrap_or(text),
         );
 
         Consumed(Box::new(|app| app.open_popup(Popup::Compose(compose))))
@@ -1222,6 +1245,10 @@ impl Widget for ChatWidget<'_> {
 
         if self.chat.muted() {
             header_text.push_str(" (muted)")
+        }
+
+        if self.chat.has_draft {
+            header_text.insert_str(0, "[draft] ");
         }
 
         // render the header
@@ -1718,7 +1745,11 @@ pub(crate) mod tests {
             matrix.blur_event();
         }
 
-        (Chat::try_new(matrix, room).unwrap(), events)
+        let chat = tokio::task::spawn_blocking(move || Chat::try_new(matrix, room).unwrap())
+            .await
+            .unwrap();
+
+        (chat, events)
     }
 
     /// Hand the chat its timeline's events until it matches.

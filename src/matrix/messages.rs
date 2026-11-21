@@ -18,7 +18,8 @@ use matrix_sdk::ruma::events::room::member::MembershipState;
 use matrix_sdk::ruma::events::room::message::MessageType::{self, Audio, File, Image, Video};
 use matrix_sdk::ruma::events::room::message::{RoomMessageEventContent, TextMessageEventContent};
 use matrix_sdk::ruma::events::{AnyMessageLikeEvent, AnyTimelineEvent, MessageLikeEvent};
-use matrix_sdk::ruma::{OwnedEventId, OwnedRoomId};
+use matrix_sdk::ruma::{EventId, OwnedEventId, OwnedRoomId};
+use matrix_sdk::{ComposerDraft, ComposerDraftType};
 use matrix_sdk_ui::Timeline;
 use matrix_sdk_ui::timeline::{AttachmentConfig, TimelineEventItemId};
 
@@ -312,6 +313,41 @@ impl Matrix {
     pub fn end_typing(&self, room: Room, send: Sender<()>) {
         send.send(()).expect("could not stop thread");
         self.typing_notification(room, false);
+    }
+
+    /// Load the saved compose draft for a room or thread from the local store.
+    pub fn load_draft(&self, room: &Room, thread_root: Option<&EventId>) -> Option<String> {
+        match self.handle.block_on(room.load_composer_draft(thread_root)) {
+            Ok(draft) => draft.map(|d| d.plain_text),
+            Err(e) => {
+                error!("could not load draft: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Save a compose draft for a room or thread to the local store.
+    pub fn save_draft(&self, room: &Room, thread_root: Option<&EventId>, text: String) {
+        let draft = ComposerDraft {
+            plain_text: text,
+            html_text: None,
+            draft_type: ComposerDraftType::NewMessage,
+            attachments: vec![],
+        };
+
+        if let Err(e) = self
+            .handle
+            .block_on(room.save_composer_draft(draft, thread_root))
+        {
+            error!("could not save draft: {}", e);
+        }
+    }
+
+    /// Remove any saved compose draft for a room or thread from the local store.
+    pub fn clear_draft(&self, room: &Room, thread_root: Option<&EventId>) {
+        if let Err(e) = self.handle.block_on(room.clear_composer_draft(thread_root)) {
+            error!("could not clear draft: {}", e);
+        }
     }
 }
 

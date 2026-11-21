@@ -512,7 +512,7 @@ pub(crate) mod tests {
         assert_eq!(selected(&app), "!newer:localhost");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn the_room_being_looked_at_counts_as_read() {
         let (mut app, _events) = test_app();
         let server = MatrixMockServer::new().await;
@@ -530,7 +530,7 @@ pub(crate) mod tests {
 
         // opened from a notification, out of focus
         handle_blur_event(&mut app);
-        app.select_room(room);
+        tokio::task::block_in_place(|| app.select_room(room));
         assert_eq!(app.matrix.fetch_rooms()[0].unread_count(), 2);
 
         handle_focus_event(&mut app);
@@ -550,10 +550,10 @@ pub(crate) mod tests {
         assert!(app.matrix.sees(room.room_id(), Some(root)));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn closing_every_popup_leaves_an_open_room_showing() {
         let (_server, _client, mut app, room, _events) = app_with_room().await;
-        app.select_room(room);
+        tokio::task::block_in_place(|| app.select_room(room));
         assert!(app.view.is_some());
 
         app.open_popup(Popup::Help(Help::default()));
@@ -564,10 +564,10 @@ pub(crate) mod tests {
         assert!(app.popup.is_none());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn esc_closes_the_room_and_shows_the_switcher() {
         let (_server, _client, mut app, room, _events) = app_with_room().await;
-        app.select_room(room.clone());
+        tokio::task::block_in_place(|| app.select_room(room.clone()));
 
         let key = KeyEvent::from(KeyCode::Esc);
         handle_key_event(key, &mut app, &EventHandler::without_terminal()).unwrap();
@@ -866,7 +866,7 @@ pub(crate) mod tests {
         let (mut app, events) = test_app();
         app.matrix.set_client(client.clone());
         app.matrix.add_room(room.clone()).await;
-        app.select_room(room);
+        tokio::task::block_in_place(|| app.select_room(room));
 
         sync(
             &server,
@@ -913,7 +913,7 @@ pub(crate) mod tests {
         highlighted(terminal.backend().buffer(), text)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn the_mouse_reaches_the_chat_under_progress_but_no_other_popup() {
         let (_server, mut app, mut terminal) = app_showing("hello world").await;
 
@@ -925,7 +925,7 @@ pub(crate) mod tests {
         assert!(drag_across(&mut app, &mut terminal, "world"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn the_mouse_doesnt_reach_the_chat_under_the_reaction_picker() {
         let (_server, mut app, mut terminal) = app_showing("hello world").await;
         let key = KeyEvent::from(KeyCode::Char('r'));
@@ -955,5 +955,164 @@ pub(crate) mod tests {
             events.try_recv(),
             Ok(Event::Matui(MatuiEvent::Search(term))) if term == "a"
         ));
+    }
+
+    /// The top header row of the focused chat, as drawn.
+    fn header_text(app: &mut App, terminal: &mut Terminal<TestBackend>) -> String {
+        let frame = terminal.draw(|f| app.render(f)).unwrap();
+        let buf = frame.buffer;
+        (0..3)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol())
+            .collect()
+    }
+
+    /// Send a key to the app via `block_in_place` so sync store calls work inside
+    /// multi-threaded tokio tests.
+    fn send_key(app: &mut App, key: KeyEvent) {
+        let handler = EventHandler::without_terminal();
+        tokio::task::block_in_place(|| handle_key_event(key, app, &handler).unwrap());
+    }
+
+    fn type_keys(app: &mut App, text: &str) {
+        for c in text.chars() {
+            send_key(app, KeyEvent::from(KeyCode::Char(c)));
+        }
+    }
+
+    fn compose_text(app: &App) -> &str {
+        match &app.popup {
+            Some(Popup::Compose(c)) => c.text(),
+            _ => panic!("expected Compose popup"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compose_saves_loads_and_clears_drafts() {
+        let (server, mut app, mut terminal) = app_showing("hello world").await;
+        server
+            .mock_room_send()
+            .ok(matrix_sdk::ruma::owned_event_id!("$sent:example.org"))
+            .mount()
+            .await;
+
+        assert!(!header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        // Typing and pressing Esc saves the draft and marks the chat header
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        type_keys(&mut app, "half written ");
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+
+        assert!(app.popup.is_none());
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        // Pressing i restores the draft verbatim (including trailing space)
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(compose_text(&app), "half written ");
+
+        // Ctrl+U then Esc clears the saved draft and header indicator
+        send_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+
+        assert!(app.popup.is_none());
+        assert!(!header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        // @ seeds "@" when no draft exists
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('@')));
+        assert_eq!(compose_text(&app), "@");
+        send_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        type_keys(&mut app, "existing draft");
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        // @ loads the existing draft without adding "@"
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('@')));
+        assert_eq!(compose_text(&app), "existing draft");
+
+        // Ctrl+U then Enter clears the draft without sending
+        send_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        send_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        // Saving a draft and then sending it with Enter clears the draft
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        type_keys(&mut app, "ship it");
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(compose_text(&app), "ship it");
+        send_key(&mut app, KeyEvent::from(KeyCode::Enter));
+        assert!(!header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(compose_text(&app), "");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compose_drafts_are_separate_per_thread_and_survive_reopening() {
+        let (_server, mut app, mut terminal) = app_showing("thread root").await;
+        let room = app.current_room().unwrap();
+
+        // Save a draft in the main room
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        type_keys(&mut app, "room draft");
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        // Open a thread on the message: thread has no draft of its own yet
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('T')));
+        assert!(!header_text(&mut app, &mut terminal).contains("[draft] "));
+
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(compose_text(&app), "");
+        type_keys(&mut app, "thread draft");
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] Thread from:"));
+
+        // Closing the thread returns to the room with its own draft intact
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] "));
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(compose_text(&app), "room draft");
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+
+        // Reopening the thread loads its [draft] header and text immediately
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('T')));
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] Thread from:"));
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        assert_eq!(compose_text(&app), "thread draft");
+        send_key(&mut app, KeyEvent::from(KeyCode::Esc));
+
+        // Reopening the room from scratch loads its [draft] header immediately
+        app.close_room();
+        app.close_popup();
+        tokio::task::block_in_place(|| app.select_room(room));
+        assert!(header_text(&mut app, &mut terminal).contains("[draft] "));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ctrl_c_in_compose_quits_without_saving_draft() {
+        let (_server, mut app, _terminal) = app_showing("hello world").await;
+
+        send_key(&mut app, KeyEvent::from(KeyCode::Char('i')));
+        type_keys(&mut app, "unsaved");
+        send_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
+
+        assert!(!app.running);
+        let room = app.current_room().unwrap();
+        assert_eq!(room.load_composer_draft(None).await.unwrap(), None);
     }
 }

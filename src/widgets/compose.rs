@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use matrix_sdk::Room;
 use matrix_sdk::room::RoomMember;
-use matrix_sdk::ruma::{OwnedUserId, UserId};
+use matrix_sdk::ruma::{OwnedEventId, OwnedUserId, UserId};
 use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -24,6 +24,7 @@ pub struct Compose {
     input: TextInput,
     room: DecoratedRoom,
     timeline: Arc<Timeline>,
+    thread_root: Option<OwnedEventId>,
     combo: KeyCombo,
     matrix: Matrix,
 }
@@ -32,6 +33,7 @@ impl Compose {
     pub fn new(
         room: DecoratedRoom,
         timeline: Arc<Timeline>,
+        thread_root: Option<OwnedEventId>,
         matrix: Matrix,
         members: Vec<RoomMember>,
         text: &str,
@@ -52,6 +54,7 @@ impl Compose {
             input,
             room,
             timeline,
+            thread_root,
             combo: KeyCombo::new(vec!['j', 'j']),
             matrix,
         }
@@ -66,8 +69,25 @@ impl Compose {
             .send_text_message(self.timeline.clone(), message)
     }
 
+    fn close_with_draft(&self, has_draft: bool) -> EventResult {
+        let room_id = self.room.room_id().to_owned();
+        let thread_root = self.thread_root.clone();
+
+        Consumed(Box::new(move |app| {
+            for chat in app.chats_mut() {
+                chat.draft_event(&room_id, thread_root.as_deref(), has_draft);
+            }
+            app.close_popup();
+        }))
+    }
+
     pub fn widget(&self) -> ComposeWidget<'_> {
         ComposeWidget { compose: self }
+    }
+
+    #[cfg(test)]
+    pub fn text(&self) -> &str {
+        &self.input.value
     }
 
     pub fn mouse_event(&mut self, event: &MouseEvent) {
@@ -100,17 +120,16 @@ impl Compose {
                 )),
             );
 
-            if let Ok(Some(message)) = result {
-                if message.trim().is_empty() {
-                    self.input.value = "".to_string();
-                } else if message != self.input.value.trim() {
+            match result {
+                Ok(None) => self.input.clear(),
+                Ok(Some(message)) if message != self.input.value.trim() => {
                     // Unchanged text means the editor was closed without saving.
                     self.send(message);
-
-                    return Consumed(Box::new(move |app| {
-                        app.close_popup();
-                    }));
+                    self.matrix
+                        .clear_draft(&self.room(), self.thread_root.as_deref());
+                    return self.close_with_draft(false);
                 }
+                _ => {}
             }
 
             return consumed!();
@@ -124,9 +143,22 @@ impl Compose {
         self.matrix.typing_notification(self.room(), false);
 
         match input.code {
-            KeyCode::Esc => Consumed(Box::new(move |app| {
-                app.close_popup();
-            })),
+            KeyCode::Esc => {
+                let has_draft = if self.input.value.trim().is_empty() {
+                    self.matrix
+                        .clear_draft(&self.room(), self.thread_root.as_deref());
+                    false
+                } else {
+                    self.matrix.save_draft(
+                        &self.room(),
+                        self.thread_root.as_deref(),
+                        self.input.value.clone(),
+                    );
+                    true
+                };
+
+                self.close_with_draft(has_draft)
+            }
             KeyCode::Enter => {
                 let message = self.input.value.clone();
 
@@ -134,9 +166,10 @@ impl Compose {
                     self.send(message);
                 }
 
-                Consumed(Box::new(move |app| {
-                    app.close_popup();
-                }))
+                self.matrix
+                    .clear_draft(&self.room(), self.thread_root.as_deref());
+
+                self.close_with_draft(false)
             }
             _ => Ignored,
         }
