@@ -4,7 +4,8 @@ use crate::widgets::{EventResult, Focusable};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use std::cell::Cell;
 
@@ -170,24 +171,11 @@ impl TextInput {
     }
 
     fn display_value(&self) -> String {
-        let char_count = self.value.chars().count();
-        let mut value = if self.password {
-            "*".repeat(char_count)
+        if self.password {
+            "*".repeat(self.value.chars().count())
         } else {
             self.value.clone()
-        };
-
-        if self.focused {
-            if self.cursor >= char_count {
-                value.push('█');
-            } else {
-                let byte_start = char_to_byte(&value, self.cursor);
-                let ch_len = value[byte_start..].chars().next().unwrap().len_utf8();
-                value.replace_range(byte_start..byte_start + ch_len, "█");
-            }
         }
-
-        value
     }
 }
 
@@ -222,16 +210,31 @@ impl TextInputWidget<'_> {
         }
     }
 
-    fn adjusted_value(&self) -> String {
+    fn line(&self) -> Line<'static> {
         let left = self.textinput.left.get();
         let value = self.textinput.display_value();
+        let visible = &value[char_to_byte(&value, left)..];
 
-        if left == 0 {
-            return value;
+        if !self.textinput.focused || self.textinput.cursor < left {
+            return Line::from(visible.to_string());
         }
 
-        let byte_pos = char_to_byte(&value, left);
-        value[byte_pos..].to_string()
+        let cursor_byte = char_to_byte(visible, self.textinput.cursor - left);
+        let cursor_style = Style::default().add_modifier(Modifier::REVERSED);
+
+        if let Some(ch) = visible[cursor_byte..].chars().next() {
+            let next_byte = cursor_byte + ch.len_utf8();
+            Line::from(vec![
+                Span::raw(visible[..cursor_byte].to_string()),
+                Span::styled(visible[cursor_byte..next_byte].to_string(), cursor_style),
+                Span::raw(visible[next_byte..].to_string()),
+            ])
+        } else {
+            Line::from(vec![
+                Span::raw(visible.to_string()),
+                Span::styled(" ", cursor_style),
+            ])
+        }
     }
 }
 
@@ -258,7 +261,7 @@ impl Widget for TextInputWidget<'_> {
         self.textinput.area.set(area);
         self.adjust_window(area.width as usize);
 
-        Paragraph::new(self.adjusted_value())
+        Paragraph::new(self.line())
             .style(Style::default().fg(color))
             .render(area, buf);
     }
@@ -269,6 +272,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::style::Modifier;
     use ratatui::widgets::Widget;
 
     use crate::selection::tests::press;
@@ -355,44 +359,49 @@ mod tests {
     #[test]
     fn it_renders_correctly() {
         let area = Rect::new(0, 0, 10, 3);
-        let mut buf = Buffer::empty(area);
-
         let mut input = TextInput::new("Test".to_string(), true, false);
 
         // do an initial render
-        input.widget().render(area, &mut buf);
-
-        assert_eq!(get_line(&buf, 1), "│█       │");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│        │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(1, " ")]);
 
         // type out a long string
         for c in "Hello, world, this is me typing some things.".chars() {
             input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
 
-        input.widget().render(area, &mut buf);
-        assert_eq!(get_line(&buf, 1), "│things.█│");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│things. │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(8, " ")]);
 
         // arrow backwards a bit
         for _ in 0..3 {
             input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
         }
 
-        let mut buf = Buffer::empty(area);
-        input.widget().render(area, &mut buf);
-        assert_eq!(get_line(&buf, 1), "│thin█s. │");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│things. │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(5, "g")]);
 
         // delete
         input.key_event(&KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
 
-        input.widget().render(area, &mut buf);
-        assert_eq!(get_line(&buf, 1), "│ thi█s. │");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│ thigs. │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(5, "g")]);
 
         // resize larger
         let area = Rect::new(0, 0, 20, 3);
-        let mut buf = Buffer::empty(area);
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│yping some thigs. │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(15, "g")]);
 
-        input.widget().render(area, &mut buf);
-        assert_eq!(get_line(&buf, 1), "│yping some thi█s. │");
+        // unfocused hides the cursor
+        input.focused = false;
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│yping some thigs. │");
+        assert!(reversed_cells(&buf, 1).is_empty());
     }
 
     #[test]
@@ -433,12 +442,29 @@ mod tests {
         input.widget().render(area, &mut buf);
     }
 
+    fn render(input: &TextInput, area: Rect) -> Buffer {
+        let mut buf = Buffer::empty(area);
+        input.widget().render(area, &mut buf);
+        buf
+    }
+
     fn get_line(buf: &Buffer, line: usize) -> String {
         let width = buf.area.width as usize;
 
         buf.content()[(line * width)..((line + 1) * width)]
             .iter()
             .map(|c| c.symbol())
+            .collect()
+    }
+
+    fn reversed_cells(buf: &Buffer, line: usize) -> Vec<(usize, &str)> {
+        let width = buf.area.width as usize;
+
+        buf.content()[(line * width)..((line + 1) * width)]
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.modifier.contains(Modifier::REVERSED))
+            .map(|(x, c)| (x, c.symbol()))
             .collect()
     }
 }
