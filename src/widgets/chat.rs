@@ -14,7 +14,6 @@ use crate::spawn::{get_file_paths, spawn_editor};
 use crate::widgets::EventResult::Consumed;
 use crate::widgets::command::Command;
 use crate::widgets::compose::Compose;
-use crate::widgets::members::Members;
 use crate::widgets::message::{LineType, Message, Reaction, Receipt, local_time};
 use crate::widgets::react::React;
 use crate::widgets::react::ReactResult;
@@ -359,41 +358,8 @@ impl Chat {
 
                 Ok(consumed!())
             }
-            KeyCode::Char('i') => {
-                let Some(timeline) = self.timeline.clone() else {
-                    return Ok(EventResult::Ignored);
-                };
-
-                let room = self.room.clone();
-                let matrix = self.matrix.clone();
-
-                Ok(Consumed(Box::new(|app| {
-                    app.open_popup(Popup::Compose(Compose::new(room, timeline, matrix, "")))
-                })))
-            }
-            KeyCode::Char('@') => {
-                let Some(timeline) = self.timeline.clone() else {
-                    return Ok(EventResult::Ignored);
-                };
-
-                // normally a local store read, like V
-                let members = self
-                    .matrix
-                    .handle()
-                    .block_on(async { self.room().members(RoomMemberships::JOIN).await })?;
-
-                let members = Members::new(
-                    self.room.clone(),
-                    timeline,
-                    self.matrix.clone(),
-                    members,
-                    &self.matrix.me(),
-                );
-
-                Ok(Consumed(Box::new(|app| {
-                    app.open_popup(Popup::Members(members))
-                })))
-            }
+            KeyCode::Char('i') => Ok(self.open_compose("")),
+            KeyCode::Char('@') => Ok(self.open_compose("@")),
             KeyCode::Char('I') => {
                 let Some(timeline) = self.timeline.clone() else {
                     return Ok(EventResult::Ignored);
@@ -959,6 +925,29 @@ impl Chat {
     /// The room's timeline, once it's loaded.
     pub fn timeline(&self) -> Option<Arc<SdkTimeline>> {
         self.timeline.clone()
+    }
+
+    fn open_compose(&self, text: &str) -> EventResult {
+        let Some(timeline) = self.timeline.clone() else {
+            return EventResult::Ignored;
+        };
+
+        // normally a local store read, like V
+        let members = self
+            .matrix
+            .handle()
+            .block_on(async { self.room().members(RoomMemberships::JOIN).await })
+            .unwrap_or_default();
+
+        let compose = Compose::new(
+            self.room.clone(),
+            timeline,
+            self.matrix.clone(),
+            members,
+            text,
+        );
+
+        Consumed(Box::new(|app| app.open_popup(Popup::Compose(compose))))
     }
 
     fn pretty_members(&self) -> &str {

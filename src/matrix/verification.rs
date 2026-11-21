@@ -700,6 +700,7 @@ mod tests {
             room,
             timeline,
             app.matrix.clone(),
+            vec![],
             "half-written",
         )));
 

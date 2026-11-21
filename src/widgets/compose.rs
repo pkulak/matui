@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use matrix_sdk::Room;
+use matrix_sdk::room::RoomMember;
+use matrix_sdk::ruma::{OwnedUserId, UserId};
 use matrix_sdk_ui::Timeline;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -26,8 +29,21 @@ pub struct Compose {
 }
 
 impl Compose {
-    pub fn new(room: DecoratedRoom, timeline: Arc<Timeline>, matrix: Matrix, text: &str) -> Self {
-        let mut input = TextInput::new("Message".to_string(), true, false);
+    pub fn new(
+        room: DecoratedRoom,
+        timeline: Arc<Timeline>,
+        matrix: Matrix,
+        members: Vec<RoomMember>,
+        text: &str,
+    ) -> Self {
+        let members: Vec<_> = members
+            .iter()
+            .map(|m| (m.display_name().map(String::from), m.user_id().to_owned()))
+            .collect();
+        let completions = member_completions(&members, room.inner.own_user_id());
+
+        let mut input =
+            TextInput::new("Message".to_string(), true, false).with_autocomplete('@', completions);
 
         // pasting leaves the cursor at the end
         input.paste_event(text);
@@ -164,5 +180,82 @@ impl Widget for ComposeWidget<'_> {
         self.compose.input.widget().render(splits[0], buf);
 
         Paragraph::new("type \"jj\" to edit in external editor").render(splits[1], buf);
+    }
+}
+
+/// Builds `(label, @user:server)` entries for room members, excluding `me`.
+/// Primary labels (display name, or localpart if unset) come first sorted
+/// alphabetically, with colliding labels disambiguated by ID; secondary
+/// localpart aliases follow so typing a localpart still matches while bare `@`
+/// lists each member once by display name.
+fn member_completions(
+    members: &[(Option<String>, OwnedUserId)],
+    me: &UserId,
+) -> Vec<(String, String)> {
+    let others: Vec<_> = members.iter().filter(|(_, id)| id != me).collect();
+
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for (name, id) in &others {
+        let base = name
+            .as_deref()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| id.localpart());
+        *counts.entry(base.to_lowercase()).or_default() += 1;
+    }
+
+    let mut primary = Vec::with_capacity(others.len());
+    let mut secondary = Vec::new();
+
+    for (name, id) in others {
+        let display = name.as_deref().filter(|n| !n.is_empty());
+        let base = display.unwrap_or_else(|| id.localpart());
+        let label = if counts[&base.to_lowercase()] > 1 {
+            format!("{base} ({id})")
+        } else {
+            base.to_string()
+        };
+
+        primary.push((label, id.to_string()));
+
+        if display.is_some() && id.localpart().to_lowercase() != base.to_lowercase() {
+            secondary.push((id.localpart().to_string(), id.to_string()));
+        }
+    }
+
+    primary.sort_by(|a, b| (a.0.to_lowercase(), &a.1).cmp(&(b.0.to_lowercase(), &b.1)));
+    secondary.sort_by(|a, b| (a.0.to_lowercase(), &a.1).cmp(&(b.0.to_lowercase(), &b.1)));
+    primary.extend(secondary);
+    primary
+}
+
+#[cfg(test)]
+mod tests {
+    use matrix_sdk::ruma::owned_user_id;
+
+    use super::member_completions;
+
+    #[test]
+    fn it_builds_member_completions() {
+        let me = owned_user_id!("@me:kulak.us");
+        let members = vec![
+            (Some("Me".to_string()), me.clone()),
+            (Some("Zack".to_string()), owned_user_id!("@azack:kulak.us")),
+            (Some("Gwen".to_string()), owned_user_id!("@gwen:kulak.us")),
+            (Some("Alex".to_string()), owned_user_id!("@alex:b.org")),
+            (Some("alex".to_string()), owned_user_id!("@alex:a.org")),
+            (None, owned_user_id!("@bot:kulak.us")),
+        ];
+
+        assert_eq!(
+            member_completions(&members, &me),
+            vec![
+                ("alex (@alex:a.org)".to_string(), "@alex:a.org".to_string()),
+                ("Alex (@alex:b.org)".to_string(), "@alex:b.org".to_string()),
+                ("bot".to_string(), "@bot:kulak.us".to_string()),
+                ("Gwen".to_string(), "@gwen:kulak.us".to_string()),
+                ("Zack".to_string(), "@azack:kulak.us".to_string()),
+                ("azack".to_string(), "@azack:kulak.us".to_string()),
+            ]
+        );
     }
 }

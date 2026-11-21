@@ -17,7 +17,6 @@ use crate::widgets::confirm::Confirm;
 use crate::widgets::create::Create;
 use crate::widgets::error::Error;
 use crate::widgets::help::Help;
-use crate::widgets::members::Members;
 use crate::widgets::progress::Progress;
 use crate::widgets::qr::Qr;
 use crate::widgets::recover::Recover;
@@ -313,7 +312,6 @@ pub enum Popup {
     Compose(Compose),
     Create(Create),
     Error(Error),
-    Members(Members),
     Progress(Progress),
     Qr(Qr),
     Recover(Recover),
@@ -340,7 +338,6 @@ impl Popup {
             Popup::Compose(w) => w.key_event(event, handler),
             Popup::Create(w) => w.key_event(event),
             Popup::Error(w) => w.key_event(event),
-            Popup::Members(w) => w.key_event(event),
             Popup::Progress(_) => EventResult::Ignored,
             Popup::Qr(w) => w.key_event(event, handler),
             Popup::Recover(w) => w.key_event(event),
@@ -356,7 +353,6 @@ impl Popup {
             Popup::Command(w) => w.mouse_event(event),
             Popup::Compose(w) => w.mouse_event(event),
             Popup::Create(w) => w.mouse_event(event),
-            Popup::Members(w) => w.mouse_event(event),
             Popup::Qr(w) => w.mouse_event(event),
             Popup::Recover(w) => w.mouse_event(event),
             Popup::Rooms(w) => w.mouse_event(event),
@@ -371,7 +367,6 @@ impl Popup {
             Popup::Command(w) => w.paste_event(value),
             Popup::Compose(w) => w.paste_event(value),
             Popup::Create(w) => w.paste_event(value),
-            Popup::Members(w) => w.paste_event(value),
             Popup::Qr(w) => w.paste_event(value),
             Popup::Recover(w) => w.paste_event(value),
             Popup::Rooms(w) => w.paste_event(value),
@@ -399,7 +394,6 @@ impl Popup {
             Popup::Compose(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Create(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Error(w) => frame.render_widget(w.widget(), frame.area()),
-            Popup::Members(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Progress(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Qr(w) => frame.render_widget(w.widget(), frame.area()),
             Popup::Recover(w) => frame.render_widget(w.widget(), frame.area()),

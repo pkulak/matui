@@ -8,6 +8,27 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use std::cell::Cell;
+use std::collections::HashSet;
+
+struct Autocomplete {
+    trigger: char,
+    entries: Vec<(String, String)>,
+    selected: usize,
+}
+
+struct ActiveMatches<'a> {
+    start: usize,
+    end: usize,
+    query: &'a str,
+    entries: Vec<(&'a str, &'a str)>,
+}
+
+struct Completion<'a> {
+    start: usize,
+    end: usize,
+    ghost: String,
+    value: &'a str,
+}
 
 pub struct TextInput {
     title: String,
@@ -15,6 +36,7 @@ pub struct TextInput {
     pub focused: bool,
     password: bool,
     cursor: usize,
+    autocomplete: Option<Autocomplete>,
 
     // state that needs to be modified by the widget and the struct
     left: Cell<usize>,
@@ -53,9 +75,19 @@ impl TextInput {
             focused,
             password,
             cursor: 0,
+            autocomplete: None,
             left: Cell::new(0),
             area: Cell::new(Rect::default()),
         }
+    }
+
+    pub fn with_autocomplete(mut self, trigger: char, entries: Vec<(String, String)>) -> Self {
+        self.autocomplete = Some(Autocomplete {
+            trigger,
+            entries,
+            selected: 0,
+        });
+        self
     }
 
     pub fn widget(&self) -> TextInputWidget<'_> {
@@ -85,8 +117,33 @@ impl TextInput {
                 consumed!()
             }
             KeyCode::Right => {
-                self.move_right();
-                consumed!()
+                if self.cursor == self.value.chars().count() && self.accept_completion() {
+                    consumed!()
+                } else {
+                    self.move_right();
+                    consumed!()
+                }
+            }
+            KeyCode::Tab => {
+                if self.accept_completion() {
+                    consumed!()
+                } else {
+                    Ignored
+                }
+            }
+            KeyCode::Down => {
+                if self.cycle_completion(1) {
+                    consumed!()
+                } else {
+                    Ignored
+                }
+            }
+            KeyCode::Up => {
+                if self.cycle_completion(-1) {
+                    consumed!()
+                } else {
+                    Ignored
+                }
             }
             _ => Ignored,
         }
@@ -106,6 +163,7 @@ impl TextInput {
 
         self.value.insert_str(byte_pos, &value);
         self.cursor += value.chars().count();
+        self.reset_autocomplete();
 
         consumed!()
     }
@@ -123,6 +181,7 @@ impl TextInput {
 
         let clicked = self.left.get() + usize::from(event.column - area.x);
         self.cursor = clicked.min(self.value.chars().count());
+        self.reset_autocomplete();
     }
 
     pub fn value(&self) -> String {
@@ -133,12 +192,14 @@ impl TextInput {
         let byte_pos = char_to_byte(&self.value, self.cursor);
         self.value.insert(byte_pos, ch);
         self.cursor += 1;
+        self.reset_autocomplete();
     }
 
     fn move_right(&mut self) {
         if self.cursor < self.value.chars().count() {
             self.cursor += 1;
         }
+        self.reset_autocomplete();
     }
 
     pub fn backspace(&mut self) {
@@ -150,6 +211,7 @@ impl TextInput {
         let start_byte = char_to_byte(&self.value, self.cursor - 1);
         self.value.replace_range(start_byte..end_byte, "");
         self.cursor -= 1;
+        self.reset_autocomplete();
 
         let left = self.left.get();
 
@@ -162,12 +224,134 @@ impl TextInput {
         if self.cursor > 0 {
             self.cursor -= 1;
         }
+        self.reset_autocomplete();
 
         let left = self.left.get();
 
         if self.cursor < left {
             self.left.replace(self.cursor);
         }
+    }
+
+    fn reset_autocomplete(&mut self) {
+        if let Some(ac) = &mut self.autocomplete {
+            ac.selected = 0;
+        }
+    }
+
+    fn active_matches(&self) -> Option<ActiveMatches<'_>> {
+        if !self.focused || self.password {
+            return None;
+        }
+
+        let ac = self.autocomplete.as_ref()?;
+        let cursor_byte = char_to_byte(&self.value, self.cursor);
+
+        // only complete at the end of a token
+        if self.value[cursor_byte..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || ":_".contains(c))
+        {
+            return None;
+        }
+
+        let before = &self.value[..cursor_byte];
+        let trigger_byte = before.rfind(ac.trigger)?;
+
+        // trigger must start a token (same boundary rule as mentions.rs)
+        if before[..trigger_byte]
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_alphanumeric() || "._=/+-".contains(c) || c == ac.trigger)
+        {
+            return None;
+        }
+
+        let query = &before[trigger_byte + ac.trigger.len_utf8()..];
+        let query_lower = query.to_lowercase();
+
+        let mut seen = HashSet::new();
+        let entries: Vec<(&str, &str)> = ac
+            .entries
+            .iter()
+            .filter(|(label, _)| label.to_lowercase().starts_with(&query_lower))
+            .filter(|(_, value)| seen.insert(value.as_str()))
+            .map(|(label, value)| (label.as_str(), value.as_str()))
+            .collect();
+
+        if entries.is_empty() {
+            return None;
+        }
+
+        Some(ActiveMatches {
+            start: trigger_byte,
+            end: cursor_byte,
+            query,
+            entries,
+        })
+    }
+
+    fn active_completion(&self) -> Option<Completion<'_>> {
+        let ac = self.autocomplete.as_ref()?;
+        let matches = self.active_matches()?;
+        let (label, value) = matches.entries[ac.selected % matches.entries.len()];
+
+        let suffix = &label[char_to_byte(label, matches.query.chars().count())..];
+        let ghost = if suffix.is_empty() {
+            format!(" → {value}")
+        } else {
+            suffix.to_string()
+        };
+
+        Some(Completion {
+            start: matches.start,
+            end: matches.end,
+            ghost,
+            value,
+        })
+    }
+
+    fn accept_completion(&mut self) -> bool {
+        let Some(completion) = self.active_completion() else {
+            return false;
+        };
+
+        let start = completion.start;
+        let end = completion.end;
+        let mut replacement = completion.value.to_string();
+
+        let add_space = self.value[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_whitespace() && !c.is_ascii_punctuation());
+
+        if add_space {
+            replacement.push(' ');
+        }
+
+        let start_chars = self.value[..start].chars().count();
+        self.value.replace_range(start..end, &replacement);
+        self.cursor = start_chars + replacement.chars().count();
+
+        if self.cursor < self.left.get() {
+            self.left.replace(self.cursor);
+        }
+
+        self.reset_autocomplete();
+        true
+    }
+
+    fn cycle_completion(&mut self, delta: isize) -> bool {
+        let Some(matches) = self.active_matches() else {
+            return false;
+        };
+
+        let len = matches.entries.len();
+        let ac = self.autocomplete.as_mut().unwrap();
+        let cur = ac.selected % len;
+        ac.selected = (cur as isize + delta).rem_euclid(len as isize) as usize;
+        true
     }
 
     fn display_value(&self) -> String {
@@ -222,6 +406,23 @@ impl TextInputWidget<'_> {
         let cursor_byte = char_to_byte(visible, self.textinput.cursor - left);
         let cursor_style = Style::default().add_modifier(Modifier::REVERSED);
 
+        if let Some(completion) = self.textinput.active_completion() {
+            let ghost_style = Style::default().fg(Color::DarkGray);
+            let mut chars = completion.ghost.chars();
+            let first = chars
+                .next()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| " ".to_string());
+            let rest: String = chars.collect();
+
+            return Line::from(vec![
+                Span::raw(visible[..cursor_byte].to_string()),
+                Span::styled(first, ghost_style.add_modifier(Modifier::REVERSED)),
+                Span::styled(rest, ghost_style),
+                Span::raw(visible[cursor_byte..].to_string()),
+            ]);
+        }
+
         if let Some(ch) = visible[cursor_byte..].chars().next() {
             let next_byte = cursor_byte + ch.len_utf8();
             Line::from(vec![
@@ -272,10 +473,11 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
-    use ratatui::style::Modifier;
+    use ratatui::style::{Color, Modifier};
     use ratatui::widgets::Widget;
 
     use crate::selection::tests::press;
+    use crate::widgets::EventResult;
     use crate::widgets::textinput::TextInput;
 
     #[test]
@@ -440,6 +642,148 @@ mod tests {
         let area = Rect::new(0, 0, 20, 3);
         let mut buf = Buffer::empty(area);
         input.widget().render(area, &mut buf);
+    }
+
+    #[test]
+    fn it_autocompletes_and_renders_ghost_text() {
+        let area = Rect::new(0, 0, 26, 3);
+        let mut input = TextInput::new("Test".to_string(), true, false).with_autocomplete(
+            '@',
+            vec![
+                ("Greg".to_string(), "@greg:kulak.us".to_string()),
+                ("Gwen".to_string(), "@gwen:kulak.us".to_string()),
+                ("Phil Kulak".to_string(), "@pkulak:kulak.us".to_string()),
+                ("pkulak".to_string(), "@pkulak:kulak.us".to_string()),
+            ],
+        );
+
+        // bare '@' suggests the first entry immediately
+        type_str(&mut input, "@");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│@Greg                   │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(2, "G")]);
+        assert_eq!(buf[(2, 1)].fg, Color::DarkGray);
+        assert_eq!(buf[(3, 1)].fg, Color::DarkGray);
+
+        // typing narrows it down, keeping user's typed casing
+        type_str(&mut input, "gw");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│@gwen                   │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(4, "e")]);
+        assert_eq!(buf[(4, 1)].fg, Color::DarkGray);
+        assert_eq!(buf[(5, 1)].fg, Color::DarkGray);
+
+        // finishing the full label shows the target value hint
+        type_str(&mut input, "en");
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│@gwen → @gwen:kulak.us  │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(6, " ")]);
+        assert_eq!(buf[(6, 1)].fg, Color::DarkGray);
+        assert_eq!(buf[(7, 1)].fg, Color::DarkGray);
+
+        // Right at end-of-line accepts and adds a trailing space
+        input.key_event(&KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(input.value(), "@gwen:kulak.us ");
+
+        // multi-word labels match across spaces; Tab accepts
+        type_str(&mut input, "@phil k");
+        let buf = render(&input, Rect::new(0, 0, 40, 3));
+        assert!(get_line(&buf, 1).contains("@phil kulak"));
+        input.key_event(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(input.value(), "@gwen:kulak.us @pkulak:kulak.us ");
+    }
+
+    #[test]
+    fn it_cycles_and_deduplicates_completions() {
+        let area = Rect::new(0, 0, 20, 3);
+        let mut input = TextInput::new("Test".to_string(), true, false).with_autocomplete(
+            '@',
+            vec![
+                ("Greg".to_string(), "@greg:kulak.us".to_string()),
+                ("Gwen".to_string(), "@gwen:kulak.us".to_string()),
+                ("Phil Kulak".to_string(), "@pkulak:kulak.us".to_string()),
+                ("pkulak".to_string(), "@pkulak:kulak.us".to_string()),
+            ],
+        );
+
+        // bare '@' deduplicates Phil Kulak / pkulak so cycling visits 3 unique users
+        type_str(&mut input, "@");
+        assert_eq!(get_line(&render(&input, area), 1), "│@Greg             │");
+
+        input.key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(get_line(&render(&input, area), 1), "│@Gwen             │");
+
+        input.key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(get_line(&render(&input, area), 1), "│@Phil Kulak       │");
+
+        // wraps back to Greg (does not show pkulak separately)
+        input.key_event(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(get_line(&render(&input, area), 1), "│@Greg             │");
+
+        // Up wraps backwards
+        input.key_event(&KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(get_line(&render(&input, area), 1), "│@Phil Kulak       │");
+
+        // typing the localpart still finds pkulak
+        type_str(&mut input, "pk");
+        assert_eq!(get_line(&render(&input, area), 1), "│@pkulak           │");
+        input.key_event(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(input.value(), "@pkulak:kulak.us ");
+    }
+
+    #[test]
+    fn it_completes_mid_line_and_respects_boundaries() {
+        let area = Rect::new(0, 0, 25, 3);
+        let mut input = TextInput::new("Test".to_string(), true, false).with_autocomplete(
+            '@',
+            vec![("Gwen".to_string(), "@gwen:kulak.us".to_string())],
+        );
+
+        // no suggestion when glued to a word like an email address
+        type_str(&mut input, "bob@g");
+        assert!(matches!(
+            input.key_event(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            EventResult::Ignored
+        ));
+        assert_eq!(input.value(), "bob@g");
+
+        // mid-line before punctuation: ghost text inserts visually, Right moves cursor, Tab accepts without space
+        let mut input = TextInput::new("Test".to_string(), true, false).with_autocomplete(
+            '@',
+            vec![("Gwen".to_string(), "@gwen:kulak.us".to_string())],
+        );
+        type_str(&mut input, "hey (@g), hi");
+        for _ in 0..5 {
+            input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        }
+
+        let buf = render(&input, area);
+        assert_eq!(get_line(&buf, 1), "│hey (@gwen), hi        │");
+        assert_eq!(reversed_cells(&buf, 1), vec![(8, "w")]);
+
+        // Right mid-line moves onto ')' instead of accepting
+        input.key_event(&KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(input.value(), "hey (@g), hi");
+
+        // Move back before ')' and accept with Tab (no trailing space before punctuation)
+        input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        input.key_event(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(input.value(), "hey (@gwen:kulak.us), hi");
+
+        // Cursor before ':' inside an already-completed ID does not trigger
+        for _ in 0..14 {
+            input.key_event(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        }
+        assert!(matches!(
+            input.key_event(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            EventResult::Ignored
+        ));
+    }
+
+    fn type_str(input: &mut TextInput, s: &str) {
+        for c in s.chars() {
+            input.key_event(&KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
     }
 
     fn render(input: &TextInput, area: Rect) -> Buffer {
