@@ -61,3 +61,6 @@ native-dialog = "0.9"
 lto = true
 opt-level = 'z'  # Optimize for size.
 codegen-units = 1
+
+[patch.crates-io]
+ratatui = { git = "https://github.com/ratatui/ratatui", rev = "7c6a326c1a470874ee17ef54b7da09fd6c8eaa23" }
