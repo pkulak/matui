@@ -11,7 +11,6 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use timeago::Formatter;
 
-use crate::matrix::emoji::pad_emoji;
 use crate::matrix::mentions::restore_user_ids;
 use crate::matrix::username::Username;
 use crate::matrix::{AfterDownload, Matrix};
@@ -949,12 +948,12 @@ impl Reaction {
     pub fn display(&self) -> String {
         if let Some(emoji) = emojis::get(&self.body) {
             if let Some(shortcode) = emoji.shortcode() {
-                format!("{} ({})", pad_emoji(&self.body), shortcode)
+                format!("{} ({})", self.body, shortcode)
             } else {
-                pad_emoji(&self.body)
+                self.body.clone()
             }
         } else {
-            pad_emoji(&self.body)
+            self.body.clone()
         }
     }
 
