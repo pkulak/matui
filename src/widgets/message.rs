@@ -8,7 +8,6 @@ use std::borrow::Cow;
 use std::collections::BinaryHeap;
 use std::ops::Range;
 
-use crate::matrix::emoji::pad_emoji;
 use crate::matrix::mentions::restore_user_ids;
 use crate::matrix::username::Username;
 use crate::matrix::{AfterDownload, Matrix};
@@ -478,10 +477,7 @@ impl Message {
 
             for r in &self.reactions {
                 for sender in &r.senders {
-                    ret.push_str(
-                        format!("* {} by {} ({})\n", pad_emoji(&r.body), sender, sender.id)
-                            .as_str(),
-                    );
+                    ret.push_str(format!("* {} by {} ({})\n", r.body, sender, sender.id).as_str());
                 }
             }
 
@@ -506,7 +502,7 @@ impl Message {
     /// keep allocations out of the render loop.
     fn reaction_lines(&self) -> &[String] {
         self.reaction_lines.get_or_init(|| {
-            let mut groups: Vec<(Vec<String>, &[Username])> = Vec::new();
+            let mut groups: Vec<(Vec<&str>, &[Username])> = Vec::new();
 
             for r in &self.reactions {
                 let same = |senders: &[Username]| {
@@ -515,8 +511,8 @@ impl Message {
                 };
 
                 match groups.iter_mut().find(|(_, senders)| same(senders)) {
-                    Some((emojis, _)) => emojis.push(pad_emoji(&r.body)),
-                    None => groups.push((vec![pad_emoji(&r.body)], &r.senders)),
+                    Some((emojis, _)) => emojis.push(&r.body),
+                    None => groups.push((vec![&r.body], &r.senders)),
                 }
             }
 
@@ -1221,7 +1217,7 @@ pub(crate) mod tests {
         assert_eq!(
             message.reaction_lines(),
             [
-                "👍 ❤️  @alice:example.org and @bob:example.org",
+                "👍 ❤️ @alice:example.org and @bob:example.org",
                 "👀 ✅ @carol:example.org",
                 "😆 @bob:example.org",
             ]
