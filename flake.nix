@@ -48,7 +48,12 @@
             pname = cargoToml.package.name;
             inherit (cargoToml.package) version;
             src = source;
-            cargoLock.lockFile = source + "/Cargo.lock";
+            cargoLock = {
+              lockFile = source + "/Cargo.lock";
+              outputHashes = {
+                "ratatui-0.30.2" = "sha256-M4y0gZNoHn7H6eplByUWdvAFS/+8IAF2BSGUQzmTlq4=";
+              };
+            };
             # Won't be found by `openssl-sys` if it's in `nativeBuildInputs`.
             buildInputs = with pkgs; [ openssl ];
             nativeBuildInputs =
