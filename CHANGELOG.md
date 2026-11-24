@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0] - 2026-11-23
 
 - Show reactions as just the emoji, without its name, and put emojis from the same people on one line, such as "👀 ✅ Barnaby".
 - Show the time each message was sent, such as 2:41 PM, instead of how long ago, now that the day lines give the date. A message that sits under a later day, because someone replied to it then, shows its own date too.

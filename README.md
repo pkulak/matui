@@ -10,7 +10,7 @@ A very opinionated [Matrix](https://matrix.org/) TUI.
 
 # New sliding-sync requirement
 
-Version 1.1 now requires a sliding-sync server. I resisted this for a while,
+Version 2.0 now requires a sliding-sync server. I resisted this for a while,
 but it's so much faster and at this point the three popular servers (tuwunel,
 continuwuity and synapse) all have sliding-sync built in. Apologies to anyone
 using Dendrite or Beeper. If that's you, I'm maintaining a backport branch
