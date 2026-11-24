@@ -1,6 +1,6 @@
 [package]
 name = "matui"
-version = "1.0.2"
+version = "1.1.0"
 authors = ["Phil Kulak"]
 edition = "2024"
 
