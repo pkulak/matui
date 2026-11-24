@@ -25,7 +25,7 @@ You can download the latest release, unpack it, and move `matui` to `/usr/bin`
 
 ## Arch Linux
 
-Matui is packaged for the AUR: `paru -S matui`.
+This branch is packaged for the AUR: `paru -S matui-classic`.
 
 ## Nix
 
