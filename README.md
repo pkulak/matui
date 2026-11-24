@@ -34,7 +34,8 @@ You can download the latest release, unpack it, and move `matui` to `/usr/bin`
 
 ## Arch Linux
 
-Matui is packaged for the AUR: `paru -S matui`.
+Matui is packaged for the AUR: `paru -S matui`. For a homeserver without
+sliding sync, install the classic branch instead: `paru -S matui-classic`.
 
 ## Nix
 
